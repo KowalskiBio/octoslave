@@ -74,7 +74,7 @@ It also ships a **multi-agent long-research pipeline** (`/long-research`) that s
 **Requirements:** Python 3.10+, an [e-INFRA CZ LLM](https://llm.ai.e-infra.cz) API key
 
 ```bash
-git clone https://github.com/your-org/octoslave.git
+git clone https://github.com/karatedava/octoslave.git
 cd octoslave
 pip install -e .
 ```
@@ -347,7 +347,3 @@ octoslave/
 MIT — see [LICENSE](LICENSE).
 
 ---
-
-<div align="center">
-Built for the <a href="https://llm.ai.e-infra.cz">e-INFRA CZ</a> academic LLM platform.
-</div>
