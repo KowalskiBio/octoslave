@@ -31,17 +31,17 @@ ROLES: dict[str, dict] = {
         "label": "Researcher",
         "icon": "🔬",
         "color": "bold cyan",
-        "default_model": "qwen3.5-122b",           # large model — thorough web reading
-        "max_iter": 30,
+        "default_model": "qwen3.5-122b",           # large — fast reading + search
+        "max_iter": 15,                             # targeted scout, not full survey
         "tools": ["read_file", "write_file", "web_search", "web_fetch",
                   "list_dir", "glob", "bash"],
     },
     "hypothesis": {
-        "label": "Hypothesis Generator",
+        "label": "Experiment Designer",
         "icon": "💡",
         "color": "bold bright_magenta",
-        "default_model": "deepseek-v3.2-thinking",  # extended thinking — bold hypotheses
-        "max_iter": 20,
+        "default_model": "deepseek-v3.2-thinking",  # thinking — commit to the right experiment
+        "max_iter": 10,
         "tools": ["read_file", "write_file", "list_dir", "glob"],
     },
     "coder": {
@@ -57,8 +57,8 @@ ROLES: dict[str, dict] = {
         "label": "Debugger",
         "icon": "🐛",
         "color": "bold red",
-        "default_model": "qwen3-coder-30b",         # same large coder — deep inspection
-        "max_iter": 30,
+        "default_model": "qwen3-coder-30b",         # same coder — knows the code
+        "max_iter": 20,
         "tools": ["read_file", "write_file", "edit_file", "bash",
                   "glob", "grep", "list_dir"],
     },
@@ -66,8 +66,8 @@ ROLES: dict[str, dict] = {
         "label": "Evaluator",
         "icon": "⚖️ ",
         "color": "bold yellow",
-        "default_model": "deepseek-v3.2-thinking",  # extended thinking — rigorous critique
-        "max_iter": 20,
+        "default_model": "deepseek-v3.2-thinking",  # thinking — rigorous scientific judgement
+        "max_iter": 15,
         "tools": ["read_file", "bash", "write_file", "list_dir",
                   "web_search", "glob"],
     },
@@ -75,8 +75,8 @@ ROLES: dict[str, dict] = {
         "label": "Orchestrator",
         "icon": "🧠",
         "color": "bold bright_white",
-        "default_model": "deepseek-v3.2",           # strong reasoning — solid synthesis
-        "max_iter": 20,
+        "default_model": "deepseek-v3.2",           # strong reasoning — synthesis + direction
+        "max_iter": 15,
         "tools": ["read_file", "write_file", "list_dir", "glob"],
     },
     "reporter": {
@@ -89,7 +89,7 @@ ROLES: dict[str, dict] = {
     },
 }
 
-# Execution order within each round
+# Per-round pipeline — reporter runs ONCE at the very end, not each round
 PIPELINE: list[str] = [
     "researcher",
     "hypothesis",
@@ -97,13 +97,12 @@ PIPELINE: list[str] = [
     "debugger",
     "evaluator",
     "orchestrator",
-    "reporter",
 ]
 
 # Expected output paths (relative to round_dir)
 OUTPUT_FILES: dict[str, str] = {
     "researcher":    "01_literature.md",
-    "hypothesis":    "02_hypotheses.md",
+    "hypothesis":    "02_experiment.md",
     "coder":         "03_code/",          # directory
     "debugger":      "04_debug_report.md",
     "evaluator":     "05_evaluation.md",
@@ -121,10 +120,10 @@ COMPLETE_MARKER = "## STATUS: COMPLETE"
 # ---------------------------------------------------------------------------
 
 _SHARED_HEADER = """\
-You are the {label} in OctoSlave's autonomous multi-agent research system.
+You are the {label} in OctoSlave's autonomous multi-agent research pipeline.
 
 RESEARCH TOPIC : {topic}
-ROUND          : {round_num} / {max_rounds}
+ROUND          : {round_num} / {max_rounds}  {final_tag}
 ROUND DIR      : {round_dir}
 RESEARCH DIR   : {research_dir}
 WORKING DIR    : {working_dir}
@@ -139,64 +138,73 @@ _ROLE_PROMPTS: dict[str, str] = {
 
 "researcher": """\
 YOUR MISSION
-Search the web and existing files to produce a comprehensive literature survey
-for this round's brief. Collect papers, datasets, code repos, and key facts.
+Do a fast, targeted intelligence-gathering pass to equip the Experiment Designer
+with everything they need to commit to ONE concrete experiment.
+Quality over quantity — 3 sharp sources beat 10 shallow ones.
 
 STEPS
-1. Search the web (web_search, web_fetch) for the most relevant recent work.
-   Focus on arXiv, GitHub, official docs, and benchmarks.
-2. If there is a 'literature/' folder in the working dir, read any PDFs there.
-3. Identify publicly available datasets — include direct download URLs / DOIs,
-   file formats, and licensing. Attempt to fetch each dataset's landing page to
-   confirm it is accessible. Flag each as: VERIFIED ACCESSIBLE | REQUIRES SIGNUP
-   | PAYWALLED | UNAVAILABLE (with reason).
-4. Note existing implementations or baselines.
+1. If round > 1, read {research_dir}/findings.md first to understand what has
+   already been tried and what specific gap this round must address.
+2. Run 2–4 targeted web searches directly relevant to the round brief.
+   Fetch the most useful pages/papers (web_fetch). Stop once you have enough
+   to answer: (a) what is SOTA on this problem? (b) what data is available?
+3. Check for a 'literature/' folder in the working dir and read any PDFs there.
+4. For each dataset candidate: fetch its landing page to confirm accessibility.
+   Mark each VERIFIED ACCESSIBLE | REQUIRES SIGNUP | PAYWALLED | UNAVAILABLE.
+   Only list datasets you have actually confirmed.
 
-DATA SOURCING RULES
-- Only list datasets you have confirmed exist (fetched their landing page / DOI).
-- Do NOT recommend datasets you cannot verify — scientists will not waste time
-  chasing phantom links.
-- Prefer datasets with programmatic access (direct URL, Zenodo, HuggingFace,
-  figshare, UCI ML repo, NCBI, etc.).
+OUTPUT — write ONE file: {round_dir}/01_literature.md
 
-OUTPUT — write ONE file:
-  {round_dir}/01_literature.md
+  ## SOTA Summary          (2–4 sentences: best known result, method, benchmark)
+  ## Key References        (≤ 4 entries: title, URL, one sentence why it matters)
+  ## Available Datasets    (name, direct download URL, size, licence, ACCESS STATUS)
+  ## Existing Code / Tools (repo URL, what it does)
+  ## Known Baselines       (concrete numbers to beat, e.g. "ResNet-50: 76.1% top-1")
 
-Structure it as:
-  ## Overview
-  ## Key Papers        (title, authors, year, URL, 3-sentence summary each)
-  ## Datasets          (name, size, URL, licence, ACCESS STATUS, relevance)
-  ## Existing Tools / Code  (repo URL, stars if known, relevance)
-  ## Identified Gaps   (what is missing / unexplored)
-
-Be thorough. Aim for ≥ 5 substantive sources.
+  ## FOR THE EXPERIMENT DESIGNER
+  [Write 1–2 focused paragraphs telling the next agent EXACTLY what to build:
+   which gap to target, which dataset to use (with URL), what baseline to beat,
+   and any implementation gotchas you found. Be specific — no vague suggestions.]
 """,
 
 "hypothesis": """\
 YOUR MISSION
-Read the literature survey and generate bold, testable hypotheses.
+Design exactly ONE concrete, executable experiment for the Coder to implement.
+Be decisive. A committed, well-specified experiment beats three vague ones.
 
 STEPS
-1. Read {round_dir}/01_literature.md
-2. If round > 1, also read {research_dir}/findings.md and previous synthesis.
-3. Generate 3–5 specific, falsifiable hypotheses ranked by (feasibility × impact).
+1. Read the ## FOR THE EXPERIMENT DESIGNER section in {round_dir}/01_literature.md.
+   That is your primary input — act on it directly.
+2. If round > 1, also read {research_dir}/findings.md to avoid repeating failures.
+3. Design your experiment. Think carefully (this is your main job), then commit.
 
-OUTPUT — write ONE file:
-  {round_dir}/02_hypotheses.md
+OUTPUT — write ONE file: {round_dir}/02_experiment.md
 
-For each hypothesis include:
-  ### Hypothesis N: <short name>
-  **Statement**: one clear, falsifiable claim
-  **Motivation**: why this matters / what gap it addresses
-  **Predicted outcome**: what we expect to observe
-  **Experiment design**: concrete steps to test it
-  **Success criteria**: measurable thresholds (e.g., accuracy > X%)
-  **Feasibility**: HIGH / MEDIUM / LOW + reason
-  **Priority rank**: 1 = highest
+  ## Experiment: <short descriptive name>
+  **Hypothesis**: one falsifiable claim
+  **Why this round**: why this is the highest-value thing to try now
+  **Success metric**: specific measurable threshold (e.g. "F1 > 0.82 on test set")
+  **Failure threshold**: below this means the approach is wrong, not just unlucky
 
-End the file with:
-  ## RECOMMENDED EXPERIMENT
-  Which hypothesis to tackle this round and why.
+  ## Algorithm / Approach
+  [Pseudocode or step-by-step description precise enough for the Coder to
+   implement without guessing. Include: model architecture / method, loss function,
+   key hyperparameters to try, evaluation protocol.]
+
+  ## Data Plan
+  **Primary**: <dataset name>, <direct download URL>, <format>
+  **Fallback**: <alternative if primary fails>, <URL>
+  (Both must be VERIFIED ACCESSIBLE from 01_literature.md. No unverified sources.)
+
+  ## Expected Output Files
+  - results/key_results.json  — must contain: {{"metric": <name>, "value": <float>,
+    "baseline": <float>, "improvement_pct": <float>}}
+  - results/main_plot.png     — primary result visualisation
+  - results/summary_figure.png — multi-panel overview
+
+  ## FOR THE CODER
+  [2–3 sentences of direct instruction: where to start, the single most important
+   implementation detail to get right, and what "done" looks like.]
 """,
 
 "coder": """\
@@ -205,7 +213,7 @@ Implement the recommended experiment from the hypotheses file.
 Write real, working, runnable code. Produce concrete results from real data.
 
 STEPS
-1. Read {round_dir}/02_hypotheses.md — focus on ## RECOMMENDED EXPERIMENT.
+1. Read {round_dir}/02_experiment.md — focus on ## FOR THE CODER and ## Data Plan.
 2. Read {round_dir}/01_literature.md — note which datasets are VERIFIED ACCESSIBLE.
 3. Read {research_dir}/hw_profile.json if it exists — this contains the detected
    hardware profile for this machine. Use it to configure batch sizes, device
@@ -328,7 +336,7 @@ ABSOLUTE RULES — READ CAREFULLY
        hypothesis (web_search). Try at least 2–3 alternatives.
     4. If NO real data can be obtained for a given hypothesis, mark that
        experiment as BLOCKED in IMPLEMENTATION.md and pivot to a different
-       hypothesis from {round_dir}/02_hypotheses.md that CAN use available data.
+       hypothesis from {round_dir}/02_experiment.md that CAN use available data.
     5. If ALL hypotheses are blocked due to data access, implement the
        methodological scaffolding (data loading, model, evaluation pipeline)
        using a small well-known public benchmark (e.g. UCI, HuggingFace, NCBI)
@@ -386,7 +394,7 @@ You have not been involved in producing the work — evaluate it with fresh eyes
 STEPS
 1. Read in order:
    {round_dir}/01_literature.md
-   {round_dir}/02_hypotheses.md
+   {round_dir}/02_experiment.md
    All files under {round_dir}/03_code/
    {round_dir}/04_debug_report.md
 2. Optionally run the code yourself to verify claims.
@@ -428,7 +436,7 @@ precise brief that will drive the next round's specialist agents.
 STEPS
 1. Read all round outputs:
    {round_dir}/01_literature.md
-   {round_dir}/02_hypotheses.md
+   {round_dir}/02_experiment.md
    {round_dir}/03_code/IMPLEMENTATION.md  (if exists)
    {round_dir}/04_debug_report.md
    {round_dir}/05_evaluation.md
@@ -471,7 +479,7 @@ done, what was found, and where the research is headed.
 STEPS
 1. Inventory all round outputs:
    - Read {round_dir}/01_literature.md
-   - Read {round_dir}/02_hypotheses.md
+   - Read {round_dir}/02_experiment.md
    - Read {round_dir}/03_code/IMPLEMENTATION.md  (if exists)
    - Read {round_dir}/04_debug_report.md          (if exists)
    - Read {round_dir}/05_evaluation.md
@@ -526,13 +534,16 @@ def _build_system_prompt(
     research_dir: str,
     working_dir: str,
     brief: str,
+    is_final: bool = False,
 ) -> str:
     role_cfg = ROLES[role]
+    final_tag = "← FINAL ROUND — prioritise conclusions over exploration" if is_final else ""
     header = _SHARED_HEADER.format(
         label=role_cfg["label"],
         topic=topic,
         round_num=round_num,
         max_rounds=max_rounds,
+        final_tag=final_tag,
         round_dir=round_dir,
         research_dir=research_dir,
         working_dir=working_dir,
@@ -650,6 +661,7 @@ def _run_specialist(
     system_prompt = _build_system_prompt(
         role, topic, round_num, max_rounds,
         round_dir, research_dir, working_dir, brief,
+        is_final=(round_num == max_rounds),
     )
 
     messages: list[dict] = [
@@ -662,6 +674,7 @@ def _run_specialist(
     ]
 
     t0 = time.time()
+    iteration = 0
 
     for iteration in range(1, max_iter + 1):
         try:
@@ -748,7 +761,7 @@ def _update_findings(
 
     synthesis   = _read(OUTPUT_FILES["orchestrator"])
     evaluation  = _read(OUTPUT_FILES["evaluator"])
-    hypotheses  = _read(OUTPUT_FILES["hypothesis"])
+    experiment  = _read(OUTPUT_FILES["hypothesis"])
 
     # Extract overall score from evaluation
     score_match = re.search(r"##\s*Overall Score[^\n]*\n+([^\n]+)", evaluation)
@@ -766,13 +779,17 @@ def _update_findings(
     what_worked = ww_match.group(1).strip() if ww_match else ""
     what_failed = wf_match.group(1).strip() if wf_match else ""
 
-    # Extract recommended experiment from hypotheses
-    rec_match = re.search(
-        r"##\s*RECOMMENDED EXPERIMENT\s*\n(.*?)(?:\n##|\Z)", hypotheses, re.DOTALL
-    )
-    recommended = rec_match.group(1).strip() if rec_match else ""
+    # Extract experiment name + hypothesis from new-format experiment file
+    # Supports: "## Experiment: <name>" with "**Hypothesis**: ..."
+    exp_name_match = re.search(r"##\s*Experiment:\s*(.+)", experiment)
+    hyp_match      = re.search(r"\*\*Hypothesis\*\*:\s*(.+)", experiment)
+    if exp_name_match and hyp_match:
+        recommended = f"{exp_name_match.group(1).strip()} — {hyp_match.group(1).strip()}"
+    elif exp_name_match:
+        recommended = exp_name_match.group(1).strip()
+    else:
+        recommended = experiment[:300].strip()
 
-    from datetime import datetime
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M")
 
     entry_lines = [
@@ -877,7 +894,7 @@ STEPS
 1. List all round directories under {research_dir}/.
 2. For each round, read:
    - round_NNN/01_literature.md
-   - round_NNN/02_hypotheses.md
+   - round_NNN/02_experiment.md
    - round_NNN/03_code/IMPLEMENTATION.md  (if exists)
    - round_NNN/05_evaluation.md
    - round_NNN/06_synthesis.md
@@ -956,6 +973,7 @@ def _run_master_reporter(
     ]
 
     t0 = time.time()
+    iteration = 0
     for iteration in range(1, cfg["max_iter"] + 1):
         try:
             response = _stream_completion_with_tools(client, model, messages, tools)
@@ -1128,7 +1146,7 @@ def run_long_research(
             # Resumability: skip if output already exists
             expected = OUTPUT_FILES[role]
             expected_path = round_dir / expected
-            if resume and (expected_path.exists() or (expected_path.is_dir())):
+            if resume and expected_path.exists():
                 display.print_info(
                     f"  ↩  {ROLES[role]['label']} output found — skipping."
                 )

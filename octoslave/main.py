@@ -359,8 +359,17 @@ def _handle_slash(cmd: str, state: dict, cfg: dict, messages: list, client) -> s
         try:
             new_msgs = continue_agent(messages, summary_task, state["model"],
                                        state["working_dir"], client)
+            # Keep: system prompt (index 0) + the assistant's summary reply (last
+            # assistant message). This guarantees the system prompt is always present.
+            system_msg = next((m for m in new_msgs if m.get("role") == "system"), None)
+            summary_msg = next(
+                (m for m in reversed(new_msgs) if m.get("role") == "assistant"), None
+            )
             messages.clear()
-            messages.extend(new_msgs[-2:])
+            if system_msg:
+                messages.append(system_msg)
+            if summary_msg:
+                messages.append(summary_msg)
             display.print_info("History compacted.")
         except Exception as e:
             display.print_error(str(e))

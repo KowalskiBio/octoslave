@@ -192,6 +192,7 @@ def continue_agent(
 
 
 def _agent_loop(messages: list[dict], model: str, working_dir: str, client: OpenAI) -> list[dict]:
+    iteration = 0
     for iteration in range(1, MAX_ITERATIONS + 1):
         try:
             response = _stream_completion(client, model, messages)

@@ -74,7 +74,7 @@ def ollama_pull_model(model_name: str, ollama_url: str = OLLAMA_BASE_URL) -> boo
     try:
         import urllib.request, json as _json
         base = ollama_url.rstrip("/").removesuffix("/v1")
-        payload = json.dumps({"name": model_name, "stream": True}).encode()
+        payload = _json.dumps({"name": model_name, "stream": True}).encode()
         req = urllib.request.Request(
             f"{base}/api/pull",
             data=payload,
@@ -101,9 +101,6 @@ def ollama_pull_model(model_name: str, ollama_url: str = OLLAMA_BASE_URL) -> boo
     except Exception as e:
         print(f"\n  Pull failed: {e}")
         return False
-
-
-import json  # needed by ollama_pull_model above
 
 
 # ---------------------------------------------------------------------------
@@ -175,12 +172,19 @@ def load_config() -> dict:
         try:
             with open(CONFIG_FILE) as f:
                 saved = json.load(f)
-            for key in ("api_key", "base_url", "default_model", "backend", "ollama_url"):
-                if not config[key] and saved.get(key):
-                    config[key] = saved[key]
-            # backend/ollama_url always come from file if env not set
-            for key in ("backend", "ollama_url"):
-                if not os.environ.get(f"OCTOSLAVE_{key.upper()}") and saved.get(key):
+            # For every key: use saved value unless an env var already set it.
+            # Env-var keys map: api_key→OCTOSLAVE_API_KEY, base_url→OCTOSLAVE_BASE_URL,
+            #   default_model→OCTOSLAVE_MODEL, backend→OCTOSLAVE_BACKEND,
+            #   ollama_url→OCTOSLAVE_OLLAMA_URL
+            _env_keys = {
+                "api_key":       "OCTOSLAVE_API_KEY",
+                "base_url":      "OCTOSLAVE_BASE_URL",
+                "default_model": "OCTOSLAVE_MODEL",
+                "backend":       "OCTOSLAVE_BACKEND",
+                "ollama_url":    "OCTOSLAVE_OLLAMA_URL",
+            }
+            for key, env_var in _env_keys.items():
+                if not os.environ.get(env_var) and saved.get(key):
                     config[key] = saved[key]
         except (json.JSONDecodeError, OSError):
             pass
