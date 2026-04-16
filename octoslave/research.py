@@ -79,6 +79,14 @@ ROLES: dict[str, dict] = {
         "max_iter": 15,
         "tools": ["read_file", "write_file", "list_dir", "glob"],
     },
+    "reporter": {
+        "label": "Reporter",
+        "icon": "📊",
+        "color": "bold bright_cyan",
+        "default_model": "gpt-oss-120b",
+        "max_iter": 25,
+        "tools": ["read_file", "write_file", "bash", "list_dir", "glob"],
+    },
 }
 
 # Execution order within each round
@@ -89,6 +97,7 @@ PIPELINE: list[str] = [
     "debugger",
     "evaluator",
     "orchestrator",
+    "reporter",
 ]
 
 # Expected output paths (relative to round_dir)
@@ -99,6 +108,7 @@ OUTPUT_FILES: dict[str, str] = {
     "debugger":      "04_debug_report.md",
     "evaluator":     "05_evaluation.md",
     "orchestrator":  "06_synthesis.md",
+    "reporter":      "07_report.html",
 }
 
 FINDINGS_FILE = "findings.md"
@@ -212,6 +222,20 @@ STEPS
    - How to run
    - Summary of results achieved
 
+VISUALISATION (REQUIRED)
+- Generate plots for ALL key results using matplotlib or seaborn.
+- Save every figure to {round_dir}/03_code/results/ as PNG at 150 dpi minimum.
+- Each filename must be descriptive: e.g. results_accuracy_vs_epochs.png
+- Every plot must have: title, axis labels with units, legend where applicable.
+- Minimum required (adapt to the experiment):
+    * Data overview / distribution plot
+    * Main results plot (metric vs parameter, learning curve, scatter, etc.)
+    * Model vs data comparison plot if fitting was performed
+    * Baseline comparison plot if baselines are available
+- Use tight_layout() and savefig() — do not rely on plt.show().
+- Also save a {round_dir}/03_code/results/summary_figure.png that is a
+  multi-panel overview (2–4 subplots) of the most important results.
+
 ABSOLUTE RULES — READ CAREFULLY
 - NEVER generate synthetic or dummy data as a substitute for real data.
   Synthetic stand-ins are scientifically invalid and mislead future agents.
@@ -295,6 +319,12 @@ Structure:
   ## Recommended Next Steps  (specific, actionable, prioritised)
   ## SOTA Comparison         (how does this compare to known state-of-the-art?)
 
+VISUALISATION (REQUIRED)
+- Write and run a short Python script that generates a bar chart of all your
+  scores (0–10 per dimension) and saves it to {round_dir}/05_scores_chart.png.
+- Use matplotlib with a clean style. Label every bar with its score.
+- Colour bars: green (≥7), amber (4–6), red (≤3).
+
 SCORING RULES
 - If any results were produced from synthetic / generated data rather than a
   real source: Results Validity score is capped at 1/10. State this explicitly.
@@ -343,6 +373,59 @@ DECISION CRITERIA for COMPLETE:
 - Findings are novel relative to the literature
 - Code is reproducible and well-documented
 - OR we have exhausted productive directions
+""",
+
+"reporter": """\
+YOUR MISSION
+Produce a polished, self-contained HTML progress report for this round.
+This is the primary artifact scientists will open to quickly judge what was
+done, what was found, and where the research is headed.
+
+STEPS
+1. Inventory all round outputs:
+   - Read {round_dir}/01_literature.md
+   - Read {round_dir}/02_hypotheses.md
+   - Read {round_dir}/03_code/IMPLEMENTATION.md  (if exists)
+   - Read {round_dir}/04_debug_report.md          (if exists)
+   - Read {round_dir}/05_evaluation.md
+   - Read {round_dir}/06_synthesis.md
+   - List all *.png and *.svg files under {round_dir}/ and {round_dir}/03_code/results/
+2. Write a Python script to {round_dir}/build_report.py that generates the
+   HTML. Run it with bash. Verify {round_dir}/07_report.html is non-empty.
+
+REPORT STRUCTURE (HTML sections in order)
+  1. Sticky nav bar  — section anchors for quick jumping
+  2. Header          — round N / max_rounds, topic, date, overall score badge
+  3. Executive Summary — 4–6 bullet points drawn from the synthesis
+  4. Literature Highlights — top 3 papers/datasets as cards with clickable links
+  5. Hypotheses      — each hypothesis as a card (name, statement, feasibility
+                       badge); recommended experiment card highlighted
+  6. Implementation  — data sources used, approach, any skipped steps
+  7. Results & Plots — ALL PNG/SVG files embedded inline (base64), laid out in
+                       a 2-column responsive grid, each with a 1-sentence
+                       caption derived from the filename / IMPLEMENTATION.md
+  8. Evaluation      — embed 05_scores_chart.png; colour-coded score table
+                       (green ≥7, amber 4–6, red ≤3)
+  9. Debug Summary   — bugs found/fixed, confidence score badge
+  10. Next Direction — NEXT_ROUND_BRIEF from synthesis, formatted as a callout
+
+DESIGN REQUIREMENTS
+- Fully self-contained: base64-encode every image; no external CSS/image URLs.
+  External Google Fonts CDN link is OK.
+- Academic style: dark (#1a1a2e) header/nav, white content cards with subtle
+  box-shadow, readable 16px body font (Inter or system-ui), monospace for code.
+- Responsive: max-width 1100px centred, 2-column plot grid that collapses to
+  1 column on narrow viewports (use CSS flex/grid).
+- Plots: full-width within their grid cell — never thumbnail-sized.
+- Score badges: pill-shaped, colour-coded.
+- Include a footer with: round number, topic, generation timestamp.
+
+PYTHON SCRIPT REQUIREMENTS
+- Use only stdlib + matplotlib (pip install if needed). No Jinja2 required —
+  build the HTML as an f-string or concatenated string.
+- Read markdown files with open(), base64-encode PNGs with base64.b64encode().
+- Write the final HTML with open(output_path, 'w').
+- Print "Report written to <path>" on success so bash output confirms it.
 """,
 }
 
@@ -603,6 +686,156 @@ def _trim_messages(messages: list[dict]) -> list[dict]:
 
 
 # ---------------------------------------------------------------------------
+# Master HTML report (runs once after all rounds complete)
+# ---------------------------------------------------------------------------
+
+_MASTER_REPORTER_PROMPT = """\
+You are the Master Reporter for an autonomous multi-agent research run.
+
+RESEARCH TOPIC  : {topic}
+ROUNDS COMPLETED: {rounds_done}
+RESEARCH DIR    : {research_dir}
+
+YOUR MISSION
+Produce a single comprehensive, self-contained HTML report covering the entire
+multi-round research run. This is the definitive deliverable — the document
+a scientist will open to understand everything that was done.
+
+STEPS
+1. List all round directories under {research_dir}/.
+2. For each round, read:
+   - round_NNN/01_literature.md
+   - round_NNN/02_hypotheses.md
+   - round_NNN/03_code/IMPLEMENTATION.md  (if exists)
+   - round_NNN/05_evaluation.md
+   - round_NNN/06_synthesis.md
+3. Read {research_dir}/findings.md.
+4. Collect ALL PNG/SVG files from every round's 03_code/results/ directory
+   and any *.png at the round level (score charts etc.).
+5. Write a Python script to {research_dir}/build_master_report.py and run it.
+   The script must produce {research_dir}/final_report.html.
+
+MASTER REPORT STRUCTURE
+  1. Sticky nav bar — jump links to each major section
+  2. Title block    — topic, date, rounds completed, overall quality badge
+  3. Abstract       — 1 paragraph summary of the entire research arc
+  4. Research Timeline — visual round-by-round progress table showing:
+       Round | Key Hypothesis Tested | Overall Score | Status
+  5. Cumulative Findings — content from findings.md, formatted as cards
+  6. Round-by-Round Deep Dives (one collapsible <details> block per round):
+       - Literature highlights
+       - Hypothesis tested
+       - Implementation summary & data sources
+       - ALL result plots from that round (2-column grid, base64 inline)
+       - Evaluation scores chart + colour-coded score table
+       - What worked / what failed
+  7. Cross-Round Score Progression — a matplotlib line/bar chart showing
+       overall evaluation score per round; generate this chart in the Python
+       script and embed it inline.
+  8. Key Visualisations Gallery — a curated gallery of the most informative
+       plots across ALL rounds (the summary_figure.png from each round, if
+       present), displayed prominently full-width.
+  9. Methodology & Reproducibility — how to re-run each round's code
+  10. Conclusions & Next Steps — drawn from the final synthesis
+
+DESIGN REQUIREMENTS
+- Fully self-contained (base64 all images, Google Fonts CDN OK).
+- Dark header (#0d1117), white cards with subtle shadows, Inter font.
+- Responsive max-width 1200px, 2-column plot grid.
+- Collapsible round sections (HTML <details>/<summary>) so the document is
+  scannable at the top level but full detail is one click away.
+- Score progression chart: clean lines, round numbers on x-axis, score on y.
+- Footer: topic, generation timestamp, "Generated by OctoSlave".
+- Print the output path on success.
+"""
+
+_MASTER_REPORTER_SYSTEM = """\
+You are an expert scientific report writer. You produce polished, self-contained
+HTML research reports. You write clean Python scripts that generate these reports.
+Working directory: {working_dir}
+"""
+
+
+def _run_master_reporter(
+    topic: str,
+    research_dir: str,
+    rounds_done: int,
+    working_dir: str,
+    client: OpenAI,
+    model: str,
+) -> None:
+    """Generate the final master HTML report covering all rounds."""
+    cfg = ROLES["reporter"]
+    tools = _tools_for_role("reporter")
+
+    display.print_agent_banner("reporter", model, rounds_done, rounds_done)
+    display.print_info("  Generating master report…")
+
+    system = _MASTER_REPORTER_SYSTEM.format(working_dir=working_dir)
+    user_task = _MASTER_REPORTER_PROMPT.format(
+        topic=topic,
+        rounds_done=rounds_done,
+        research_dir=research_dir,
+    )
+
+    messages: list[dict] = [
+        {"role": "system", "content": system},
+        {"role": "user", "content": user_task},
+    ]
+
+    t0 = time.time()
+    for iteration in range(1, cfg["max_iter"] + 1):
+        try:
+            response = _stream_completion_with_tools(client, model, messages, tools)
+        except BadRequestError as e:
+            err = str(e)
+            if "ContextWindow" in err or "context" in err.lower():
+                messages = _trim_messages(messages)
+                continue
+            display.print_error(f"[Master Reporter] API error: {e}")
+            return
+        except KeyboardInterrupt:
+            display.stream_end(False)
+            display.console.print("\n[dim]Master report interrupted.[/dim]")
+            return
+
+        content = response["content"]
+        tool_calls = response["tool_calls"]
+        finish_reason = response["finish_reason"]
+
+        assistant_msg: dict = {"role": "assistant", "content": content or None}
+        if tool_calls:
+            assistant_msg["tool_calls"] = tool_calls
+        messages.append(assistant_msg)
+
+        if not tool_calls or finish_reason == "stop":
+            break
+
+        display.print_separator()
+        for tc in tool_calls:
+            name = tc["function"]["name"]
+            try:
+                args = json.loads(tc["function"]["arguments"] or "{}")
+            except json.JSONDecodeError:
+                args = {}
+            display.print_tool_call(name, args)
+            result, success = execute_tool(name, args, working_dir)
+            result = _cap_result(result, name)
+            display.print_tool_result(name, result, success)
+            messages.append({"role": "tool", "tool_call_id": tc["id"], "content": result})
+        display.print_separator()
+
+    elapsed = time.time() - t0
+    display.print_agent_done("reporter", elapsed, iteration)
+
+    final_report = Path(research_dir) / "final_report.html"
+    if final_report.exists():
+        display.print_info(
+            f"  [bold bright_cyan]Master report → {final_report}[/bold bright_cyan]"
+        )
+
+
+# ---------------------------------------------------------------------------
 # Main entry point
 # ---------------------------------------------------------------------------
 
@@ -690,6 +923,14 @@ def run_long_research(
         brief, is_complete = _parse_synthesis(str(synthesis_path))
 
         if is_complete:
+            _run_master_reporter(
+                topic=topic,
+                research_dir=str(research_dir),
+                rounds_done=round_num,
+                working_dir=working_dir,
+                client=client,
+                model=overrides.get("reporter") or ROLES["reporter"]["default_model"],
+            )
             display.print_research_complete(round_num, str(research_dir))
             completed_early = True
             break
@@ -697,4 +938,12 @@ def run_long_research(
         display.print_round_done(round_num, str(round_dir))
 
     if not completed_early:
+        _run_master_reporter(
+            topic=topic,
+            research_dir=str(research_dir),
+            rounds_done=max_rounds,
+            working_dir=working_dir,
+            client=client,
+            model=overrides.get("reporter") or ROLES["reporter"]["default_model"],
+        )
         display.print_research_complete(max_rounds, str(research_dir))

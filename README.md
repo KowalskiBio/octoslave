@@ -200,15 +200,19 @@ ots run --help
 Round 1 ──────────────────────────────────────────────────────
   🔬 Researcher         Literature survey, verified datasets
   💡 Hypothesis Gen.    3–5 ranked, falsifiable hypotheses
-  💻 Coder              Implements the recommended experiment (real data only)
+  💻 Coder              Implements experiment + saves plots to results/
   🐛 Debugger           Independently verifies code and results
-  ⚖️  Evaluator          Critical scoring against SOTA benchmarks
+  ⚖️  Evaluator          Critical scoring + generates scores chart
   🧠 Orchestrator       Synthesises findings → writes brief for Round 2
+  📊 Reporter           Produces self-contained HTML report for Round 1
 Round 2 ──────────────────────────────────────────────────────
   ... (loop until complete or max rounds)
+  📊 Master Reporter    Final comprehensive HTML report across all rounds
 ```
 
 **Data integrity guarantee:** agents are explicitly forbidden from generating synthetic or dummy data as a substitute for real sources. If a dataset is unavailable, the step is logged as skipped, alternatives are searched, and the pipeline pivots — it never fabricates results.
+
+**Visual-first output:** every round produces publication-quality plots (data overview, main results, model fits, baseline comparisons), an evaluation scores chart, and a self-contained HTML report. After all rounds, a master `final_report.html` is generated with cross-round score progression, a curated plot gallery, and collapsible round deep-dives — designed so a scientist can evaluate the entire research arc at a glance.
 
 ### Usage
 
@@ -242,6 +246,7 @@ Each run creates a self-contained directory tree under `research/` in your worki
 
 ```
 research/
+├── final_report.html              ← master HTML report — open in browser
 ├── findings.md                    ← cumulative findings across all rounds
 ├── round_001/
 │   ├── 01_literature.md           ← papers, datasets (with access status)
@@ -249,10 +254,12 @@ research/
 │   ├── 03_code/
 │   │   ├── *.py                   ← experiment scripts
 │   │   ├── IMPLEMENTATION.md      ← approach, skipped steps, results summary
-│   │   └── results/               ← all outputs (CSV, JSON, logs)
+│   │   └── results/               ← plots (PNG), metrics (CSV/JSON), logs
 │   ├── 04_debug_report.md         ← bugs found/fixed, confidence score
 │   ├── 05_evaluation.md           ← independent scores against SOTA
-│   └── 06_synthesis.md            ← round summary + brief for next round
+│   ├── 05_scores_chart.png        ← colour-coded evaluation bar chart
+│   ├── 06_synthesis.md            ← round summary + brief for next round
+│   └── 07_report.html             ← self-contained HTML report for this round
 ├── round_002/
 │   └── ...
 ```

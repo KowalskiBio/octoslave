@@ -268,6 +268,8 @@ def print_help():
         "  [cyan]--overseer MODEL[/cyan]      Model for orchestrator (default mistral-small-4)\n"
         "  [cyan]--all MODEL[/cyan]           Use one model for all agents\n"
         "  [cyan]--resume[/cyan]              Resume an interrupted run\n\n"
+        "[dim]Output per round: plots → 03_code/results/, HTML report → 07_report.html[/dim]\n"
+        "[dim]Final master report: research/final_report.html  (open in browser)[/dim]\n\n"
         "[dim]Ctrl+C  pause current agent (progress saved)[/dim]",
         title="[prompt]Help[/prompt]",
         border_style="dim",
@@ -348,9 +350,11 @@ def print_research_complete(rounds_done: int, research_dir: str):
         f"[dim]Rounds completed : {rounds_done}[/dim]\n"
         f"[dim]Output directory : {research_dir}[/dim]\n\n"
         "[white]Key files:[/white]\n"
-        f"  [cyan]{research_dir}/findings.md[/cyan]          ← cumulative findings\n"
+        f"  [bold cyan]{research_dir}/final_report.html[/bold cyan]    ← master HTML report (open in browser)\n"
+        f"  [cyan]{research_dir}/findings.md[/cyan]              ← cumulative findings\n"
+        f"  [cyan]{research_dir}/round_*/07_report.html[/cyan]   ← per-round HTML reports\n"
         f"  [cyan]{research_dir}/round_*/06_synthesis.md[/cyan]  ← per-round synthesis\n"
-        f"  [cyan]{research_dir}/round_*/03_code/[/cyan]          ← all code & results",
+        f"  [cyan]{research_dir}/round_*/03_code/results/[/cyan] ← plots & data",
         border_style="bright_green",
         padding=(0, 2),
     ))
