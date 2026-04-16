@@ -1,0 +1,700 @@
+"""
+OctoSlave — autonomous multi-agent long-research pipeline.
+
+Pipeline per round:
+  Researcher → HypothesisGenerator → Coder → Debugger → Evaluator → Orchestrator
+
+The Orchestrator synthesises each round and writes the brief for the next one.
+Everything is persisted to disk so runs can be inspected or resumed.
+"""
+
+from __future__ import annotations
+
+import json
+import re
+import time
+from datetime import datetime
+from pathlib import Path
+
+from openai import OpenAI, BadRequestError
+
+from . import display
+from .agent import _cap_result
+from .tools import TOOL_DEFINITIONS, execute_tool
+
+# ---------------------------------------------------------------------------
+# Role registry
+# ---------------------------------------------------------------------------
+
+ROLES: dict[str, dict] = {
+    "researcher": {
+        "label": "Researcher",
+        "icon": "🔬",
+        "color": "bold cyan",
+        "default_model": "qwen3.5",
+        "max_iter": 30,
+        "tools": ["read_file", "write_file", "web_search", "web_fetch",
+                  "list_dir", "glob", "bash"],
+    },
+    "hypothesis": {
+        "label": "Hypothesis Generator",
+        "icon": "💡",
+        "color": "bold bright_magenta",
+        "default_model": "gpt-oss-120b",
+        "max_iter": 15,
+        "tools": ["read_file", "write_file", "list_dir", "glob"],
+    },
+    "coder": {
+        "label": "Coder",
+        "icon": "💻",
+        "color": "bold green",
+        "default_model": "qwen3-coder",
+        "max_iter": 40,
+        "tools": ["read_file", "write_file", "edit_file", "bash",
+                  "glob", "grep", "list_dir"],
+    },
+    "debugger": {
+        "label": "Debugger",
+        "icon": "🐛",
+        "color": "bold red",
+        "default_model": "qwen3-coder",
+        "max_iter": 25,
+        "tools": ["read_file", "write_file", "edit_file", "bash",
+                  "glob", "grep", "list_dir"],
+    },
+    "evaluator": {
+        "label": "Evaluator",
+        "icon": "⚖️ ",
+        "color": "bold yellow",
+        "default_model": "gpt-oss-120b",
+        "max_iter": 15,
+        "tools": ["read_file", "bash", "write_file", "list_dir",
+                  "web_search", "glob"],
+    },
+    "orchestrator": {
+        "label": "Orchestrator",
+        "icon": "🧠",
+        "color": "bold bright_white",
+        "default_model": "mistral-small-4",
+        "max_iter": 15,
+        "tools": ["read_file", "write_file", "list_dir", "glob"],
+    },
+}
+
+# Execution order within each round
+PIPELINE: list[str] = [
+    "researcher",
+    "hypothesis",
+    "coder",
+    "debugger",
+    "evaluator",
+    "orchestrator",
+]
+
+# Expected output paths (relative to round_dir)
+OUTPUT_FILES: dict[str, str] = {
+    "researcher":    "01_literature.md",
+    "hypothesis":    "02_hypotheses.md",
+    "coder":         "03_code/",          # directory
+    "debugger":      "04_debug_report.md",
+    "evaluator":     "05_evaluation.md",
+    "orchestrator":  "06_synthesis.md",
+}
+
+FINDINGS_FILE = "findings.md"
+NEXT_BRIEF_MARKER = "## NEXT_ROUND_BRIEF"
+COMPLETE_MARKER = "## STATUS: COMPLETE"
+
+
+# ---------------------------------------------------------------------------
+# System prompts
+# ---------------------------------------------------------------------------
+
+_SHARED_HEADER = """\
+You are the {label} in OctoSlave's autonomous multi-agent research system.
+
+RESEARCH TOPIC : {topic}
+ROUND          : {round_num} / {max_rounds}
+ROUND DIR      : {round_dir}
+RESEARCH DIR   : {research_dir}
+WORKING DIR    : {working_dir}
+
+ROUND BRIEF:
+{brief}
+
+---
+"""
+
+_ROLE_PROMPTS: dict[str, str] = {
+
+"researcher": """\
+YOUR MISSION
+Search the web and existing files to produce a comprehensive literature survey
+for this round's brief. Collect papers, datasets, code repos, and key facts.
+
+STEPS
+1. Search the web (web_search, web_fetch) for the most relevant recent work.
+   Focus on arXiv, GitHub, official docs, and benchmarks.
+2. If there is a 'literature/' folder in the working dir, read any PDFs there.
+3. Identify publicly available datasets — include direct download URLs / DOIs,
+   file formats, and licensing. Attempt to fetch each dataset's landing page to
+   confirm it is accessible. Flag each as: VERIFIED ACCESSIBLE | REQUIRES SIGNUP
+   | PAYWALLED | UNAVAILABLE (with reason).
+4. Note existing implementations or baselines.
+
+DATA SOURCING RULES
+- Only list datasets you have confirmed exist (fetched their landing page / DOI).
+- Do NOT recommend datasets you cannot verify — scientists will not waste time
+  chasing phantom links.
+- Prefer datasets with programmatic access (direct URL, Zenodo, HuggingFace,
+  figshare, UCI ML repo, NCBI, etc.).
+
+OUTPUT — write ONE file:
+  {round_dir}/01_literature.md
+
+Structure it as:
+  ## Overview
+  ## Key Papers        (title, authors, year, URL, 3-sentence summary each)
+  ## Datasets          (name, size, URL, licence, ACCESS STATUS, relevance)
+  ## Existing Tools / Code  (repo URL, stars if known, relevance)
+  ## Identified Gaps   (what is missing / unexplored)
+
+Be thorough. Aim for ≥ 5 substantive sources.
+""",
+
+"hypothesis": """\
+YOUR MISSION
+Read the literature survey and generate bold, testable hypotheses.
+
+STEPS
+1. Read {round_dir}/01_literature.md
+2. If round > 1, also read {research_dir}/findings.md and previous synthesis.
+3. Generate 3–5 specific, falsifiable hypotheses ranked by (feasibility × impact).
+
+OUTPUT — write ONE file:
+  {round_dir}/02_hypotheses.md
+
+For each hypothesis include:
+  ### Hypothesis N: <short name>
+  **Statement**: one clear, falsifiable claim
+  **Motivation**: why this matters / what gap it addresses
+  **Predicted outcome**: what we expect to observe
+  **Experiment design**: concrete steps to test it
+  **Success criteria**: measurable thresholds (e.g., accuracy > X%)
+  **Feasibility**: HIGH / MEDIUM / LOW + reason
+  **Priority rank**: 1 = highest
+
+End the file with:
+  ## RECOMMENDED EXPERIMENT
+  Which hypothesis to tackle this round and why.
+""",
+
+"coder": """\
+YOUR MISSION
+Implement the recommended experiment from the hypotheses file.
+Write real, working, runnable code. Produce concrete results from real data.
+
+STEPS
+1. Read {round_dir}/02_hypotheses.md — focus on ## RECOMMENDED EXPERIMENT.
+2. Read {round_dir}/01_literature.md — note which datasets are VERIFIED ACCESSIBLE.
+3. Read any existing code in {round_dir}/03_code/ if this is a continuation.
+4. Plan the implementation, then execute:
+   a. Create {round_dir}/03_code/ directory.
+   b. Attempt to download or access the verified dataset(s) from the literature.
+   c. Write modular, well-commented Python (or other language if appropriate).
+   d. Install required packages with pip/conda.
+   e. Run the code. Fix any runtime errors.
+   f. Save ALL output (logs, metrics, plots) to {round_dir}/03_code/results/.
+5. Write {round_dir}/03_code/IMPLEMENTATION.md covering:
+   - Approach taken and data sources used
+   - Any steps that were skipped and why (see FAILURE PROTOCOL)
+   - Key design decisions
+   - How to run
+   - Summary of results achieved
+
+ABSOLUTE RULES — READ CAREFULLY
+- NEVER generate synthetic or dummy data as a substitute for real data.
+  Synthetic stand-ins are scientifically invalid and mislead future agents.
+- NEVER fabricate results or outputs. Every number in results/ must come from
+  real computation on real data.
+- If a data source is unavailable (network error, API down, auth required):
+    1. Log the failure clearly in IMPLEMENTATION.md under ## Skipped Steps.
+    2. Do NOT proceed with that experiment using fake data.
+    3. Instead: search for an alternative real dataset that tests the same
+       hypothesis (web_search). Try at least 2–3 alternatives.
+    4. If NO real data can be obtained for a given hypothesis, mark that
+       experiment as BLOCKED in IMPLEMENTATION.md and pivot to a different
+       hypothesis from {round_dir}/02_hypotheses.md that CAN use available data.
+    5. If ALL hypotheses are blocked due to data access, implement the
+       methodological scaffolding (data loading, model, evaluation pipeline)
+       using a small well-known public benchmark (e.g. UCI, HuggingFace, NCBI)
+       that IS accessible — document the substitution clearly.
+- Quantitative results MUST be saved (JSON / CSV / text).
+- Every script that IS run must complete without error.
+- If an approach fails after 3 debugging attempts, pivot and document why.
+""",
+
+"debugger": """\
+YOUR MISSION
+Independently verify that the code works correctly and that results are valid.
+Your job is to be skeptical — find flaws before the evaluator does.
+
+STEPS
+1. List and read ALL files under {round_dir}/03_code/.
+2. For each script: read it, then run it, inspect output.
+3. Check for:
+   - SYNTHETIC / DUMMY DATA — any use of generated, fabricated, or placeholder
+     data instead of real sources is an AUTOMATIC CRITICAL BUG. Flag it
+     immediately and mark it as UNFIXABLE unless real data is substituted.
+   - Runtime errors or silent failures
+   - Off-by-one errors, data leakage, incorrect metrics
+   - Results that seem too good / too bad to be true (may indicate fake data)
+   - Hard-coded paths or missing dependencies
+   - Skipped steps — verify each skip in IMPLEMENTATION.md is justified and
+     that alternatives were genuinely attempted
+4. Fix every bug you find (edit_file / bash).
+5. Re-run after fixes to confirm they pass.
+6. Write a structured report:
+
+OUTPUT — write ONE file:
+  {round_dir}/04_debug_report.md
+
+Structure:
+  ## Bugs Found and Fixed   (list each bug, fix applied, verification)
+  ## Tests Run              (commands and outcomes)
+  ## Verified Results       (copy key metrics here for the record)
+  ## Outstanding Issues     (anything you could not fix — be honest)
+  ## Confidence Score       (0–10: how trustworthy are the results?)
+""",
+
+"evaluator": """\
+YOUR MISSION
+Provide an INDEPENDENT, critical assessment of this round's work.
+You have not been involved in producing the work — evaluate it with fresh eyes.
+
+STEPS
+1. Read in order:
+   {round_dir}/01_literature.md
+   {round_dir}/02_hypotheses.md
+   All files under {round_dir}/03_code/
+   {round_dir}/04_debug_report.md
+2. Optionally run the code yourself to verify claims.
+3. Cross-check results against literature benchmarks (web_search if needed).
+
+OUTPUT — write ONE file:
+  {round_dir}/05_evaluation.md
+
+Structure:
+  ## Literature Quality      (score 0–10 + commentary)
+  ## Hypothesis Quality      (score 0–10 + commentary)
+  ## Implementation Quality  (score 0–10 + commentary)
+  ## Results Validity        (score 0–10 + commentary)
+  ## Overall Score           (0–10 weighted average)
+  ## Strengths               (what was done well)
+  ## Critical Weaknesses     (what MUST be improved)
+  ## Recommended Next Steps  (specific, actionable, prioritised)
+  ## SOTA Comparison         (how does this compare to known state-of-the-art?)
+
+SCORING RULES
+- If any results were produced from synthetic / generated data rather than a
+  real source: Results Validity score is capped at 1/10. State this explicitly.
+- A skipped step with a clear justification and documented alternatives is
+  acceptable. A skipped step replaced by fake data is a critical failure.
+- Be harsh. Mediocre work rated generously helps no one.
+""",
+
+"orchestrator": """\
+YOUR MISSION
+Synthesise this round's work, update the master findings log, and write the
+precise brief that will drive the next round's specialist agents.
+
+STEPS
+1. Read all round outputs:
+   {round_dir}/01_literature.md
+   {round_dir}/02_hypotheses.md
+   {round_dir}/03_code/IMPLEMENTATION.md  (if exists)
+   {round_dir}/04_debug_report.md
+   {round_dir}/05_evaluation.md
+2. Read {research_dir}/findings.md (if it exists) for cumulative context.
+3. Synthesise: what was learned, what worked, what failed, what to do next.
+4. Append a new entry to {research_dir}/findings.md (create if missing).
+5. Write {round_dir}/06_synthesis.md with this exact structure:
+
+   ## Round Summary
+   ## Key Findings
+   ## What Worked
+   ## What Failed / Gaps
+   ## Updated Research Direction
+
+   Then ONE of:
+
+   {next_brief_marker}
+   [A specific, detailed brief for the next round — concrete tasks,
+    specific models/datasets to use, exact improvements to make.
+    Build on what failed. Escalate ambition if things worked.]
+
+   OR (only if the research has fully converged or max rounds reached):
+
+   {complete_marker}
+   [Final conclusion statement]
+
+DECISION CRITERIA for COMPLETE:
+- Hypotheses have been tested and results are solid (evaluator score ≥ 8/10)
+- Findings are novel relative to the literature
+- Code is reproducible and well-documented
+- OR we have exhausted productive directions
+""",
+}
+
+
+def _build_system_prompt(
+    role: str,
+    topic: str,
+    round_num: int,
+    max_rounds: int,
+    round_dir: str,
+    research_dir: str,
+    working_dir: str,
+    brief: str,
+) -> str:
+    role_cfg = ROLES[role]
+    header = _SHARED_HEADER.format(
+        label=role_cfg["label"],
+        topic=topic,
+        round_num=round_num,
+        max_rounds=max_rounds,
+        round_dir=round_dir,
+        research_dir=research_dir,
+        working_dir=working_dir,
+        brief=brief,
+    )
+    body = _ROLE_PROMPTS[role].format(
+        round_dir=round_dir,
+        research_dir=research_dir,
+        working_dir=working_dir,
+        next_brief_marker=NEXT_BRIEF_MARKER,
+        complete_marker=COMPLETE_MARKER,
+    )
+    return header + body
+
+
+# ---------------------------------------------------------------------------
+# Filtered tool list per role
+# ---------------------------------------------------------------------------
+
+def _tools_for_role(role: str) -> list[dict]:
+    allowed = set(ROLES[role]["tools"])
+    return [t for t in TOOL_DEFINITIONS if t["function"]["name"] in allowed]
+
+
+# ---------------------------------------------------------------------------
+# Core specialist agent loop (mirrors agent._agent_loop with custom tools)
+# ---------------------------------------------------------------------------
+
+def _stream_completion_with_tools(
+    client: OpenAI,
+    model: str,
+    messages: list[dict],
+    tools: list[dict],
+) -> dict:
+    """Stream one turn. Returns {content, tool_calls, finish_reason}."""
+    content_parts: list[str] = []
+    tool_call_map: dict[int, dict] = {}
+    finish_reason = "stop"
+
+    display.stream_start()
+
+    try:
+        with client.chat.completions.create(
+            model=model,
+            messages=messages,
+            tools=tools,
+            tool_choice="auto",
+            stream=True,
+        ) as stream:
+            for chunk in stream:
+                if not chunk.choices:
+                    continue
+                choice = chunk.choices[0]
+                delta = choice.delta
+
+                if delta.content:
+                    content_parts.append(delta.content)
+                    display.stream_chunk(delta.content)
+
+                if delta.tool_calls:
+                    for tc in delta.tool_calls:
+                        idx = tc.index
+                        if idx not in tool_call_map:
+                            tool_call_map[idx] = {
+                                "id": "", "type": "function",
+                                "function": {"name": "", "arguments": ""},
+                            }
+                        slot = tool_call_map[idx]
+                        if tc.id:
+                            slot["id"] = tc.id
+                        if tc.function:
+                            if tc.function.name:
+                                slot["function"]["name"] += tc.function.name
+                            if tc.function.arguments:
+                                slot["function"]["arguments"] += tc.function.arguments
+
+                if choice.finish_reason:
+                    finish_reason = choice.finish_reason
+    except BadRequestError as e:
+        display.stream_end(False)
+        raise
+
+    had_content = bool(content_parts)
+    display.stream_end(had_content)
+
+    return {
+        "content": "".join(content_parts),
+        "tool_calls": [tool_call_map[i] for i in sorted(tool_call_map)],
+        "finish_reason": finish_reason,
+    }
+
+
+def _run_specialist(
+    role: str,
+    model: str,
+    topic: str,
+    round_num: int,
+    max_rounds: int,
+    round_dir: str,
+    research_dir: str,
+    working_dir: str,
+    brief: str,
+    client: OpenAI,
+) -> bool:
+    """
+    Run one specialist agent for one round.
+    Returns True on success, False if a fatal error occurred.
+    """
+    cfg = ROLES[role]
+    tools = _tools_for_role(role)
+    max_iter = cfg["max_iter"]
+
+    display.print_agent_banner(role, model, round_num, max_rounds)
+
+    system_prompt = _build_system_prompt(
+        role, topic, round_num, max_rounds,
+        round_dir, research_dir, working_dir, brief,
+    )
+
+    messages: list[dict] = [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": (
+            f"Round {round_num}: carry out your role. "
+            f"Write all outputs to {round_dir}. "
+            "When you are done, stop calling tools."
+        )},
+    ]
+
+    t0 = time.time()
+
+    for iteration in range(1, max_iter + 1):
+        try:
+            response = _stream_completion_with_tools(client, model, messages, tools)
+        except BadRequestError as e:
+            err = str(e)
+            if "ContextWindow" in err or "context" in err.lower():
+                display.print_error(
+                    f"[{cfg['label']}] Context window exceeded — "
+                    "trimming oldest tool results and retrying."
+                )
+                messages = _trim_messages(messages)
+                continue
+            display.print_error(f"[{cfg['label']}] API error: {e}")
+            return False
+        except KeyboardInterrupt:
+            display.stream_end(False)
+            display.console.print("\n[dim]Interrupted.[/dim]")
+            raise
+
+        content = response["content"]
+        tool_calls = response["tool_calls"]
+        finish_reason = response["finish_reason"]
+
+        assistant_msg: dict = {"role": "assistant", "content": content or None}
+        if tool_calls:
+            assistant_msg["tool_calls"] = tool_calls
+        messages.append(assistant_msg)
+
+        if not tool_calls or finish_reason == "stop":
+            break
+
+        display.print_separator()
+        for tc in tool_calls:
+            name = tc["function"]["name"]
+            try:
+                args = json.loads(tc["function"]["arguments"] or "{}")
+            except json.JSONDecodeError:
+                args = {}
+
+            display.print_tool_call(name, args)
+            result, success = execute_tool(name, args, working_dir)
+            result = _cap_result(result, name)
+            display.print_tool_result(name, result, success)
+
+            messages.append({
+                "role": "tool",
+                "tool_call_id": tc["id"],
+                "content": result,
+            })
+        display.print_separator()
+
+    elapsed = time.time() - t0
+    display.print_agent_done(role, elapsed, iteration)
+    return True
+
+
+# ---------------------------------------------------------------------------
+# Overseer: parse synthesis for next brief and completion signal
+# ---------------------------------------------------------------------------
+
+def _parse_synthesis(synthesis_path: str) -> tuple[str, bool]:
+    """
+    Read the orchestrator's synthesis file.
+    Returns (next_brief: str, is_complete: bool).
+    """
+    path = Path(synthesis_path)
+    if not path.exists():
+        return "Continue the research with improvements based on previous round.", False
+
+    text = path.read_text(errors="replace")
+
+    if COMPLETE_MARKER in text:
+        return "", True
+
+    match = re.search(
+        rf"{re.escape(NEXT_BRIEF_MARKER)}\s*(.*?)(?:\n## |\Z)",
+        text,
+        re.DOTALL,
+    )
+    if match:
+        brief = match.group(1).strip()
+        if brief:
+            return brief, False
+
+    # Fallback: use last 1500 chars of synthesis as implicit brief
+    return text[-1500:].strip(), False
+
+
+# ---------------------------------------------------------------------------
+# Context trimmer (last-resort when context window fills up)
+# ---------------------------------------------------------------------------
+
+def _trim_messages(messages: list[dict]) -> list[dict]:
+    """
+    Remove the oldest tool-result messages (pairs) to free context space.
+    Always preserve system + first user message.
+    """
+    system = messages[:2]
+    rest = messages[2:]
+
+    # Drop oldest tool result
+    for i, m in enumerate(rest):
+        if m.get("role") == "tool":
+            rest = rest[:max(0, i - 1)] + rest[i + 1:]
+            break
+
+    return system + rest
+
+
+# ---------------------------------------------------------------------------
+# Main entry point
+# ---------------------------------------------------------------------------
+
+def run_long_research(
+    topic: str,
+    working_dir: str,
+    client: OpenAI,
+    max_rounds: int = 5,
+    model_overrides: dict[str, str] | None = None,
+    resume: bool = False,
+) -> None:
+    """
+    Run the full autonomous multi-agent research pipeline.
+
+    Args:
+        topic:          The research topic / goal.
+        working_dir:    The project working directory.
+        client:         Authenticated OpenAI client.
+        max_rounds:     Maximum number of research rounds.
+        model_overrides: Per-role model overrides, e.g. {"coder": "qwen3-coder-30b"}.
+        resume:         If True, skip rounds whose output files already exist.
+    """
+    overrides = model_overrides or {}
+    research_dir = Path(working_dir) / "research"
+    research_dir.mkdir(parents=True, exist_ok=True)
+
+    display.print_research_start(topic, max_rounds, ROLES, overrides)
+
+    # Initial brief
+    brief = (
+        f"Initial research round. Conduct a broad literature survey on: {topic}\n"
+        "Identify key papers, available datasets, existing methods, and open problems.\n"
+        "Generate first hypotheses and implement the most promising experiment."
+    )
+
+    completed_early = False
+
+    for round_num in range(1, max_rounds + 1):
+        round_dir = research_dir / f"round_{round_num:03d}"
+        round_dir.mkdir(parents=True, exist_ok=True)
+
+        display.print_round_header(round_num, max_rounds, str(round_dir))
+
+        for role in PIPELINE:
+            model = overrides.get(role) or ROLES[role]["default_model"]
+
+            # Resumability: skip if output already exists
+            expected = OUTPUT_FILES[role]
+            expected_path = round_dir / expected
+            if resume and (expected_path.exists() or (expected_path.is_dir())):
+                display.print_info(
+                    f"  ↩  {ROLES[role]['label']} output found — skipping."
+                )
+                continue
+
+            try:
+                ok = _run_specialist(
+                    role=role,
+                    model=model,
+                    topic=topic,
+                    round_num=round_num,
+                    max_rounds=max_rounds,
+                    round_dir=str(round_dir),
+                    research_dir=str(research_dir),
+                    working_dir=working_dir,
+                    brief=brief,
+                    client=client,
+                )
+            except KeyboardInterrupt:
+                display.console.print(
+                    "\n[bold yellow]Research paused.[/bold yellow] "
+                    f"Progress saved to [dim]{research_dir}[/dim]\n"
+                    "Re-run with [cyan]/long-research ... --resume[/cyan] to continue."
+                )
+                return
+
+            if not ok:
+                display.print_error(
+                    f"{ROLES[role]['label']} failed in round {round_num}. "
+                    "Continuing with next agent."
+                )
+
+        # Parse orchestrator synthesis → next brief
+        synthesis_path = round_dir / OUTPUT_FILES["orchestrator"]
+        brief, is_complete = _parse_synthesis(str(synthesis_path))
+
+        if is_complete:
+            display.print_research_complete(round_num, str(research_dir))
+            completed_early = True
+            break
+
+        display.print_round_done(round_num, str(round_dir))
+
+    if not completed_early:
+        display.print_research_complete(max_rounds, str(research_dir))
