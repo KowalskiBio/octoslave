@@ -207,20 +207,87 @@ Write real, working, runnable code. Produce concrete results from real data.
 STEPS
 1. Read {round_dir}/02_hypotheses.md — focus on ## RECOMMENDED EXPERIMENT.
 2. Read {round_dir}/01_literature.md — note which datasets are VERIFIED ACCESSIBLE.
-3. Read any existing code in {round_dir}/03_code/ if this is a continuation.
-4. Plan the implementation, then execute:
+3. Read {research_dir}/hw_profile.json if it exists — this contains the detected
+   hardware profile for this machine. Use it to configure batch sizes, device
+   placement, and parallelism in every script you write.
+4. Read any existing code in {round_dir}/03_code/ if this is a continuation.
+5. HARDWARE PROBE (MANDATORY — do this before writing any experiment code):
+   Run the following one-liner and save the output to
+   {round_dir}/03_code/hw_profile.json AND {research_dir}/hw_profile.json:
+
+   python3 - <<'HWPROBE'
+   import json, platform, os, sys
+   info = {{"python": sys.version, "platform": platform.platform(),
+            "cpu_count": os.cpu_count()}}
+   try:
+       import psutil
+       mem = psutil.virtual_memory()
+       info["ram_total_gb"] = round(mem.total / 1e9, 1)
+       info["ram_available_gb"] = round(mem.available / 1e9, 1)
+   except ImportError:
+       pass
+   try:
+       import torch
+       info["torch_version"] = torch.__version__
+       info["cuda_available"] = torch.cuda.is_available()
+       if torch.cuda.is_available():
+           info["cuda_device_count"] = torch.cuda.device_count()
+           info["cuda_devices"] = [
+               {{"name": torch.cuda.get_device_name(i),
+                 "vram_gb": round(torch.cuda.get_device_properties(i).total_memory / 1e9, 1)}}
+               for i in range(torch.cuda.device_count())
+           ]
+           info["cuda_version"] = torch.version.cuda
+   except ImportError:
+       info["torch_available"] = False
+   try:
+       result = __import__("subprocess").run(
+           ["nvidia-smi", "--query-gpu=name,memory.total,memory.free",
+            "--format=csv,noheader,nounits"],
+           capture_output=True, text=True, timeout=5
+       )
+       if result.returncode == 0:
+           info["nvidia_smi"] = result.stdout.strip()
+   except Exception:
+       pass
+   print(json.dumps(info, indent=2))
+   HWPROBE
+
+   If psutil is not installed, install it first: pip install psutil -q
+
+6. Plan the implementation using the hardware profile, then execute:
    a. Create {round_dir}/03_code/ directory.
    b. Attempt to download or access the verified dataset(s) from the literature.
    c. Write modular, well-commented Python (or other language if appropriate).
    d. Install required packages with pip/conda.
    e. Run the code. Fix any runtime errors.
    f. Save ALL output (logs, metrics, plots) to {round_dir}/03_code/results/.
-5. Write {round_dir}/03_code/IMPLEMENTATION.md covering:
+7. Write {round_dir}/03_code/IMPLEMENTATION.md covering:
+   - Detected hardware and how it was used
    - Approach taken and data sources used
    - Any steps that were skipped and why (see FAILURE PROTOCOL)
    - Key design decisions
    - How to run
    - Summary of results achieved
+
+GPU / ACCELERATOR RULES (CRITICAL)
+- After probing, if CUDA is available you MUST use it. There are no exceptions.
+- Always use torch.device("cuda" if torch.cuda.is_available() else "cpu") and
+  move models AND tensors to that device explicitly (.to(device) or .cuda()).
+- For PyTorch training loops:
+    * Use torch.amp.autocast("cuda") + GradScaler for mixed-precision training.
+    * Set num_workers ≥ 2 in DataLoader (pin_memory=True when on CUDA).
+    * Choose batch_size to fill ~70–80% of available VRAM (read from hw_profile).
+- For scikit-learn / XGBoost: pass device="cuda" or tree_method="gpu_hist"
+  where the library supports it.
+- For HuggingFace Transformers: pass device_map="auto" or .to(device).
+- For JAX / TensorFlow: confirm GPU backend and log it explicitly.
+- Always log which device is actually being used at runtime:
+    print(f"Using device: {{device}}")  # this must appear in the output
+- Save GPU utilisation stats (peak VRAM used) to results/ using:
+    torch.cuda.max_memory_allocated() / 1e9 → log as "peak_vram_gb"
+- If CUDA is available but a library does not support it, document why in
+  IMPLEMENTATION.md and ensure at minimum the data pipeline is vectorised.
 
 VISUALISATION (REQUIRED)
 - Generate plots for ALL key results using matplotlib or seaborn.
@@ -270,6 +337,13 @@ STEPS
    - SYNTHETIC / DUMMY DATA — any use of generated, fabricated, or placeholder
      data instead of real sources is an AUTOMATIC CRITICAL BUG. Flag it
      immediately and mark it as UNFIXABLE unless real data is substituted.
+   - GPU UNDERUTILISATION — read {research_dir}/hw_profile.json. If CUDA is
+     available and the code does NOT move models/tensors to the GPU, this is a
+     CRITICAL BUG. Check that:
+       * "Using device: cuda" appears in the run output (not "cpu")
+       * peak_vram_gb is logged and > 0 in results/
+       * batch_size is appropriately sized for available VRAM
+     Fix any CPU-only code by adding .to(device) and rerunning.
    - Runtime errors or silent failures
    - Off-by-one errors, data leakage, incorrect metrics
    - Results that seem too good / too bad to be true (may indicate fake data)
@@ -347,8 +421,8 @@ STEPS
    {round_dir}/05_evaluation.md
 2. Read {research_dir}/findings.md (if it exists) for cumulative context.
 3. Synthesise: what was learned, what worked, what failed, what to do next.
-4. Append a new entry to {research_dir}/findings.md (create if missing).
-5. Write {round_dir}/06_synthesis.md with this exact structure:
+4. Write ONLY {round_dir}/06_synthesis.md with this exact structure.
+   findings.md is updated automatically by the pipeline — do NOT touch it.
 
    ## Round Summary
    ## Key Findings
@@ -633,6 +707,91 @@ def _run_specialist(
 
 
 # ---------------------------------------------------------------------------
+# findings.md updater — called by the pipeline, not the LLM
+# ---------------------------------------------------------------------------
+
+def _update_findings(
+    research_dir: str,
+    round_num: int,
+    round_dir: str,
+    topic: str,
+) -> None:
+    """
+    Append a structured entry for this round to findings.md.
+    Reads from the round's output files directly — does not rely on the LLM.
+    Called by the pipeline after the orchestrator finishes each round.
+    """
+    findings_path = Path(research_dir) / FINDINGS_FILE
+
+    # Collect content from available round outputs
+    def _read(rel: str) -> str:
+        p = Path(round_dir) / rel
+        if p.exists():
+            try:
+                return p.read_text(errors="replace").strip()
+            except OSError:
+                return ""
+        return ""
+
+    synthesis   = _read(OUTPUT_FILES["orchestrator"])
+    evaluation  = _read(OUTPUT_FILES["evaluator"])
+    hypotheses  = _read(OUTPUT_FILES["hypothesis"])
+
+    # Extract overall score from evaluation
+    score_match = re.search(r"##\s*Overall Score[^\n]*\n+([^\n]+)", evaluation)
+    score_str   = score_match.group(1).strip() if score_match else "N/A"
+
+    # Extract key findings / summary block from synthesis (## Key Findings section)
+    kf_match = re.search(
+        r"##\s*Key Findings\s*\n(.*?)(?:\n##|\Z)", synthesis, re.DOTALL
+    )
+    key_findings = kf_match.group(1).strip() if kf_match else synthesis[:800].strip()
+
+    # Extract what worked / what failed
+    ww_match = re.search(r"##\s*What Worked\s*\n(.*?)(?:\n##|\Z)", synthesis, re.DOTALL)
+    wf_match = re.search(r"##\s*What Failed[^\n]*\n(.*?)(?:\n##|\Z)", synthesis, re.DOTALL)
+    what_worked = ww_match.group(1).strip() if ww_match else ""
+    what_failed = wf_match.group(1).strip() if wf_match else ""
+
+    # Extract recommended experiment from hypotheses
+    rec_match = re.search(
+        r"##\s*RECOMMENDED EXPERIMENT\s*\n(.*?)(?:\n##|\Z)", hypotheses, re.DOTALL
+    )
+    recommended = rec_match.group(1).strip() if rec_match else ""
+
+    from datetime import datetime
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M")
+
+    entry_lines = [
+        f"\n\n---\n\n## Round {round_num}  ·  {timestamp}",
+        f"\n**Overall score:** {score_str}",
+    ]
+    if recommended:
+        entry_lines.append(f"\n**Experiment:** {recommended[:300]}")
+    if key_findings:
+        entry_lines.append(f"\n\n### Key Findings\n\n{key_findings}")
+    if what_worked:
+        entry_lines.append(f"\n\n### What Worked\n\n{what_worked}")
+    if what_failed:
+        entry_lines.append(f"\n\n### What Failed / Gaps\n\n{what_failed}")
+
+    entry = "".join(entry_lines)
+
+    # Create file with header if missing, otherwise append
+    if not findings_path.exists():
+        header = (
+            f"# Research Findings: {topic}\n\n"
+            f"_Automatically updated after each round by OctoSlave._\n"
+        )
+        findings_path.write_text(header + entry, encoding="utf-8")
+    else:
+        with open(findings_path, "a", encoding="utf-8") as f:
+            f.write(entry)
+
+    display.print_info(f"  findings.md updated (round {round_num})")
+
+
+# ---------------------------------------------------------------------------
 # Overseer: parse synthesis for next brief and completion signal
 # ---------------------------------------------------------------------------
 
@@ -839,6 +998,73 @@ def _run_master_reporter(
 # Main entry point
 # ---------------------------------------------------------------------------
 
+def _probe_hardware(research_dir: str) -> dict:
+    """
+    Run a hardware probe and write hw_profile.json to research_dir.
+    Returns the profile dict. Safe to call even if torch/psutil are absent.
+    """
+    import subprocess as _sp
+    hw_path = Path(research_dir) / "hw_profile.json"
+
+    script = (
+        "import json, platform, os, sys\n"
+        "info = {'python': sys.version.split()[0], 'platform': platform.platform(), "
+        "'cpu_count': os.cpu_count()}\n"
+        "try:\n"
+        "    import psutil; m = psutil.virtual_memory()\n"
+        "    info['ram_total_gb'] = round(m.total/1e9,1)\n"
+        "    info['ram_available_gb'] = round(m.available/1e9,1)\n"
+        "except ImportError: pass\n"
+        "try:\n"
+        "    import torch\n"
+        "    info['torch_version'] = torch.__version__\n"
+        "    info['cuda_available'] = torch.cuda.is_available()\n"
+        "    if torch.cuda.is_available():\n"
+        "        info['cuda_device_count'] = torch.cuda.device_count()\n"
+        "        info['cuda_devices'] = [{'name': torch.cuda.get_device_name(i), "
+        "'vram_gb': round(torch.cuda.get_device_properties(i).total_memory/1e9,1)} "
+        "for i in range(torch.cuda.device_count())]\n"
+        "        info['cuda_version'] = torch.version.cuda\n"
+        "except ImportError:\n"
+        "    info['torch_available'] = False\n"
+        "try:\n"
+        "    r = __import__('subprocess').run(['nvidia-smi','--query-gpu=name,memory.total,memory.free',"
+        "'--format=csv,noheader,nounits'], capture_output=True, text=True, timeout=5)\n"
+        "    if r.returncode==0: info['nvidia_smi'] = r.stdout.strip()\n"
+        "except Exception: pass\n"
+        "print(json.dumps(info))\n"
+    )
+
+    profile: dict = {}
+    try:
+        result = _sp.run(
+            ["python3", "-c", script],
+            capture_output=True, text=True, timeout=15,
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            profile = json.loads(result.stdout.strip())
+    except Exception:
+        pass
+
+    hw_path.write_text(json.dumps(profile, indent=2), encoding="utf-8")
+
+    # Pretty-print hardware summary
+    cuda = profile.get("cuda_available", False)
+    devices = profile.get("cuda_devices", [])
+    ram = profile.get("ram_total_gb", "?")
+    cpus = profile.get("cpu_count", "?")
+
+    if cuda and devices:
+        gpu_str = ", ".join(f"{d['name']} ({d['vram_gb']} GB)" for d in devices)
+        display.print_info(f"  Hardware: {cpus} CPU cores, {ram} GB RAM, "
+                           f"[bold bright_green]CUDA ✓[/bold bright_green] {gpu_str}")
+    else:
+        display.print_info(f"  Hardware: {cpus} CPU cores, {ram} GB RAM, "
+                           f"[dim]no CUDA GPU detected[/dim]")
+
+    return profile
+
+
 def run_long_research(
     topic: str,
     working_dir: str,
@@ -863,6 +1089,10 @@ def run_long_research(
     research_dir.mkdir(parents=True, exist_ok=True)
 
     display.print_research_start(topic, max_rounds, ROLES, overrides)
+
+    # Probe hardware once; result is written to research_dir/hw_profile.json
+    # and read by the coder/debugger agents in every subsequent round.
+    _probe_hardware(str(research_dir))
 
     # Initial brief
     brief = (
@@ -917,6 +1147,14 @@ def run_long_research(
                     f"{ROLES[role]['label']} failed in round {round_num}. "
                     "Continuing with next agent."
                 )
+
+        # Update findings.md from round outputs — pipeline-owned, not LLM-owned
+        _update_findings(
+            research_dir=str(research_dir),
+            round_num=round_num,
+            round_dir=str(round_dir),
+            topic=topic,
+        )
 
         # Parse orchestrator synthesis → next brief
         synthesis_path = round_dir / OUTPUT_FILES["orchestrator"]

@@ -73,7 +73,12 @@ guide you toward the next step after you report findings.
 
 
 def make_client(api_key: str, base_url: str) -> OpenAI:
-    return OpenAI(api_key=api_key, base_url=base_url)
+    # Ollama doesn't require a real API key; use a placeholder so the SDK
+    # doesn't raise a missing-key error.
+    return OpenAI(
+        api_key=api_key if api_key else "ollama",
+        base_url=base_url,
+    )
 
 
 def _cap_result(result: str, tool_name: str) -> str:

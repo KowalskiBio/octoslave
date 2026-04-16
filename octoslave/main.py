@@ -15,8 +15,10 @@ from . import display
 from .agent import make_client, run_agent, continue_agent
 from .research import run_long_research, ROLES as RESEARCH_ROLES
 from .config import (
-    KNOWN_MODELS, DEFAULT_MODEL, BASE_URL,
+    KNOWN_MODELS, DEFAULT_MODEL, BASE_URL, OLLAMA_BASE_URL,
     load_config, save_config,
+    ollama_is_running, ollama_list_models, ollama_pull_model,
+    assign_local_models,
 )
 
 # ---------------------------------------------------------------------------
@@ -25,10 +27,12 @@ from .config import (
 
 _PT_STYLE = Style.from_dict(
     {
-        "prompt":       "bold #cc44ff",
-        "model-tag":    "#888888",
-        "input":        "#ffffff",
+        "prompt":         "bold #cc44ff",
+        "prompt-local":   "bold #44ffaa",   # green tint in local mode
+        "model-tag":      "#888888",
+        "input":          "#ffffff",
         "bottom-toolbar": "bg:#1a001a #666666",
+        "bottom-toolbar-local": "bg:#001a0a #666666",
     }
 )
 
@@ -47,8 +51,9 @@ _HISTORY_FILE = Path.home() / ".octoslave" / "history"
 @click.option("-d", "--dir", "working_dir", default=None, help="Working directory")
 @click.option("--api-key", default=None, envvar="OCTOSLAVE_API_KEY")
 @click.option("--base-url", default=None, envvar="OCTOSLAVE_BASE_URL")
+@click.option("--local", is_flag=True, default=False, help="Use local Ollama models")
 @click.pass_context
-def cli(ctx, model, working_dir, api_key, base_url):
+def cli(ctx, model, working_dir, api_key, base_url, local):
     """OctoSlave — autonomous AI research & coding assistant.
 
     Run without arguments to enter interactive mode.
@@ -58,9 +63,9 @@ def cli(ctx, model, working_dir, api_key, base_url):
     ctx.obj["working_dir"] = working_dir
     ctx.obj["api_key"] = api_key
     ctx.obj["base_url"] = base_url
+    ctx.obj["local"] = local
 
     if ctx.invoked_subcommand is None:
-        # Default: interactive TUI
         _interactive(ctx.obj)
 
 
@@ -74,18 +79,20 @@ def cli(ctx, model, working_dir, api_key, base_url):
 @click.option("-d", "--dir", "working_dir", default=None)
 @click.option("--api-key", default=None, envvar="OCTOSLAVE_API_KEY")
 @click.option("--base-url", default=None, envvar="OCTOSLAVE_BASE_URL")
+@click.option("--local", is_flag=True, default=False, help="Use local Ollama models")
 @click.option("-i", "--interactive", is_flag=True, help="Stay interactive after task")
-def run(task, model, working_dir, api_key, base_url, interactive):
+def run(task, model, working_dir, api_key, base_url, local, interactive):
     """Run a single TASK and exit (or continue interactively with -i).
 
     \b
     Examples:
-      ac run "build a REST API for a todo app"
-      ac run "research recent papers on RAG" --model qwen3-coder
-      ac run "add unit tests" -i
+      ots run "build a REST API for a todo app"
+      ots run "research recent papers on RAG" --model qwen3-coder
+      ots run "add unit tests" -i
+      ots run "explain this codebase" --local
     """
-    cfg = _resolve_config(model, working_dir, api_key, base_url)
-    display.print_header(cfg["model"], cfg["working_dir"])
+    cfg = _resolve_config(model, working_dir, api_key, base_url, local=local)
+    display.print_header(cfg["model"], cfg["working_dir"], local=cfg["backend"] == "ollama")
     display.print_task(task)
 
     client = make_client(cfg["api_key"], cfg["base_url"])
@@ -103,30 +110,47 @@ def run(task, model, working_dir, api_key, base_url, interactive):
 @click.option("--api-key", default=None)
 @click.option("--model", default=None)
 @click.option("--base-url", default=None)
+@click.option("--ollama-url", default=None, help="Ollama base URL (default: http://localhost:11434/v1)")
 @click.option("--show", is_flag=True, help="Show current config")
-def config(api_key, model, base_url, show):
-    """Configure API key, default model, and base URL."""
+def config(api_key, model, base_url, ollama_url, show):
+    """Configure API key, default model, base URL, and Ollama settings."""
     current = load_config()
 
     if show:
         key = current.get("api_key", "")
         masked = (key[:8] + "…" + key[-4:]) if len(key) > 12 else ("set" if key else "not set")
+        backend = current.get("backend", "einfra")
+        display.console.print(f"[bold]backend[/bold]      : {backend}")
         display.console.print(f"[bold]api_key[/bold]      : {masked}")
         display.console.print(f"[bold]base_url[/bold]     : {current.get('base_url')}")
         display.console.print(f"[bold]default_model[/bold]: {current.get('default_model')}")
+        display.console.print(f"[bold]ollama_url[/bold]   : {current.get('ollama_url', OLLAMA_BASE_URL)}")
+        if backend == "ollama":
+            running = ollama_is_running(current.get("ollama_url", OLLAMA_BASE_URL))
+            pulled = ollama_list_models(current.get("ollama_url", OLLAMA_BASE_URL))
+            status = "[bold green]running[/bold green]" if running else "[bold red]not running[/bold red]"
+            display.console.print(f"[bold]ollama status[/bold]: {status}")
+            if pulled:
+                display.console.print("[bold]pulled models[/bold]:")
+                for m in pulled:
+                    display.console.print(f"  {m}")
         return
 
     new_key = api_key or current.get("api_key", "")
     new_url = base_url or current.get("base_url", BASE_URL)
     new_model = model or current.get("default_model", DEFAULT_MODEL)
+    new_ollama = ollama_url or current.get("ollama_url", OLLAMA_BASE_URL)
+    new_backend = current.get("backend", "einfra")
 
-    if not any([api_key, model, base_url]):
+    if not any([api_key, model, base_url, ollama_url]):
         display.console.print("[bold]OctoSlave — setup[/bold]\n")
-        new_key = click.prompt("API key", default=new_key, hide_input=True, show_default=False)
-        new_url = click.prompt("Base URL", default=new_url)
+        new_key = click.prompt("API key (e-INFRA CZ)", default=new_key,
+                               hide_input=True, show_default=False)
+        new_url = click.prompt("Base URL (e-INFRA CZ)", default=new_url)
         new_model = click.prompt("Default model", default=new_model)
+        new_ollama = click.prompt("Ollama URL", default=new_ollama)
 
-    save_config(new_key, new_url, new_model)
+    save_config(new_key, new_url, new_model, backend=new_backend, ollama_url=new_ollama)
     display.console.print("[bold green]Config saved.[/bold green]")
 
 
@@ -135,16 +159,42 @@ def config(api_key, model, base_url, show):
 # ---------------------------------------------------------------------------
 
 @cli.command()
-def models():
+@click.option("--local", is_flag=True, default=False, help="List local Ollama models instead")
+def models(local):
     """List available models."""
-    display.console.print("[bold]Available models on e-INFRA CZ:[/bold]\n")
     cfg = load_config()
+
+    if local or cfg.get("backend") == "ollama":
+        _print_local_models(cfg.get("ollama_url", OLLAMA_BASE_URL))
+        return
+
+    display.console.print("[bold]Available models on e-INFRA CZ:[/bold]\n")
     default = cfg.get("default_model", DEFAULT_MODEL)
     for m in KNOWN_MODELS:
         marker = " [bold green]← default[/bold green]" if m == default else ""
         display.console.print(f"  {m}{marker}")
     display.console.print()
     display.console.print("[dim]Switch with: /model <name>  or  -m <name>[/dim]")
+    display.console.print("[dim]Use local Ollama models: /local  or  --local flag[/dim]")
+
+
+def _print_local_models(ollama_url: str):
+    if not ollama_is_running(ollama_url):
+        display.print_error(
+            "Ollama is not running. Start it with: ollama serve"
+        )
+        return
+    pulled = ollama_list_models(ollama_url)
+    if not pulled:
+        display.console.print("[dim]No models pulled yet.[/dim]")
+        display.console.print("Pull a model with: [cyan]ollama pull mistral[/cyan]")
+        return
+    display.console.print("[bold]Pulled Ollama models:[/bold]\n")
+    for m in pulled:
+        display.console.print(f"  [bold bright_green]{m}[/bold bright_green]")
+    display.console.print()
+    display.console.print("[dim]Switch with: /model <name>[/dim]")
+    display.console.print("[dim]Pull more with: /pull <model-name>[/dim]")
 
 
 # ---------------------------------------------------------------------------
@@ -157,14 +207,19 @@ def _interactive(ctx_obj: dict):
         ctx_obj.get("working_dir"),
         ctx_obj.get("api_key"),
         ctx_obj.get("base_url"),
+        local=ctx_obj.get("local", False),
     )
-    if not cfg["api_key"]:
+
+    is_local = cfg["backend"] == "ollama"
+
+    if not is_local and not cfg["api_key"]:
         display.print_error(
-            "No API key configured. Run `ots config` or set OCTOSLAVE_API_KEY."
+            "No API key configured. Run `ots config` or set OCTOSLAVE_API_KEY.\n"
+            "For local models: `ots --local` or `/local` in session."
         )
         sys.exit(1)
 
-    display.print_welcome(cfg["model"], cfg["working_dir"])
+    display.print_welcome(cfg["model"], cfg["working_dir"], local=is_local)
     client = make_client(cfg["api_key"], cfg["base_url"])
     messages: list[dict] = []
 
@@ -180,10 +235,13 @@ def _repl_loop(client, cfg: dict, messages: list[dict]):
         key_bindings=_make_keybindings(),
     )
 
-    # Mutable state (passed by ref via dict)
     state = {
-        "model": cfg["model"],
+        "model":       cfg["model"],
         "working_dir": cfg["working_dir"],
+        "backend":     cfg["backend"],
+        "ollama_url":  cfg.get("ollama_url", OLLAMA_BASE_URL),
+        "api_key":     cfg.get("api_key", ""),
+        "base_url":    cfg.get("base_url", BASE_URL),
     }
 
     while True:
@@ -194,7 +252,7 @@ def _repl_loop(client, cfg: dict, messages: list[dict]):
             ).strip()
         except KeyboardInterrupt:
             display.console.print("[dim]\n(Ctrl+C — use /exit or Ctrl+D to quit)[/dim]")
-            messages = []        # clear pending state on interrupt
+            messages = []
             continue
         except EOFError:
             display.console.print("[dim]\nBye.[/dim]")
@@ -203,22 +261,26 @@ def _repl_loop(client, cfg: dict, messages: list[dict]):
         if not user_input:
             continue
 
-        # --- slash commands ---
         if user_input.startswith("/"):
             handled = _handle_slash(user_input, state, cfg, messages, client)
             if handled == "exit":
                 break
             if handled == "clear":
                 messages = []
+            if handled == "new_client":
+                # Backend switched — rebuild client and clear history
+                client = make_client(state["api_key"], state["base_url"])
+                messages = []
             continue
 
-        # --- normal task ---
         display.print_task(user_input)
         try:
             if messages:
-                messages = continue_agent(messages, user_input, state["model"], state["working_dir"], client)
+                messages = continue_agent(messages, user_input, state["model"],
+                                          state["working_dir"], client)
             else:
-                messages = run_agent(user_input, state["model"], state["working_dir"], client)
+                messages = run_agent(user_input, state["model"],
+                                     state["working_dir"], client)
         except KeyboardInterrupt:
             display.console.print("\n[dim]Interrupted.[/dim]")
             messages = []
@@ -239,19 +301,38 @@ def _handle_slash(cmd: str, state: dict, cfg: dict, messages: list, client) -> s
 
     if name == "/clear":
         display.console.clear()
-        display.print_welcome(state["model"], state["working_dir"])
+        display.print_welcome(state["model"], state["working_dir"],
+                               local=state["backend"] == "ollama")
         return "clear"
 
     if name == "/model":
         if not arg:
-            display.console.print("[bold]Available models:[/bold]")
-            for m in KNOWN_MODELS:
-                mark = " [green]←[/green]" if m == state["model"] else ""
-                display.console.print(f"  {m}{mark}")
+            if state["backend"] == "ollama":
+                _print_local_models(state["ollama_url"])
+            else:
+                display.console.print("[bold]Available models:[/bold]")
+                for m in KNOWN_MODELS:
+                    mark = " [green]←[/green]" if m == state["model"] else ""
+                    display.console.print(f"  {m}{mark}")
         else:
             state["model"] = arg
-            display.console.print(f"[dim]Model set to[/dim] [bold magenta]{arg}[/bold magenta]")
+            display.console.print(
+                f"[dim]Model set to[/dim] [bold magenta]{arg}[/bold magenta]"
+            )
             messages.clear()
+        return "ok"
+
+    if name == "/local":
+        return _handle_local_switch(arg, state, messages)
+
+    if name == "/einfra":
+        return _handle_einfra_switch(state, messages)
+
+    if name == "/pull":
+        if not arg:
+            display.print_error("Usage: /pull <model-name>  e.g. /pull llama3.2")
+            return "ok"
+        _do_pull(arg, state)
         return "ok"
 
     if name == "/dir":
@@ -276,7 +357,8 @@ def _handle_slash(cmd: str, state: dict, cfg: dict, messages: list, client) -> s
             "all key findings, code written, hypotheses, and decisions. Keep it under 400 words."
         )
         try:
-            new_msgs = continue_agent(messages, summary_task, state["model"], state["working_dir"], client)
+            new_msgs = continue_agent(messages, summary_task, state["model"],
+                                       state["working_dir"], client)
             messages.clear()
             messages.extend(new_msgs[-2:])
             display.print_info("History compacted.")
@@ -292,11 +374,108 @@ def _handle_slash(cmd: str, state: dict, cfg: dict, messages: list, client) -> s
     return "ok"
 
 
+def _handle_local_switch(arg: str, state: dict, messages: list) -> str:
+    """Switch to local Ollama backend. Optionally pass model name as arg."""
+    ollama_url = state.get("ollama_url", OLLAMA_BASE_URL)
+
+    if not ollama_is_running(ollama_url):
+        display.print_error(
+            "Ollama is not running.\n"
+            "Start it with:  [bold]ollama serve[/bold]\n"
+            "Then try /local again."
+        )
+        return "ok"
+
+    pulled = ollama_list_models(ollama_url)
+    if not pulled:
+        display.print_error(
+            "No models are pulled yet.\n"
+            "Pull one with:  [bold]/pull mistral[/bold]  or  [bold]ollama pull mistral[/bold]"
+        )
+        return "ok"
+
+    chosen = arg if arg else pulled[0]
+    if chosen not in pulled:
+        display.print_error(
+            f"Model '{chosen}' is not pulled. Available: {', '.join(pulled)}"
+        )
+        return "ok"
+
+    state["backend"] = "ollama"
+    state["model"] = chosen
+    state["api_key"] = "ollama"
+    state["base_url"] = ollama_url
+
+    # Persist backend switch
+    saved = load_config()
+    save_config(
+        saved.get("api_key", ""),
+        saved.get("base_url", BASE_URL),
+        chosen,
+        backend="ollama",
+        ollama_url=ollama_url,
+    )
+
+    display.console.print(
+        f"[bold bright_green]● Local mode[/bold bright_green] — using [bold]{chosen}[/bold] via Ollama"
+    )
+    display.console.print(
+        f"[dim]  {len(pulled)} model(s) available: {', '.join(pulled)}[/dim]"
+    )
+    display.console.print("[dim]  Switch back: /einfra[/dim]")
+    messages.clear()
+    return "new_client"
+
+
+def _handle_einfra_switch(state: dict, messages: list) -> str:
+    """Switch back to e-INFRA CZ backend."""
+    saved = load_config()
+    api_key = saved.get("api_key", "")
+    if not api_key:
+        display.print_error(
+            "No e-INFRA CZ API key configured. Run `ots config` first."
+        )
+        return "ok"
+
+    state["backend"] = "einfra"
+    state["model"] = saved.get("default_model", DEFAULT_MODEL)
+    state["api_key"] = api_key
+    state["base_url"] = saved.get("base_url", BASE_URL)
+
+    save_config(
+        api_key,
+        state["base_url"],
+        state["model"],
+        backend="einfra",
+        ollama_url=state.get("ollama_url", OLLAMA_BASE_URL),
+    )
+
+    display.console.print(
+        f"[bold bright_magenta]● e-INFRA CZ mode[/bold bright_magenta] — using [bold]{state['model']}[/bold]"
+    )
+    messages.clear()
+    return "new_client"
+
+
+def _do_pull(model_name: str, state: dict):
+    """Pull a model via Ollama."""
+    ollama_url = state.get("ollama_url", OLLAMA_BASE_URL)
+    if not ollama_is_running(ollama_url):
+        display.print_error("Ollama is not running. Start it with: ollama serve")
+        return
+    display.console.print(f"[dim]Pulling [bold]{model_name}[/bold] …[/dim]")
+    ok = ollama_pull_model(model_name, ollama_url)
+    if ok:
+        display.console.print(f"[bold green]✓ {model_name} pulled successfully.[/bold green]")
+        display.console.print(f"[dim]Use it with: /local {model_name}[/dim]")
+    else:
+        display.print_error(f"Failed to pull {model_name}.")
+
+
 def _handle_long_research(arg: str, state: dict, cfg: dict, client):
     """Parse /long-research flags and launch the research pipeline."""
     import shlex
 
-    # Parse: /long-research <topic words> [--rounds N] [--all MODEL] [--overseer MODEL] [--resume]
     try:
         tokens = shlex.split(arg)
     except ValueError:
@@ -339,13 +518,22 @@ def _handle_long_research(arg: str, state: dict, cfg: dict, client):
         )
         return
 
-    # Build per-role model overrides
     overrides: dict[str, str] = {}
-    if all_model:
-        for role in RESEARCH_ROLES:
-            overrides[role] = all_model
-    if overseer_model:
-        overrides["orchestrator"] = overseer_model
+
+    if state["backend"] == "ollama" and not all_model:
+        # Auto-assign local models across roles
+        pulled = ollama_list_models(state.get("ollama_url", OLLAMA_BASE_URL))
+        if not pulled:
+            display.print_error("No Ollama models available for local research.")
+            return
+        overrides = assign_local_models(pulled)
+        display.print_local_research_assignment(overrides)
+    else:
+        if all_model:
+            for role in RESEARCH_ROLES:
+                overrides[role] = all_model
+        if overseer_model:
+            overrides["orchestrator"] = overseer_model
 
     run_long_research(
         topic=topic,
@@ -363,14 +551,22 @@ def _handle_long_research(arg: str, state: dict, cfg: dict, client):
 
 def _make_prompt(state: dict):
     model_short = state["model"][:20]
+    is_local = state.get("backend") == "ollama"
+    if is_local:
+        return HTML(f'<prompt-local>◆</prompt-local> <model-tag>[local:{model_short}]</model-tag> ')
     return HTML(f'<prompt>◆</prompt> <model-tag>[{model_short}]</model-tag> ')
 
 
 def _make_toolbar(state: dict):
     wd = state["working_dir"]
-    if len(wd) > 50:
-        wd = "…" + wd[-47:]
-    return HTML(f'<bottom-toolbar>  dir: {wd}   /help · /model · /clear · /exit</bottom-toolbar>')
+    if len(wd) > 45:
+        wd = "…" + wd[-43:]
+    is_local = state.get("backend") == "ollama"
+    backend_tag = " [local]" if is_local else ""
+    return HTML(
+        f'<bottom-toolbar>  dir: {wd}{backend_tag}'
+        f'   /help · /model · /local · /einfra · /clear · /exit</bottom-toolbar>'
+    )
 
 
 def _make_keybindings() -> KeyBindings:
@@ -387,13 +583,52 @@ def _make_keybindings() -> KeyBindings:
 # Config resolution helper
 # ---------------------------------------------------------------------------
 
-def _resolve_config(model, working_dir, api_key, base_url) -> dict:
+def _resolve_config(model, working_dir, api_key, base_url, local: bool = False) -> dict:
     saved = load_config()
+
+    # Decide backend
+    backend = "ollama" if local else saved.get("backend", "einfra")
+    ollama_url = saved.get("ollama_url", OLLAMA_BASE_URL)
+
+    if backend == "ollama":
+        # Validate Ollama is reachable
+        if not ollama_is_running(ollama_url):
+            display.print_error(
+                f"Ollama is not running at {ollama_url}.\n"
+                "Start it with: [bold]ollama serve[/bold]"
+            )
+            sys.exit(1)
+        pulled = ollama_list_models(ollama_url)
+        if not pulled:
+            display.print_error(
+                "No models pulled in Ollama.\n"
+                "Pull one with: [bold]ollama pull mistral[/bold]"
+            )
+            sys.exit(1)
+        chosen_model = model or saved.get("default_model") or pulled[0]
+        if chosen_model not in pulled:
+            display.console.print(
+                f"[dim]Model '{chosen_model}' not found locally, "
+                f"using '{pulled[0]}' instead.[/dim]"
+            )
+            chosen_model = pulled[0]
+        return {
+            "api_key":     "ollama",
+            "base_url":    ollama_url,
+            "model":       chosen_model,
+            "working_dir": str(Path(working_dir).resolve()) if working_dir else os.getcwd(),
+            "backend":     "ollama",
+            "ollama_url":  ollama_url,
+        }
+
+    # e-INFRA CZ backend
     return {
         "api_key":     api_key or saved.get("api_key", ""),
         "base_url":    base_url or saved.get("base_url", BASE_URL),
         "model":       model or saved.get("default_model", DEFAULT_MODEL),
         "working_dir": str(Path(working_dir).resolve()) if working_dir else os.getcwd(),
+        "backend":     "einfra",
+        "ollama_url":  ollama_url,
     }
 
 

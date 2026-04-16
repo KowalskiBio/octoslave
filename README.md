@@ -105,11 +105,17 @@ Config is stored at `~/.octoslave/config.json`. Environment variables always tak
 ## Quick start
 
 ```bash
-# Launch the interactive TUI
+# Launch the interactive TUI (e-INFRA CZ)
 ots
+
+# Launch in local Ollama mode
+ots --local
 
 # Run a single task and exit
 ots run "build a Flask REST API for a todo app"
+
+# Run with a local model
+ots run "explain this codebase" --local
 
 # Run against a specific directory and model
 ots run "add pytest unit tests" --dir ~/my-project --model qwen3-coder
@@ -162,10 +168,13 @@ Running `ots` launches the full TUI:
 
 | Command | Description |
 |---------|-------------|
-| `/model [name]` | Switch model; lists all available if no name given |
+| `/model [name]` | Switch model; lists available if no name given |
 | `/dir [path]` | Change the active working directory |
 | `/clear` | Clear screen and reset conversation history |
 | `/compact` | Summarise history into a compact context block (saves tokens) |
+| `/local [model]` | Switch to local Ollama backend |
+| `/einfra` | Switch back to e-INFRA CZ backend |
+| `/pull model` | Pull a new Ollama model without leaving the session |
 | `/long-research TOPIC [flags]` | Launch the multi-agent research pipeline |
 | `/help` | Show all commands and flags |
 | `/exit` | Quit (also `Ctrl+D`) |
@@ -266,7 +275,105 @@ research/
 
 ---
 
-## Available models
+## Local models (Ollama)
+
+OctoSlave can run fully offline using [Ollama](https://ollama.com). All functionality — interactive chat, one-shot tasks, and the full `/long-research` pipeline — works identically with local models.
+
+### Setup
+
+```bash
+# 1. Install Ollama
+#    macOS:   brew install ollama
+#    Linux:   curl -fsSL https://ollama.com/install.sh | sh
+
+# 2. Start Ollama
+ollama serve
+
+# 3. Pull a model (see hardware guide below)
+ollama pull mistral
+
+# 4. Start OctoSlave in local mode
+ots --local
+# or switch mid-session:
+#   /local
+```
+
+### Switching backends
+
+```bash
+# In the TUI:
+/local                   # switch to Ollama (uses first pulled model)
+/local llama3.2          # switch to a specific pulled model
+/pull qwen2.5-coder      # pull a new model without leaving the session
+/einfra                  # switch back to e-INFRA CZ
+
+# On the command line:
+ots --local run "explain this code"
+ots models --local       # list pulled Ollama models
+```
+
+### Long-research with local models
+
+In local mode, `/long-research` automatically distributes up to **3 pulled models** across the 7 specialist roles by priority tier:
+
+| Tier | Roles | Best for |
+|------|-------|----------|
+| **A** (model 1) | Orchestrator, Evaluator | Reasoning, synthesis, critical judgement |
+| **B** (model 2) | Coder, Debugger, Reporter | Code generation, debugging, HTML output |
+| **C** (model 3) | Researcher, Hypothesis | Document reading, structured writing |
+
+If you only have 1 or 2 models pulled, tiers are collapsed automatically.
+
+```
+/long-research "topic" --rounds 2    # auto-assigns your pulled models
+/long-research "topic" --all mistral # force one model for everything
+```
+
+### Recommended local setups
+
+Choose based on available VRAM / RAM:
+
+#### 8 GB VRAM / 16 GB RAM — minimum viable
+```bash
+ollama pull mistral          # 4 GB  — fast, all-round
+```
+Good for: interactive chat, simple coding tasks. Long-research will be slow and capability-limited.
+
+#### 16 GB VRAM / 32 GB RAM — recommended
+```bash
+ollama pull llama3.1:8b      # 5 GB  — best reasoning at this size
+ollama pull qwen2.5-coder    # 4 GB  — strong at code
+```
+Assign: `llama3.1:8b` → orchestrator/evaluator, `qwen2.5-coder` → coder/debugger.
+
+#### 24 GB VRAM / 48 GB RAM — comfortable research
+```bash
+ollama pull llama3.1:8b        # 5 GB  — orchestrator / evaluator
+ollama pull qwen2.5-coder:14b  # 9 GB  — coder / debugger / reporter
+ollama pull mistral             # 4 GB  — researcher / hypothesis
+```
+This is the sweet spot for autonomous research runs.
+
+#### 48 GB+ VRAM — full power
+```bash
+ollama pull llama3.3:70b       # 40 GB — orchestrator / evaluator
+ollama pull qwen2.5-coder:32b  # 20 GB — coder / debugger / reporter
+ollama pull qwen2.5:14b        # 9 GB  — researcher / hypothesis
+```
+Approaches cloud model quality for most research tasks.
+
+#### CPU-only (no GPU)
+```bash
+ollama pull llama3.2:3b        # 2 GB  — smallest capable model
+ollama pull qwen2.5-coder:3b   # 2 GB  — minimal coding capability
+```
+Usable for simple tasks. Long-research not recommended on CPU only.
+
+> **Tip:** Run `ots models --local` at any time to see what you have pulled.
+
+---
+
+## Available models (e-INFRA CZ)
 
 Run `ots models` to see the current list. As of writing:
 
@@ -320,9 +427,11 @@ Switch mid-session with `/model qwen3-coder` or pass `-m MODEL` to any command.
 
 | Variable | Description |
 |----------|-------------|
-| `OCTOSLAVE_API_KEY` | API key |
+| `OCTOSLAVE_API_KEY` | e-INFRA CZ API key |
 | `OCTOSLAVE_BASE_URL` | Override the API base URL (default: `https://llm.ai.e-infra.cz/v1`) |
 | `OCTOSLAVE_MODEL` | Override the default model |
+| `OCTOSLAVE_BACKEND` | `einfra` (default) or `ollama` |
+| `OCTOSLAVE_OLLAMA_URL` | Ollama base URL (default: `http://localhost:11434/v1`) |
 
 **Interactive config wizard**
 

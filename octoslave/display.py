@@ -88,21 +88,31 @@ def _render_mascot() -> Text:
 # Session header
 # ---------------------------------------------------------------------------
 
-def print_welcome(model: str, working_dir: str):
+def print_welcome(model: str, working_dir: str, local: bool = False):
     mascot = _render_mascot()
 
     tag = Text()
     tag.append(" OCTOSLAVE ", style="bold bright_white on #4a0080")
+    if local:
+        tag.append(" LOCAL ", style="bold bright_white on #004a20")
 
     wd = working_dir if len(working_dir) <= 40 else "…" + working_dir[-38:]
 
     info = Text()
-    info.append("model ", style="dim")
-    info.append(model, style="bold bright_magenta")
+    if local:
+        info.append("backend ", style="dim")
+        info.append("ollama (local)", style="bold bright_green")
+        info.append("   model ", style="dim")
+        info.append(model, style="bold bright_green")
+    else:
+        info.append("model ", style="dim")
+        info.append(model, style="bold bright_magenta")
     info.append("   dir ", style="dim")
     info.append(wd, style="dim white")
 
     hint = Text("  /help for commands", style="dim")
+    if local:
+        hint = Text("  /help · /pull <model> · /einfra to switch back", style="dim")
 
     body = Text()
     body.append_text(mascot)
@@ -114,20 +124,23 @@ def print_welcome(model: str, working_dir: str):
     body.append_text(hint)
     body.append("\n")
 
+    border = "bright_green" if local else "magenta"
     console.print(
-        Panel.fit(body, border_style="magenta", padding=(0, 2)),
+        Panel.fit(body, border_style=border, padding=(0, 2)),
         justify="center",
     )
     console.print()
 
 
-def print_header(model: str, working_dir: str):
+def print_header(model: str, working_dir: str, local: bool = False):
     """Compact header for non-interactive (one-shot) runs."""
+    backend_str = "[bold bright_green]ollama (local)[/bold bright_green]" if local else "[model]e-INFRA CZ[/model]"
+    border = "bright_green" if local else "magenta"
     console.print(
         Panel.fit(
-            f"[heading]OctoSlave[/heading]  [model]{model}[/model]\n"
+            f"[heading]OctoSlave[/heading]  {backend_str}  [model]{model}[/model]\n"
             f"[info]dir: {working_dir}[/info]",
-            border_style="magenta",
+            border_style=border,
             padding=(0, 2),
         )
     )
@@ -253,6 +266,21 @@ def print_done(iterations: int):
     console.print()
 
 
+def print_local_research_assignment(assignment: dict[str, str]):
+    """Show which local model was assigned to each research role."""
+    console.print()
+    console.print("[bold bright_green]● Local research model assignment:[/bold bright_green]")
+    # Group by model to keep output compact
+    model_to_roles: dict[str, list[str]] = {}
+    for role, model in assignment.items():
+        model_to_roles.setdefault(model, []).append(role)
+    for model, roles in model_to_roles.items():
+        console.print(f"  [bold]{model}[/bold]  →  {', '.join(roles)}")
+    console.print(
+        "[dim]  (up to 3 local models used; roles distributed by priority tier)[/dim]\n"
+    )
+
+
 def print_help():
     console.print(Panel(
         "[bold white]Slash commands[/bold white]\n\n"
@@ -263,11 +291,16 @@ def print_help():
         "  [cyan]/long-research TOPIC[/cyan]  Launch multi-agent research pipeline\n"
         "  [cyan]/help[/cyan]                 Show this help\n"
         "  [cyan]/exit[/cyan]                 Quit  (also Ctrl+D)\n\n"
+        "[bold white]Local Ollama backend:[/bold white]\n"
+        "  [cyan]/local [MODEL][/cyan]        Switch to local Ollama models\n"
+        "  [cyan]/einfra[/cyan]               Switch back to e-INFRA CZ\n"
+        "  [cyan]/pull MODEL[/cyan]           Pull a new Ollama model\n\n"
         "[bold white]/long-research flags:[/bold white]\n"
         "  [cyan]--rounds N[/cyan]            Number of research rounds (default 5)\n"
         "  [cyan]--overseer MODEL[/cyan]      Model for orchestrator (default mistral-small-4)\n"
         "  [cyan]--all MODEL[/cyan]           Use one model for all agents\n"
-        "  [cyan]--resume[/cyan]              Resume an interrupted run\n\n"
+        "  [cyan]--resume[/cyan]              Resume an interrupted run\n"
+        "  [dim](local mode: up to 3 pulled models auto-assigned across roles)[/dim]\n\n"
         "[dim]Output per round: plots → 03_code/results/, HTML report → 07_report.html[/dim]\n"
         "[dim]Final master report: research/final_report.html  (open in browser)[/dim]\n\n"
         "[dim]Ctrl+C  pause current agent (progress saved)[/dim]",
