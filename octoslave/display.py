@@ -8,6 +8,35 @@ from rich.rule import Rule
 from rich.text import Text
 from rich.theme import Theme
 
+import threading as _threading
+
+# ---------------------------------------------------------------------------
+# Web UI event bridge  (no-op when not in web mode)
+# ---------------------------------------------------------------------------
+
+_tl = _threading.local()  # thread-local storage for per-session callbacks
+
+
+def set_event_callback(cb) -> None:
+    """Register a structured-event callback for the current thread (web mode)."""
+    _tl.emit = cb
+
+
+def clear_event_callback() -> None:
+    """Remove the callback for the current thread."""
+    _tl.emit = None
+
+
+def _emit(event: dict) -> None:
+    """Fire a structured JSON event to the registered callback; no-op otherwise."""
+    cb = getattr(_tl, "emit", None)
+    if cb is not None:
+        try:
+            cb(event)
+        except Exception:
+            pass
+
+
 _THEME = Theme(
     {
         "tool.name": "bold cyan",
@@ -173,6 +202,7 @@ def stream_start():
 
 
 def stream_chunk(text: str):
+    _emit({"type": "token", "text": text})
     global _streaming_started
     if not _streaming_started:
         console.print("[bold green]●[/bold green] ", end="")
@@ -182,6 +212,7 @@ def stream_chunk(text: str):
 
 
 def stream_end(had_content: bool):
+    _emit({"type": "stream_end"})
     global _streaming_started
     if had_content:
         sys.stdout.write("\n")
@@ -208,12 +239,15 @@ _TOOL_ICONS = {
 
 
 def print_tool_call(name: str, args: dict):
+    _emit({"type": "tool_call", "name": name, "summary": _tool_summary(name, args)})
     icon = _TOOL_ICONS.get(name, "⚙")
     summary = _tool_summary(name, args)
     console.print(f"  [tool.name]{icon} {name}[/tool.name] [tool.arg]{summary}[/tool.arg]")
 
 
 def print_tool_result(name: str, result: str, success: bool):
+    _emit({"type": "tool_result", "name": name, "ok": success,
+           "preview": (result.strip()[:400] if result.strip() else "")})
     if not result.strip():
         return
     if not success:
@@ -257,14 +291,17 @@ def print_separator():
 
 
 def print_info(msg: str):
+    _emit({"type": "info", "text": msg})
     console.print(f"[info]{msg}[/info]")
 
 
 def print_error(msg: str):
+    _emit({"type": "error", "text": msg})
     err_console.print(f"[tool.err]Error:[/tool.err] {msg}")
 
 
 def print_done(iterations: int):
+    _emit({"type": "done", "iterations": iterations})
     console.print()
     console.print(f"[info]─── done ({iterations} iteration{'s' if iterations != 1 else ''}) ───[/info]")
     console.print()
@@ -319,6 +356,7 @@ def print_help():
 # ---------------------------------------------------------------------------
 
 def print_research_start(topic: str, max_rounds: int, roles: dict, overrides: dict):
+    _emit({"type": "research_start", "topic": topic, "max_rounds": max_rounds})
     lines = Text()
     lines.append("🐙 AUTONOMOUS RESEARCH PIPELINE\n\n", style="bold bright_white")
     lines.append("Topic   : ", style="dim"); lines.append(topic + "\n", style="bold white")
@@ -334,6 +372,8 @@ def print_research_start(topic: str, max_rounds: int, roles: dict, overrides: di
 
 
 def print_round_header(round_num: int, max_rounds: int, round_dir: str):
+    _emit({"type": "round_start", "round": round_num,
+           "max_rounds": max_rounds, "dir": round_dir})
     bar_filled = "█" * round_num
     bar_empty  = "░" * (max_rounds - round_num)
     console.print()
@@ -353,6 +393,9 @@ def print_round_header(round_num: int, max_rounds: int, round_dir: str):
 
 def print_agent_banner(role: str, model: str, round_num: int, max_rounds: int):
     cfg = _get_role_cfg(role)
+    _emit({"type": "agent_start", "role": role, "label": cfg["label"],
+           "icon": cfg["icon"], "model": model,
+           "round": round_num, "max_rounds": max_rounds})
     console.print()
     console.print(
         Panel.fit(
@@ -366,6 +409,8 @@ def print_agent_banner(role: str, model: str, round_num: int, max_rounds: int):
 
 
 def print_agent_done(role: str, elapsed: float, iterations: int):
+    _emit({"type": "agent_done", "role": role,
+           "elapsed": round(elapsed, 1), "iterations": iterations})
     cfg = _get_role_cfg(role)
     console.print(
         f"\n  [{cfg['color']}]✓ {cfg['label']}[/{cfg['color']}] "
@@ -375,12 +420,14 @@ def print_agent_done(role: str, elapsed: float, iterations: int):
 
 
 def print_round_done(round_num: int, round_dir: str):
+    _emit({"type": "round_done", "round": round_num, "dir": round_dir})
     console.print(
         f"[dim]  Round {round_num} complete → {round_dir}[/dim]"
     )
 
 
 def print_research_complete(rounds_done: int, research_dir: str):
+    _emit({"type": "research_complete", "rounds": rounds_done, "dir": research_dir})
     console.print()
     console.print(Panel(
         f"[bold bright_white]🎉 Research complete[/bold bright_white]\n\n"

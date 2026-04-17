@@ -694,6 +694,40 @@ def _resolve_config(model, working_dir, api_key, base_url, local: bool = False) 
     }
 
 
+@cli.command()
+@click.option("--host", default="127.0.0.1", show_default=True, help="Host to bind to")
+@click.option("--port", default=7860, show_default=True, help="Port to listen on")
+@click.option("--no-browser", is_flag=True, default=False, help="Do not open browser automatically")
+def web(host, port, no_browser):
+    """Launch the OctoSlave web UI in a browser."""
+    try:
+        import uvicorn
+    except ImportError:
+        display.print_error(
+            "uvicorn is not installed. Run:  pip install 'octoslave[web]'  or  pip install uvicorn fastapi"
+        )
+        sys.exit(1)
+
+    url = f"http://{host}:{port}"
+    display.console.print()
+    display.console.print(
+        f"  [bold #2ab89a]🐙 OctoSlave Web UI[/bold #2ab89a]  "
+        f"[dim]starting at[/dim]  [bold cyan]{url}[/bold cyan]"
+    )
+    display.console.print("  [dim]Press Ctrl+C to stop.[/dim]\n")
+
+    if not no_browser:
+        import threading, webbrowser
+        # Open browser after a short delay so the server is ready
+        def _open():
+            import time; time.sleep(1.2)
+            webbrowser.open(url)
+        threading.Thread(target=_open, daemon=True).start()
+
+    from .web.app import app as _web_app
+    uvicorn.run(_web_app, host=host, port=port, log_level="warning")
+
+
 def main():
     cli()
 

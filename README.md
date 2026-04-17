@@ -30,6 +30,7 @@ It ships two modes:
 - [Features](#features)
 - [Installation](#installation)
 - [Quick start](#quick-start)
+- [Web UI](#web-ui)
 - [Interactive TUI](#interactive-tui)
 - [Slash commands](#slash-commands)
 - [One-shot mode](#one-shot-mode)
@@ -67,12 +68,17 @@ It ships two modes:
 ```bash
 git clone https://github.com/karatedava/octoslave.git
 cd octoslave
+
+# CLI only
 pip install -e .
+
+# CLI + web UI
+pip install -e ".[web]"
 ```
 
 > **Recommended:** use [uv](https://github.com/astral-sh/uv) for faster, reproducible installs:
 > ```bash
-> uv pip install -e .
+> uv pip install -e ".[web]"
 > ```
 
 ### Set your API key
@@ -96,6 +102,9 @@ ots
 # Interactive TUI (local Ollama)
 ots --local
 
+# Web UI (opens browser automatically)
+ots web
+
 # One-shot task
 ots run "build a Flask REST API for a todo app"
 
@@ -103,6 +112,32 @@ ots run "build a Flask REST API for a todo app"
 ots
 ◆ /long-research "calibration methods for large language models" --rounds 3
 ```
+
+---
+
+## Web UI
+
+OctoSlave includes a browser-based GUI with the same full functionality as the terminal — ideal if you prefer not to use the CLI.
+
+```bash
+# Install web dependencies and launch
+pip install -e ".[web]"
+ots web                          # opens http://127.0.0.1:7860 in your browser
+ots web --port 8080              # custom port
+ots web --host 0.0.0.0           # expose on the network
+ots web --no-browser             # start server without auto-opening browser
+```
+
+The web UI has four tabs:
+
+| Tab | What it does |
+|-----|-------------|
+| **Chat** | Full conversational agent — streaming responses, tool call inspector, conversation history |
+| **Research** | Launch `/long-research` pipeline with live round progress, agent status, and streaming console |
+| **Files** | Browse all research outputs — view HTML reports inline, preview plots and markdown |
+| **Settings** | Inspect current configuration (API key, model, backend) |
+
+All research outputs (HTML reports, plots, markdown) are accessible directly in the Files tab without leaving the browser.
 
 ---
 
@@ -480,10 +515,14 @@ octoslave/
 ├── octoslave/
 │   ├── agent.py              ← core agent loop, system prompt, context management
 │   ├── config.py             ← config load/save, Ollama helpers, model list
-│   ├── display.py            ← Rich TUI: mascot, banners, streaming, research display
+│   ├── display.py            ← Rich TUI + web event bridge (thread-safe emit system)
 │   ├── main.py               ← Click CLI, interactive REPL, slash-command handler
 │   ├── research.py           ← multi-agent long-research pipeline
-│   └── tools.py              ← all tool definitions and implementations
+│   ├── tools.py              ← all tool definitions and implementations
+│   └── web/
+│       ├── app.py            ← FastAPI backend: WebSocket handler, file serving
+│       └── static/
+│           └── index.html    ← single-page web UI (Chat / Research / Files / Settings)
 └── pyproject.toml
 ```
 
