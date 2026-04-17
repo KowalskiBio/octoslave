@@ -18,7 +18,7 @@ _THEME = Theme(
         "heading": "bold bright_white",
         "model": "bright_magenta",
         "prompt": "bold yellow",
-        "mascot": "magenta",
+        "mascot": "#1A6B5C",
     }
 )
 
@@ -34,24 +34,28 @@ err_console = Console(stderr=True, theme=_THEME)
 #   W  eye white      *  pupil (◉)
 #   M  mouth (▄)      T  tentacle
 #   L  curl ╰         R  curl ╯
-#   (space)  empty
+#   G  gold chain ◆   g  chain connector ─
+#   P  pendant ◈      (space)  empty
 # ---------------------------------------------------------------------------
 
 _CHAR_MAP: dict[str, tuple[str, str | None]] = {
-    "B": ("█", "bold #9922dd"),     # body — rich purple
-    "H": ("█", "bold #cc77ff"),     # top-of-head highlight — lighter purple
+    "B": ("█", "bold #1A6B5C"),     # body — deep teal
+    "H": ("█", "bold #2ab89a"),     # top-of-head highlight — lighter teal
     "W": ("█", "bold #ffffff"),     # eye whites
-    "*": ("◉", "bold #0a001a"),     # pupil — single centered bullseye
+    "*": ("◉", "bold #0D3D30"),     # pupil — dark teal bullseye
     "M": ("▄", "bold #ff99cc"),     # mouth — pink lower-half block
-    "T": ("█", "#6600aa"),          # tentacles — deeper purple
-    "L": ("╰", "#6600aa"),          # tentacle curl left
-    "R": ("╯", "#6600aa"),          # tentacle curl right
+    "T": ("█", "#0d3d30"),          # tentacles — darker teal
+    "L": ("╰", "#0d3d30"),          # tentacle curl left
+    "R": ("╯", "#0d3d30"),          # tentacle curl right
+    "G": ("◆", "bold #D4A017"),     # gold chain link
+    "g": ("─", "#C8980A"),          # gold chain connector
+    "P": ("◈", "bold #F5D060"),     # gold pendant
     " ": (" ", None),
 }
 
 # fmt: off
 _RAW_MASCOT = [
-    "     HHHHHHHHHH     ",   # top of head dome
+    "     HHHHHHHHHH     ",   # top of head dome (lighter teal)
     "   BBBBBBBBBBBBBB   ",
     "  BBBBBBBBBBBBBBBB  ",
     " BBBBBBBBBBBBBBBBBB ",
@@ -60,8 +64,8 @@ _RAW_MASCOT = [
     " BBWWWWWBBBWWWWWBBB ",   # eye whites bottom
     " BBBBBBBBBBBBBBBBBB ",   # body
     "   BBBB MMMMM BBBB  ",   # cute pink mouth
-    "   BBBBBBBBBBBBBB   ",   # lower body
-    "    BBBBBBBBBBBB    ",   # bottom of body
+    " GgGgGgGgGgGgGgGgGg ",   # gold chain draped across mantle
+    "    BBBBB P BBBBB   ",   # body below chain + gold pendant ◈
     "  TT   TT   TT   TT ",   # tentacle stems ×4
     "  TT   TT   TT   TT ",   #   (two rows for length)
     " LTTR LTTR LTTR LTTR",   # tentacle curls ╰TT╯
@@ -92,7 +96,7 @@ def print_welcome(model: str, working_dir: str, local: bool = False):
     mascot = _render_mascot()
 
     tag = Text()
-    tag.append(" OCTOSLAVE ", style="bold bright_white on #4a0080")
+    tag.append(" OCTOSLAVE ", style="bold bright_white on #1A6B5C")
     if local:
         tag.append(" LOCAL ", style="bold bright_white on #004a20")
 
@@ -124,7 +128,7 @@ def print_welcome(model: str, working_dir: str, local: bool = False):
     body.append_text(hint)
     body.append("\n")
 
-    border = "bright_green" if local else "magenta"
+    border = "bright_green" if local else "#2ab89a"
     console.print(
         Panel.fit(body, border_style=border, padding=(0, 2)),
         justify="center",
@@ -135,7 +139,7 @@ def print_welcome(model: str, working_dir: str, local: bool = False):
 def print_header(model: str, working_dir: str, local: bool = False):
     """Compact header for non-interactive (one-shot) runs."""
     backend_str = "[bold bright_green]ollama (local)[/bold bright_green]" if local else "[model]e-INFRA CZ[/model]"
-    border = "bright_green" if local else "magenta"
+    border = "bright_green" if local else "#2ab89a"
     console.print(
         Panel.fit(
             f"[heading]OctoSlave[/heading]  {backend_str}  [model]{model}[/model]\n"

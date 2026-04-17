@@ -1,37 +1,27 @@
 <div align="center">
 
-```
-       ██████████████████
-    ████████████████████████
-   ██████████████████████████
-  ████████████████████████████
-  ██ ███████████ ███████████ ██
-  ██ ██ ██◉██ ██ ██ ██◉██ ██ ██
-  ██ ███████████ ███████████ ██
-  ████████████████████████████
-    █████  ▄▄▄▄▄▄▄▄▄  █████
-    ████████████████████████
-     ██████████████████████
-  ████   ████   ████   ████
-  ████   ████   ████   ████
- ╰████╯ ╰████╯ ╰████╯ ╰████╯
-```
+<img src="assets/logo.svg" alt="OctoSlave" width="220"/>
 
-# OctoSlave 🐙
+<h1>OctoSlave</h1>
 
-**Autonomous AI research & coding assistant powered by the [e-INFRA CZ](https://llm.ai.e-infra.cz) LLM platform**
+<p><strong>Autonomous AI research &amp; coding assistant — powered by <a href="https://llm.ai.e-infra.cz">e-INFRA CZ</a> or your own local GPU</strong></p>
 
-[![Python](https://img.shields.io/badge/python-3.10%2B-blue?style=flat-square)](https://www.python.org)
+[![Python](https://img.shields.io/badge/python-3.10%2B-blue?style=flat-square&logo=python&logoColor=white)](https://www.python.org)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green?style=flat-square)](LICENSE)
-[![Platform](https://img.shields.io/badge/platform-e--INFRA%20CZ-purple?style=flat-square)](https://llm.ai.e-infra.cz)
+[![Platform](https://img.shields.io/badge/e--INFRA%20CZ-LLM-7B2FBE?style=flat-square)](https://llm.ai.e-infra.cz)
+[![Ollama](https://img.shields.io/badge/Ollama-local%20models-1A6B5C?style=flat-square)](https://ollama.com)
 
 </div>
 
 ---
 
-OctoSlave is a terminal-based autonomous agent that works like Claude Code — but runs entirely on the **e-INFRA CZ academic LLM infrastructure**. Give it a task or a research topic and it explores, searches the web, writes and runs code, debugs, and iterates until the job is done.
+OctoSlave is a terminal-based autonomous agent built for scientists and engineers.
+Give it a task or a research topic — it explores the web, writes and runs code, debugs, evaluates, and iterates until the job is done.
 
-It also ships a **multi-agent long-research pipeline** (`/long-research`) that spawns a population of specialist agents — Researcher, Hypothesis Generator, Coder, Debugger, Evaluator, Orchestrator — and runs them in a loop over multiple rounds, producing rigorous, reproducible research with real data only.
+It ships two modes:
+
+- **Interactive agent** — an always-on REPL that can do anything Claude Code can, using academic-grade LLMs
+- **Long-research pipeline** (`/long-research`) — a population of 6 specialist agents that conduct rigorous, multi-round research with real data, reproducible code, and a polished HTML deliverable
 
 ---
 
@@ -45,6 +35,7 @@ It also ships a **multi-agent long-research pipeline** (`/long-research`) that s
 - [One-shot mode](#one-shot-mode)
 - [Long-research pipeline](#long-research-pipeline)
 - [Available models](#available-models)
+- [Local models (Ollama)](#local-models-ollama)
 - [Tools reference](#tools-reference)
 - [Configuration](#configuration)
 - [Project structure](#project-structure)
@@ -54,24 +45,24 @@ It also ships a **multi-agent long-research pipeline** (`/long-research`) that s
 
 ## Features
 
-| | |
-|---|---|
-| **Autonomous agent loop** | Runs up to 80 iterations end-to-end until the task is complete |
-| **Web research** | DuckDuckGo search + full-page text extraction from any URL |
-| **File system & shell** | Read, write, edit files; run arbitrary shell commands; install packages |
-| **PDF support** | Automatically extracts text from PDFs (no binary noise sent to the model) |
-| **Streaming output** | See the model's reasoning and tool calls in real time |
-| **Interactive TUI** | Persistent prompt with command history, bottom toolbar, keyboard shortcuts |
-| **Multi-model** | Switch between Mistral, Qwen, DeepSeek, GPT-OSS and more mid-session |
-| **Multi-agent research** | Full autonomous research pipeline with 6 specialist roles |
-| **Context safety** | 50 K-char tool-result cap + graceful context-window-exceeded recovery |
-| **Resumable** | Research runs persist to disk and can be resumed after interruption |
+<table>
+<tr><td>🔁 <strong>Autonomous loop</strong></td><td>Runs up to 80 tool-call iterations end-to-end — no hand-holding required</td></tr>
+<tr><td>🌐 <strong>Web research</strong></td><td>DuckDuckGo search + full-page text extraction from any URL or PDF</td></tr>
+<tr><td>🖥️ <strong>Shell &amp; filesystem</strong></td><td>Read, write, edit files; run arbitrary shell commands; install packages via uv / pip</td></tr>
+<tr><td>📡 <strong>Streaming output</strong></td><td>Reasoning and tool calls appear in real time with a Rich TUI</td></tr>
+<tr><td>🔬 <strong>Multi-agent research</strong></td><td>6 specialist roles collaborate across multiple rounds; findings.md updated automatically</td></tr>
+<tr><td>📊 <strong>Visual-first results</strong></td><td>Every round produces publication-quality plots; final HTML report with embedded figures</td></tr>
+<tr><td>🛡️ <strong>Data integrity</strong></td><td>Synthetic data is forbidden — the pipeline skips unavailable sources and pivots to alternatives</td></tr>
+<tr><td>⚡ <strong>GPU-aware</strong></td><td>Hardware probe at startup; CUDA utilisation enforced in all generated code</td></tr>
+<tr><td>🏠 <strong>Local mode</strong></td><td>Full functionality via Ollama — no API key needed, complete privacy</td></tr>
+<tr><td>💾 <strong>Resumable</strong></td><td>Research runs persist to disk and resume exactly where they left off</td></tr>
+</table>
 
 ---
 
 ## Installation
 
-**Requirements:** Python 3.10+, an [e-INFRA CZ LLM](https://llm.ai.e-infra.cz) API key
+**Requirements:** Python 3.10+, an [e-INFRA CZ LLM](https://llm.ai.e-infra.cz) API key *(or Ollama for local mode)*
 
 ```bash
 git clone https://github.com/karatedava/octoslave.git
@@ -79,86 +70,77 @@ cd octoslave
 pip install -e .
 ```
 
-> **Tip:** Use a virtual environment to keep dependencies isolated.
+> **Recommended:** use [uv](https://github.com/astral-sh/uv) for faster, reproducible installs:
 > ```bash
-> python -m venv .venv && source .venv/bin/activate
-> pip install -e .
+> uv pip install -e .
 > ```
 
 ### Set your API key
 
 ```bash
-# Interactive setup wizard
-ots config
-
-# Or pass the key directly
-ots config --api-key sk-YOUR_KEY
-
-# Or export it for the session
-export OCTOSLAVE_API_KEY=sk-YOUR_KEY
+ots config                        # interactive setup wizard
+ots config --api-key sk-YOUR_KEY  # pass key directly
+export OCTOSLAVE_API_KEY=sk-...   # or set env var for the session
 ```
 
-Config is stored at `~/.octoslave/config.json`. Environment variables always take precedence.
+Config is saved at `~/.octoslave/config.json`. Environment variables always take precedence.
 
 ---
 
 ## Quick start
 
 ```bash
-# Launch the interactive TUI (e-INFRA CZ)
+# Interactive TUI (e-INFRA CZ)
 ots
 
-# Launch in local Ollama mode
+# Interactive TUI (local Ollama)
 ots --local
 
-# Run a single task and exit
+# One-shot task
 ots run "build a Flask REST API for a todo app"
 
-# Run with a local model
-ots run "explain this codebase" --local
-
-# Run against a specific directory and model
-ots run "add pytest unit tests" --dir ~/my-project --model qwen3-coder
-
-# Start a fully autonomous multi-round research session
+# Research — 3 autonomous rounds
 ots
-◆ /long-research "calibration methods for large language models" --rounds 4
+◆ /long-research "calibration methods for large language models" --rounds 3
 ```
 
 ---
 
 ## Interactive TUI
 
-Running `ots` launches the full TUI:
+Running `ots` opens the full TUI:
 
 ```
-╭─────────────────────────────────────────╮
-│                                         │
-│        ██████████████████               │
-│     ████████████████████████            │
-│   ██████████████████████████████        │
-│   ...  (octopus mascot)  ...            │
-│                                         │
-│  OCTOSLAVE                              │
-│  model mistral-small-4   dir ~/project  │
-│  /help for commands                     │
-│                                         │
-╰─────────────────────────────────────────╯
+  ╭────────────────────────────────────────────────╮
+  │                  ██████████                    │
+  │               ██████████████                   │
+  │              ████████████████                  │
+  │            ██████████████████                  │
+  │            ████◉███████◉█████                  │
+  │            ██████████████████                  │
+  │               ████ ▄▄▄▄▄ ████                  │
+  │            ◆─◆─◆─◆─◆─◆─◆─◆─◆─                  │ 
+  │                █████ ◈ █████                   │  
+  │             ╰██╯ ╰██╯ ╰██╯ ╰██╯                │
+  │                                                │
+  │               OCTOSLAVE                        │
+  │  model deepseek-v3.2   dir ~/project           │
+  │  /help for commands                            │
+  ╰────────────────────────────────────────────────╯
 
-◆ [mistral-small-4] _
+◆ [deepseek-v3.2] _
 ```
 
-- Type any task in natural language and press **Enter**
-- The agent streams its thinking and tool calls live
-- Follow up with more instructions in the same session — context is preserved
+- Type any task in natural language — the agent streams its thinking and tool calls live
+- Follow up freely; full conversation context is preserved across turns
 - Use `/` commands to control the session (see below)
 
 **Keyboard shortcuts**
 
 | Key | Action |
 |-----|--------|
-| `↑` / `↓` | Recall previous prompts from history |
-| `Ctrl+C` | Cancel current generation (history preserved) |
+| `↑` / `↓` | Cycle through prompt history |
+| `Ctrl+C` | Cancel current generation (history kept) |
 | `Ctrl+D` | Exit |
 | `Ctrl+L` | Clear terminal screen |
 
@@ -184,44 +166,54 @@ Running `ots` launches the full TUI:
 ## One-shot mode
 
 ```bash
-# Basic task
-ots run "build a REST API for a todo app"
-
-# Specify model and working directory
 ots run "refactor the authentication module" \
-  --model qwen3-coder \
+  --model qwen3-coder-30b \
   --dir /path/to/project
 
-# Stay interactive after the task completes
+# Stay interactive after the run completes
 ots run "set up a data processing pipeline for CSV files" -i
 
-# Full flag reference
-ots run --help
+ots run --help   # full flag reference
 ```
 
 ---
 
 ## Long-research pipeline
 
-`/long-research` spawns a **population of 6 specialist agents** that collaborate over multiple rounds of fully autonomous research:
+`/long-research` deploys **6 specialist agents** that collaborate over multiple fully autonomous rounds:
 
 ```
-Round 1 ──────────────────────────────────────────────────────
-  🔬 Researcher         Literature survey, verified datasets
-  💡 Hypothesis Gen.    3–5 ranked, falsifiable hypotheses
-  💻 Coder              Implements experiment + saves plots to results/
-  🐛 Debugger           Independently verifies code and results
-  ⚖️  Evaluator          Critical scoring + generates scores chart
-  🧠 Orchestrator       Synthesises findings → writes brief for Round 2
-  📊 Reporter           Produces self-contained HTML report for Round 1
-Round 2 ──────────────────────────────────────────────────────
-  ... (loop until complete or max rounds)
-  📊 Master Reporter    Final comprehensive HTML report across all rounds
+╔══════════════════════════════════════════════════════════════╗
+║  Round N                                                     ║
+╠══════════════════════════════════════════════════════════════╣
+║  🔬 Researcher        Fast targeted scout — SOTA, datasets,  ║
+║                       verified access status, handoff brief  ║
+║     ↓                                                        ║
+║  💡 Experiment        Commits to ONE concrete experiment:    ║
+║     Designer          pseudocode, data plan, success metric  ║
+║     ↓                                                        ║
+║  💻 Coder             Implements on real data, GPU-aware,    ║
+║                       produces plots + key_results.json      ║
+║     ↓                                                        ║
+║  🐛 Debugger          Independent verifier — runs code,      ║
+║                       checks GPU use, validates numbers       ║
+║     ↓                                                        ║
+║  ⚖️  Evaluator         Critical scoring vs SOTA; generates   ║
+║                       a colour-coded scores bar chart         ║
+║     ↓                                                        ║
+║  🧠 Orchestrator      Synthesises findings → writes precise  ║
+║                       brief for the next round               ║
+╚══════════════════════════════════════════════════════════════╝
+  ↓  (after all rounds)
+  📊 Master Reporter — comprehensive self-contained HTML report
+                       with embedded plots, score progression,
+                       and collapsible round deep-dives
 ```
 
-**Data integrity guarantee:** agents are explicitly forbidden from generating synthetic or dummy data as a substitute for real sources. If a dataset is unavailable, the step is logged as skipped, alternatives are searched, and the pipeline pivots — it never fabricates results.
+**Data integrity guarantee:** agents are explicitly forbidden from generating synthetic or dummy data.
+If a dataset is unavailable the failure is logged, alternatives are searched, and the pipeline pivots — it never fabricates results.
 
-**Visual-first output:** every round produces publication-quality plots (data overview, main results, model fits, baseline comparisons), an evaluation scores chart, and a self-contained HTML report. After all rounds, a master `final_report.html` is generated with cross-round score progression, a curated plot gallery, and collapsible round deep-dives — designed so a scientist can evaluate the entire research arc at a glance.
+**GPU enforcement:** a hardware probe runs at startup; all generated code is required to use CUDA when available (mixed-precision, correct device placement, peak VRAM logging).
 
 ### Usage
 
@@ -232,9 +224,9 @@ Round 2 ────────────────────────
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--rounds N` | `5` | Maximum number of research rounds |
-| `--all MODEL` | *(per-role defaults)* | Use a single model for all 6 agents |
-| `--overseer MODEL` | `mistral-small-4` | Override the orchestrator model only |
-| `--resume` | off | Resume an interrupted run (skips agents whose output files exist) |
+| `--all MODEL` | *(per-role defaults)* | Use one model for all 6 agents |
+| `--overseer MODEL` | `deepseek-v3.2` | Override the orchestrator model only |
+| `--resume` | off | Resume an interrupted run (skips agents whose output already exists) |
 
 ### Examples
 
@@ -243,8 +235,8 @@ Round 2 ────────────────────────
 
 /long-research "protein folding accuracy of ESMFold vs AlphaFold2" \
   --rounds 5 \
-  --all qwen3-coder \
-  --overseer gpt-oss-120b
+  --all qwen3-coder-30b \
+  --overseer deepseek-v3.2-thinking
 
 /long-research "RAG retrieval strategies for long documents" --resume
 ```
@@ -255,29 +247,53 @@ Each run creates a self-contained directory tree under `research/` in your worki
 
 ```
 research/
-├── final_report.html              ← master HTML report — open in browser
-├── findings.md                    ← cumulative findings across all rounds
+├── final_report.html          ← master HTML report — open in browser
+├── findings.md                ← cumulative findings updated after each round
+├── hw_profile.json            ← detected hardware (CPU, GPU, VRAM)
+│
 ├── round_001/
-│   ├── 01_literature.md           ← papers, datasets (with access status)
-│   ├── 02_hypotheses.md           ← ranked hypotheses + recommended experiment
+│   ├── 01_literature.md       ← papers, datasets (with verified access status)
+│   ├── 02_experiment.md       ← experiment design, pseudocode, data plan
 │   ├── 03_code/
-│   │   ├── *.py                   ← experiment scripts
-│   │   ├── IMPLEMENTATION.md      ← approach, skipped steps, results summary
-│   │   └── results/               ← plots (PNG), metrics (CSV/JSON), logs
-│   ├── 04_debug_report.md         ← bugs found/fixed, confidence score
-│   ├── 05_evaluation.md           ← independent scores against SOTA
-│   ├── 05_scores_chart.png        ← colour-coded evaluation bar chart
-│   ├── 06_synthesis.md            ← round summary + brief for next round
-│   └── 07_report.html             ← self-contained HTML report for this round
+│   │   ├── *.py               ← experiment scripts
+│   │   ├── IMPLEMENTATION.md  ← approach, skipped steps, results summary
+│   │   └── results/           ← plots (PNG), key_results.json, logs
+│   ├── 04_debug_report.md     ← bugs found/fixed, confidence score
+│   ├── 05_evaluation.md       ← independent scoring against SOTA
+│   ├── 05_scores_chart.png    ← colour-coded evaluation bar chart
+│   └── 06_synthesis.md        ← round summary + brief for next round
+│
 ├── round_002/
 │   └── ...
 ```
 
 ---
 
+## Available models (e-INFRA CZ)
+
+Run `ots models` to see the live list. Default assignments in the research pipeline:
+
+| Model | Research role | Strengths |
+|-------|--------------|-----------|
+| `deepseek-v3.2` | Orchestrator, single-agent default | Strong reasoning, synthesis |
+| `deepseek-v3.2-thinking` | Evaluator, Experiment Designer | Extended chain-of-thought |
+| `qwen3-coder-30b` | Coder, Debugger | Code generation, tool use |
+| `qwen3.5-122b` | Researcher | Fast reading, web research |
+| `gpt-oss-120b` | Master Reporter | Large context, clean writing |
+| `qwen3-coder` | Lightweight coder | Faster, smaller tasks |
+| `qwen3.5` | Balanced general | Good all-round |
+| `kimi-k2.5` | Long-context tasks | Extended context window |
+| `llama-4-scout-17b-16e-instruct` | — | Meta Llama 4 |
+| `gemma4` | — | Google Gemma 4 |
+| `thinker` / `coder` / `agentic` / `mini` | — | Alias shortcuts |
+
+Switch mid-session: `/model qwen3-coder-30b` or pass `-m MODEL` to any command.
+
+---
+
 ## Local models (Ollama)
 
-OctoSlave can run fully offline using [Ollama](https://ollama.com). All functionality — interactive chat, one-shot tasks, and the full `/long-research` pipeline — works identically with local models.
+OctoSlave runs fully offline via [Ollama](https://ollama.com). All functionality — chat, one-shot tasks, and the full research pipeline — works identically with local models.
 
 ### Setup
 
@@ -286,116 +302,96 @@ OctoSlave can run fully offline using [Ollama](https://ollama.com). All function
 #    macOS:   brew install ollama
 #    Linux:   curl -fsSL https://ollama.com/install.sh | sh
 
-# 2. Start Ollama
+# 2. Start the Ollama daemon
 ollama serve
 
 # 3. Pull a model (see hardware guide below)
-ollama pull mistral
+ollama pull llama3.1:8b
 
 # 4. Start OctoSlave in local mode
 ots --local
-# or switch mid-session:
-#   /local
 ```
 
-### Switching backends
+### Backend switching
 
 ```bash
 # In the TUI:
-/local                   # switch to Ollama (uses first pulled model)
-/local llama3.2          # switch to a specific pulled model
-/pull qwen2.5-coder      # pull a new model without leaving the session
-/einfra                  # switch back to e-INFRA CZ
+/local                    # switch to Ollama (first pulled model)
+/local llama3.1:8b        # switch to a specific model
+/pull qwen2.5-coder:14b   # pull a model without leaving the session
+/einfra                   # switch back to e-INFRA CZ
 
 # On the command line:
 ots --local run "explain this code"
-ots models --local       # list pulled Ollama models
+ots models --local        # list pulled Ollama models
 ```
 
 ### Long-research with local models
 
-In local mode, `/long-research` automatically distributes up to **3 pulled models** across the 7 specialist roles by priority tier:
+In local mode, `/long-research` automatically distributes up to **3 pulled models** across the 6 specialist roles by priority tier:
 
-| Tier | Roles | Best for |
-|------|-------|----------|
-| **A** (model 1) | Orchestrator, Evaluator | Reasoning, synthesis, critical judgement |
-| **B** (model 2) | Coder, Debugger, Reporter | Code generation, debugging, HTML output |
-| **C** (model 3) | Researcher, Hypothesis | Document reading, structured writing |
+| Tier | Roles | Characteristic needed |
+|------|-------|----------------------|
+| **A** — model 1 | Orchestrator, Evaluator | Strong reasoning, synthesis |
+| **B** — model 2 | Coder, Debugger, Reporter | Code generation, structured output |
+| **C** — model 3 | Researcher, Experiment Designer | Document reading, writing |
 
-If you only have 1 or 2 models pulled, tiers are collapsed automatically.
+If you only have 1 or 2 models pulled, tiers collapse automatically.
 
-```
-/long-research "topic" --rounds 2    # auto-assigns your pulled models
-/long-research "topic" --all mistral # force one model for everything
-```
+### Hardware recommendations
 
-### Recommended local setups
+<details>
+<summary><strong>8 GB VRAM / 16 GB RAM</strong> — minimum viable</summary>
 
-Choose based on available VRAM / RAM:
-
-#### 8 GB VRAM / 16 GB RAM — minimum viable
 ```bash
-ollama pull mistral          # 4 GB  — fast, all-round
+ollama pull mistral          # 4 GB — fast, general
 ```
-Good for: interactive chat, simple coding tasks. Long-research will be slow and capability-limited.
+Good for interactive chat and simple coding tasks. Long-research will be slow and capability-limited.
+</details>
 
-#### 16 GB VRAM / 32 GB RAM — recommended
+<details>
+<summary><strong>16 GB VRAM / 32 GB RAM</strong> — recommended starter</summary>
+
 ```bash
-ollama pull llama3.1:8b      # 5 GB  — best reasoning at this size
-ollama pull qwen2.5-coder    # 4 GB  — strong at code
+ollama pull llama3.1:8b      # 5 GB — best reasoning at this size
+ollama pull qwen2.5-coder    # 4 GB — strong at code
 ```
-Assign: `llama3.1:8b` → orchestrator/evaluator, `qwen2.5-coder` → coder/debugger.
+Assign: `llama3.1:8b` → Tier A, `qwen2.5-coder` → Tier B.
+</details>
 
-#### 24 GB VRAM / 48 GB RAM — comfortable research
+<details>
+<summary><strong>24 GB VRAM / 48 GB RAM</strong> — comfortable research</summary>
+
 ```bash
-ollama pull llama3.1:8b        # 5 GB  — orchestrator / evaluator
-ollama pull qwen2.5-coder:14b  # 9 GB  — coder / debugger / reporter
-ollama pull mistral             # 4 GB  — researcher / hypothesis
+ollama pull llama3.1:8b        # 5 GB — Tier A
+ollama pull qwen2.5-coder:14b  # 9 GB — Tier B
+ollama pull mistral             # 4 GB — Tier C
 ```
 This is the sweet spot for autonomous research runs.
+</details>
 
-#### 48 GB+ VRAM — full power
+<details>
+<summary><strong>48 GB+ VRAM</strong> — full power</summary>
+
 ```bash
-ollama pull llama3.3:70b       # 40 GB — orchestrator / evaluator
-ollama pull qwen2.5-coder:32b  # 20 GB — coder / debugger / reporter
-ollama pull qwen2.5:14b        # 9 GB  — researcher / hypothesis
+ollama pull llama3.3:70b       # 40 GB — Tier A
+ollama pull qwen2.5-coder:32b  # 20 GB — Tier B
+ollama pull qwen2.5:14b        # 9 GB  — Tier C
 ```
 Approaches cloud model quality for most research tasks.
+</details>
 
-#### CPU-only (no GPU)
+<details>
+<summary><strong>CPU only (no GPU)</strong></summary>
+
 ```bash
-ollama pull llama3.2:3b        # 2 GB  — smallest capable model
-ollama pull qwen2.5-coder:3b   # 2 GB  — minimal coding capability
+ollama pull llama3.2:3b        # 2 GB — smallest capable model
+ollama pull qwen2.5-coder:3b   # 2 GB — minimal coding capability
 ```
-Usable for simple tasks. Long-research not recommended on CPU only.
+Usable for simple interactive tasks. Long-research not recommended on CPU only.
+</details>
 
-> **Tip:** Run `ots models --local` at any time to see what you have pulled.
-
----
-
-## Available models (e-INFRA CZ)
-
-Run `ots models` to see the current list. As of writing:
-
-| Model | Strengths |
-|-------|-----------|
-| `mistral-small-4` | Fast, general tasks — **default** |
-| `qwen3-coder` | Strong coding and tool use |
-| `qwen3-coder-30b` | Larger coding model |
-| `qwen3-coder-next` | Latest Qwen coder generation |
-| `qwen3.5` | Balanced general + coding |
-| `qwen3.5-122b` | Large general model |
-| `gpt-oss-120b` | Large general model |
-| `deepseek-v3.2` | Strong reasoning |
-| `deepseek-v3.2-thinking` | Extended chain-of-thought |
-| `kimi-k2.5` | Long context |
-| `llama-4-scout-17b-16e-instruct` | Meta Llama 4 |
-| `gemma4` | Google Gemma 4 |
-| `glm-4.7` / `glm-5` | GLM series |
-| `thinker` / `coder` / `agentic` / `mini` | Alias shortcuts |
-| `redhatai-scout` | Red Hat AI Scout |
-
-Switch mid-session with `/model qwen3-coder` or pass `-m MODEL` to any command.
+> Run `ots models --local` at any time to see what you have pulled.
 
 ---
 
@@ -403,15 +399,15 @@ Switch mid-session with `/model qwen3-coder` or pass `-m MODEL` to any command.
 
 | Tool | Description |
 |------|-------------|
-| `read_file` | Read file contents (with optional offset/limit for large files); PDFs automatically extracted to text |
+| `read_file` | Read file contents (offset/limit for large files); PDFs auto-extracted to text |
 | `write_file` | Create or fully overwrite a file |
-| `edit_file` | Targeted string replacement — safer than rewriting the whole file |
-| `bash` | Run any shell command (installs, tests, builds, git, data processing) |
+| `edit_file` | Targeted string replacement — safer than rewriting whole files |
+| `bash` | Run any shell command: builds, tests, git, data processing, package installs |
 | `glob` | Find files by pattern, e.g. `**/*.py` |
 | `grep` | Regex search across files with context lines |
-| `list_dir` | List directory contents with sizes and modification times |
+| `list_dir` | Directory listing with sizes and modification times |
 | `web_search` | DuckDuckGo search → titles, URLs, one-line snippets |
-| `web_fetch` | Fetch URL → extracted readable text (strips JS/CSS/ads) |
+| `web_fetch` | Fetch URL → clean readable text (strips JS/CSS/ads/nav) |
 
 ---
 
@@ -421,23 +417,21 @@ Switch mid-session with `/model qwen3-coder` or pass `-m MODEL` to any command.
 |-----------|-----------|-------|
 | Environment variable | **Highest** | Overrides everything |
 | `~/.octoslave/config.json` | Medium | Written by `ots config` |
-| Built-in default | Lowest | `mistral-small-4`, e-INFRA CZ endpoint |
+| Built-in default | Lowest | `deepseek-v3.2`, e-INFRA CZ endpoint |
 
 **Environment variables**
 
 | Variable | Description |
 |----------|-------------|
 | `OCTOSLAVE_API_KEY` | e-INFRA CZ API key |
-| `OCTOSLAVE_BASE_URL` | Override the API base URL (default: `https://llm.ai.e-infra.cz/v1`) |
-| `OCTOSLAVE_MODEL` | Override the default model |
+| `OCTOSLAVE_BASE_URL` | API base URL (default: `https://llm.ai.e-infra.cz/v1`) |
+| `OCTOSLAVE_MODEL` | Default model override |
 | `OCTOSLAVE_BACKEND` | `einfra` (default) or `ollama` |
 | `OCTOSLAVE_OLLAMA_URL` | Ollama base URL (default: `http://localhost:11434/v1`) |
 
-**Interactive config wizard**
-
 ```bash
-ots config          # guided setup
-ots config --show   # print current config (key is masked)
+ots config          # guided interactive setup
+ots config --show   # print current config (key masked)
 ```
 
 ---
@@ -446,13 +440,15 @@ ots config --show   # print current config (key is masked)
 
 ```
 octoslave/
+├── assets/
+│   └── logo.svg              ← project logo (teal octopus, gold chain)
 ├── octoslave/
-│   ├── agent.py      # Core agent loop, system prompt, context management
-│   ├── config.py     # Config loading/saving, model list
-│   ├── display.py    # Rich TUI: mascot, banners, streaming, research display
-│   ├── main.py       # Click CLI, interactive REPL, slash-command handler
-│   ├── research.py   # Multi-agent long-research pipeline
-│   └── tools.py      # All tool definitions and implementations
+│   ├── agent.py              ← core agent loop, system prompt, context management
+│   ├── config.py             ← config load/save, Ollama helpers, model list
+│   ├── display.py            ← Rich TUI: mascot, banners, streaming, research display
+│   ├── main.py               ← Click CLI, interactive REPL, slash-command handler
+│   ├── research.py           ← multi-agent long-research pipeline
+│   └── tools.py              ← all tool definitions and implementations
 └── pyproject.toml
 ```
 
@@ -462,4 +458,9 @@ octoslave/
 
 MIT — see [LICENSE](LICENSE).
 
----
+<div align="center">
+<br/>
+<img src="assets/logo.svg" alt="OctoSlave" width="80"/>
+<br/>
+<sub>Built for researchers who demand real results.</sub>
+</div>
