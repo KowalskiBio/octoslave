@@ -86,6 +86,9 @@ pip install -e ".[web]"
 ```bash
 ots config                        # interactive setup wizard
 ots config --api-key sk-YOUR_KEY  # pass key directly
+ots config --model qwen3-coder-30b  # set default model
+ots config --ollama-url http://remote-host:11434/v1  # remote Ollama
+ots config --show                 # print current config (key masked)
 export OCTOSLAVE_API_KEY=sk-...   # or set env var for the session
 ```
 
@@ -316,10 +319,14 @@ Run `ots models` to see the live list. Default assignments in the research pipel
 | `qwen3.5-122b` | Researcher | Fast reading, web research |
 | `gpt-oss-120b` | Master Reporter | Large context, clean writing |
 | `qwen3-coder` | Lightweight coder | Faster, smaller tasks |
+| `qwen3-coder-next` | — | Next-gen coder preview |
 | `qwen3.5` | Balanced general | Good all-round |
 | `kimi-k2.5` | Long-context tasks | Extended context window |
+| `mistral-small-4` | — | Mistral Small 4 |
 | `llama-4-scout-17b-16e-instruct` | — | Meta Llama 4 |
 | `gemma4` | — | Google Gemma 4 |
+| `glm-4.7` / `glm-5` | — | Zhipu GLM series |
+| `redhatai-scout` | — | Red Hat AI Scout |
 | `thinker` / `coder` / `agentic` / `mini` | — | Alias shortcuts |
 
 Switch mid-session: `/model qwen3-coder-30b` or pass `-m MODEL` to any command.
@@ -523,6 +530,7 @@ octoslave/
 │       ├── app.py            ← FastAPI backend: WebSocket handler, file serving
 │       └── static/
 │           └── index.html    ← single-page web UI (Chat / Research / Files / Settings)
+├── run_research.py           ← CLI helper: run long-research without the TUI
 └── pyproject.toml
 ```
 
