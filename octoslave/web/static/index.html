@@ -4,6 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>OctoSlave</title>
+  <link rel="icon" type="image/png" href="/static/logo.png">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
@@ -33,7 +34,7 @@
       background: var(--bg);
       color: var(--text);
       font-family: var(--font);
-      font-size: 14px;
+      font-size: 16px;
       line-height: 1.6;
       overflow: hidden;
     }
@@ -48,12 +49,12 @@
     #navbar {
       position: fixed;
       top: 0; left: 0; right: 0;
-      height: 52px;
+      height: 80px;
       background: var(--surface);
       border-bottom: 1px solid var(--border);
       display: flex;
       align-items: center;
-      padding: 0 20px;
+      padding: 0 24px;
       gap: 24px;
       z-index: 100;
     }
@@ -66,13 +67,13 @@
     }
 
     #nav-brand img {
-      width: 28px;
-      height: 28px;
+      width: 68px;
+      height: 68px;
       object-fit: contain;
     }
 
     #nav-brand .brand-name {
-      font-size: 16px;
+      font-size: 19px;
       font-weight: 600;
       color: var(--teal-light);
       letter-spacing: 0.02em;
@@ -89,11 +90,11 @@
       background: none;
       border: 1px solid transparent;
       color: var(--text-muted);
-      padding: 6px 18px;
+      padding: 8px 22px;
       border-radius: 20px;
       cursor: pointer;
       font-family: var(--font);
-      font-size: 13px;
+      font-size: 15px;
       font-weight: 500;
       transition: all 0.18s;
     }
@@ -141,11 +142,11 @@
       background: var(--card);
       border: 1px solid var(--border);
       color: var(--text-muted);
-      padding: 3px 10px;
+      padding: 5px 12px;
       border-radius: 12px;
-      font-size: 11px;
+      font-size: 13px;
       font-weight: 500;
-      max-width: 180px;
+      max-width: 200px;
       overflow: hidden;
       text-overflow: ellipsis;
       white-space: nowrap;
@@ -153,8 +154,8 @@
 
     /* ── MAIN AREA ───────────────────────────────────────────── */
     #main {
-      margin-top: 52px;
-      height: calc(100vh - 52px);
+      margin-top: 80px;
+      height: calc(100vh - 80px);
       overflow: hidden;
     }
 
@@ -177,9 +178,9 @@
       border: 1px solid var(--border);
       color: var(--text);
       border-radius: var(--radius);
-      padding: 7px 12px;
+      padding: 10px 14px;
       font-family: var(--font);
-      font-size: 13px;
+      font-size: 15px;
       outline: none;
       transition: border-color 0.18s;
     }
@@ -191,10 +192,30 @@
       border-color: var(--teal-light);
     }
 
+    select {
+      background: var(--card);
+      border: 1px solid var(--border);
+      color: var(--text);
+      border-radius: var(--radius);
+      padding: 10px 36px 10px 14px;
+      font-family: var(--font);
+      font-size: 15px;
+      outline: none;
+      cursor: pointer;
+      appearance: none;
+      -webkit-appearance: none;
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1l5 5 5-5' stroke='%238b949e' stroke-width='1.8' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+      background-repeat: no-repeat;
+      background-position: right 12px center;
+      transition: border-color 0.18s;
+    }
+    select:focus { border-color: var(--teal-light); }
+    select option { background: var(--surface); color: var(--text); }
+
     button {
       cursor: pointer;
       font-family: var(--font);
-      font-size: 13px;
+      font-size: 15px;
       font-weight: 500;
       border: none;
       border-radius: var(--radius);
@@ -204,7 +225,7 @@
     .btn-primary {
       background: var(--teal);
       color: #fff;
-      padding: 7px 16px;
+      padding: 10px 22px;
     }
 
     .btn-primary:hover:not(:disabled) {
@@ -220,7 +241,7 @@
       background: transparent;
       border: 1px solid var(--border);
       color: var(--text-muted);
-      padding: 6px 14px;
+      padding: 9px 18px;
     }
 
     .btn-ghost:hover {
@@ -265,14 +286,14 @@
       display: flex;
       align-items: center;
       gap: 10px;
-      padding: 10px 20px;
+      padding: 12px 20px;
       background: var(--surface);
       border-bottom: 1px solid var(--border);
       flex-shrink: 0;
     }
 
-    #chat-model-input { width: 210px; }
-    #chat-dir-input   { width: 300px; }
+    #chat-model-input { width: 240px; }
+    #chat-dir-input   { width: 340px; }
 
     #chat-messages {
       flex: 1;
@@ -446,19 +467,19 @@
     #chat-textarea {
       flex: 1;
       resize: none;
-      min-height: 60px;
-      max-height: 180px;
+      min-height: 72px;
+      max-height: 220px;
       overflow-y: auto;
-      line-height: 1.5;
+      line-height: 1.6;
     }
 
     #chat-send-btn {
       background: var(--teal);
       color: #fff;
-      padding: 10px 20px;
+      padding: 12px 28px;
       border-radius: var(--radius);
-      font-size: 14px;
-      height: 60px;
+      font-size: 16px;
+      height: 72px;
       flex-shrink: 0;
     }
 
@@ -538,8 +559,8 @@
 
     #research-start-btn {
       width: 100%;
-      padding: 12px;
-      font-size: 15px;
+      padding: 14px;
+      font-size: 16px;
       background: var(--teal);
       color: #fff;
       border-radius: var(--radius);
@@ -849,6 +870,127 @@
 
     #settings-refresh-btn { margin-top: 4px; }
 
+    /* ── HISTORY SIDEBAR ────────────────────────────────────── */
+    #history-sidebar {
+      position: fixed;
+      top: 80px;
+      left: -320px;
+      width: 320px;
+      height: calc(100vh - 80px);
+      background: var(--surface);
+      border-right: 1px solid var(--border);
+      z-index: 95;
+      display: flex;
+      flex-direction: column;
+      transition: left 0.22s ease;
+      box-shadow: 4px 0 16px rgba(0,0,0,0.3);
+    }
+    #history-sidebar.open { left: 0; }
+
+    #history-overlay {
+      display: none;
+      position: fixed;
+      inset: 80px 0 0 0;
+      z-index: 94;
+      background: rgba(0,0,0,0.35);
+    }
+    #history-overlay.open { display: block; }
+
+    #history-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 16px 18px 12px;
+      border-bottom: 1px solid var(--border);
+      flex-shrink: 0;
+    }
+    #history-header span {
+      font-weight: 600;
+      font-size: 15px;
+      color: var(--text);
+    }
+    #history-close {
+      background: none;
+      border: none;
+      color: var(--text-muted);
+      font-size: 18px;
+      cursor: pointer;
+      padding: 2px 6px;
+      border-radius: 4px;
+    }
+    #history-close:hover { color: var(--text); background: var(--card); }
+
+    #history-list {
+      flex: 1;
+      overflow-y: auto;
+      padding: 8px 0;
+    }
+
+    .history-empty {
+      padding: 24px 18px;
+      color: var(--text-muted);
+      font-style: italic;
+      font-size: 14px;
+    }
+
+    .history-item {
+      display: flex;
+      align-items: flex-start;
+      gap: 10px;
+      padding: 12px 16px;
+      cursor: pointer;
+      border-bottom: 1px solid rgba(48,54,61,0.5);
+      transition: background 0.15s;
+    }
+    .history-item:hover { background: var(--card); }
+    .history-item.active { background: rgba(26,107,92,0.15); border-left: 3px solid var(--teal); }
+
+    .history-item-body { flex: 1; min-width: 0; }
+    .history-item-title {
+      font-size: 14px;
+      font-weight: 500;
+      color: var(--text);
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .history-item-meta {
+      font-size: 12px;
+      color: var(--text-muted);
+      margin-top: 3px;
+    }
+    .history-item-del {
+      background: none;
+      border: none;
+      color: var(--text-muted);
+      font-size: 15px;
+      cursor: pointer;
+      padding: 2px 5px;
+      border-radius: 4px;
+      flex-shrink: 0;
+      opacity: 0;
+      transition: opacity 0.15s, color 0.15s;
+    }
+    .history-item:hover .history-item-del { opacity: 1; }
+    .history-item-del:hover { color: var(--error); }
+
+    /* ── DIR BROWSE BUTTON ───────────────────────────────────── */
+    .btn-browse {
+      background: var(--card);
+      border: 1px solid var(--border);
+      color: var(--text-muted);
+      padding: 9px 14px;
+      border-radius: var(--radius);
+      font-size: 15px;
+      white-space: nowrap;
+      flex-shrink: 0;
+      transition: all 0.18s;
+    }
+    .btn-browse:hover {
+      border-color: var(--teal-light);
+      color: var(--teal-light);
+    }
+
     /* ── MISC ────────────────────────────────────────────────── */
     .divider {
       height: 1px;
@@ -866,7 +1008,7 @@
 ══════════════════════════════════════════════════════════ -->
 <nav id="navbar">
   <div id="nav-brand">
-    <img src="/assets/logo.svg" alt="OctoSlave logo" onerror="this.style.display='none'">
+    <img src="/static/logo.png" alt="OctoSlave logo">
     <span class="brand-name">OctoSlave</span>
   </div>
 
@@ -878,10 +1020,25 @@
   </div>
 
   <div id="nav-right">
+    <button class="btn-ghost" id="history-btn" onclick="toggleHistory()" title="Chat history">🕐 History</button>
     <div id="conn-dot" title="Disconnected"></div>
     <div id="model-badge">—</div>
   </div>
 </nav>
+
+<!-- ══════════════════════════════════════════════════════════
+     HISTORY SIDEBAR
+══════════════════════════════════════════════════════════ -->
+<div id="history-overlay" onclick="toggleHistory()"></div>
+<div id="history-sidebar">
+  <div id="history-header">
+    <span>🕐 Chat History</span>
+    <button id="history-close" onclick="toggleHistory()" title="Close">✕</button>
+  </div>
+  <div id="history-list">
+    <div class="history-empty">No saved chats yet.</div>
+  </div>
+</div>
 
 <!-- ══════════════════════════════════════════════════════════
      MAIN
@@ -891,8 +1048,11 @@
   <!-- ── TAB: CHAT ──────────────────────────────────────────── -->
   <div class="tab-pane active" id="tab-chat">
     <div id="chat-config-bar">
-      <input type="text" id="chat-model-input" placeholder="Model" title="Model">
+      <select id="chat-model-input" title="Model">
+        <option value="">Loading models…</option>
+      </select>
       <input type="text" id="chat-dir-input"   placeholder="Working directory" title="Working directory">
+      <button class="btn-browse" onclick="browseDir('chat-dir-input')" title="Pick a folder">📂</button>
       <button class="btn-ghost" id="chat-new-btn">New Chat</button>
       <div id="chat-status" class="badge badge-idle">idle</div>
     </div>
@@ -927,7 +1087,9 @@
             </div>
             <div class="field-group" style="flex:1">
               <label style="font-size:11px">Model override</label>
-              <input type="text" id="research-model" placeholder="(use default)">
+              <select id="research-model" style="width:100%">
+                <option value="">(use default)</option>
+              </select>
             </div>
           </div>
           <div id="research-resume-row" style="margin-top:8px">
@@ -938,7 +1100,10 @@
 
         <div class="field-group">
           <label>Working Directory</label>
-          <input type="text" id="research-dir" placeholder="./research">
+          <div style="display:flex;gap:6px;align-items:center">
+            <input type="text" id="research-dir" placeholder="./research" style="flex:1">
+            <button class="btn-browse" onclick="browseDir('research-dir')" title="Pick a folder">📂</button>
+          </div>
         </div>
 
         <button id="research-start-btn">🚀 Start Research</button>
@@ -1011,6 +1176,7 @@
   <div class="tab-pane" id="tab-files">
     <div id="files-toolbar">
       <input type="text" id="files-dir-input" placeholder="Working directory">
+      <button class="btn-browse" onclick="browseDir('files-dir-input')" title="Pick a folder">📂</button>
       <button class="btn-primary" id="files-refresh-btn">Refresh</button>
     </div>
 
@@ -1097,6 +1263,8 @@ const state = {
   chatIsFirst: true,
   pendingToolCall: null,   // { name, summary }
   streamBuffer: '',        // raw text accumulation before markdown render
+  messages: [],            // mirror of server-side messages (for new-chat save)
+  currentChatId: null,     // id of currently loaded chat (null = new unsaved chat)
 
   // research
   researchDir: '',
@@ -1223,7 +1391,7 @@ function handleServerMessage(msg) {
   switch (msg.type) {
     // Config / models
     case 'config':  applyConfig(msg.data); break;
-    case 'models':  /* could populate model datalists */ break;
+    case 'models':  populateModelSelects(msg.list || []); break;
 
     // Chat events
     case 'token':       onToken(msg.text); break;
@@ -1234,6 +1402,10 @@ function handleServerMessage(msg) {
     case 'info':        appendChatInfo(msg.text); break;
     case 'error':       onServerError(msg.text); break;
     case 'cleared':     clearChatMessages(); break;
+
+    // Chat history
+    case 'chat_saved':  refreshHistoryIfOpen(); break;
+    case 'chat_loaded': onChatLoaded(msg); break;
 
     // Research events
     case 'research_start':    onResearchStart(msg); break;
@@ -1254,7 +1426,12 @@ function applyConfig(data) {
   const url   = data?.base_url || '';
 
   document.getElementById('model-badge').textContent = model || '—';
-  document.getElementById('chat-model-input').value  = model;
+  // Select element: set value (or store for later when models list arrives)
+  state.config._pendingModel = model;
+  const sel = document.getElementById('chat-model-input');
+  if (model && sel.querySelector(`option[value="${CSS.escape(model)}"]`)) {
+    sel.value = model;
+  }
   document.getElementById('chat-dir-input').value    = dir;
   document.getElementById('research-dir').value      = dir;
   document.getElementById('files-dir-input').value   = dir;
@@ -1263,6 +1440,35 @@ function applyConfig(data) {
   document.getElementById('settings-base-url').value    = url;
   document.getElementById('settings-model').value       = model;
   document.getElementById('settings-working-dir').value = dir;
+}
+
+function populateModelSelects(models) {
+  const chatSel     = document.getElementById('chat-model-input');
+  const researchSel = document.getElementById('research-model');
+  const prevChat    = chatSel.value;
+
+  chatSel.innerHTML = '';
+  models.forEach(m => {
+    const o = document.createElement('option');
+    o.value = o.textContent = m;
+    chatSel.appendChild(o);
+  });
+  // Restore selection or fall back to config default
+  const target = prevChat || state.config._pendingModel || state.config.model || '';
+  if (target && chatSel.querySelector(`option[value="${CSS.escape(target)}"]`)) {
+    chatSel.value = target;
+  } else if (models.length) {
+    chatSel.value = models[0];
+  }
+
+  const prevResearch = researchSel.value;
+  researchSel.innerHTML = '<option value="">(use default)</option>';
+  models.forEach(m => {
+    const o = document.createElement('option');
+    o.value = o.textContent = m;
+    researchSel.appendChild(o);
+  });
+  if (prevResearch) researchSel.value = prevResearch;
 }
 
 // ════════════════════════════════════════════════════════════
@@ -1291,9 +1497,15 @@ function sendChat() {
 
 // ── New chat ──────────────────────────────────────────────────
 document.getElementById('chat-new-btn').addEventListener('click', () => {
+  // Save current chat before clearing (if it has content)
+  if (state.messages && state.messages.length > 2) {
+    sendMsg({ type: 'save_chat' });
+  }
   sendMsg({ type: 'chat_clear' });
   state.chatIsFirst = true;
+  state.currentChatId = null;
   clearChatMessages();
+  refreshHistoryIfOpen();
 });
 
 function clearChatMessages() {
@@ -1303,11 +1515,14 @@ function clearChatMessages() {
   state.pendingToolCall        = null;
   state.streamBuffer           = '';
   state.chatIsFirst            = true;
+  state.messages               = [];
+  state.currentChatId          = null;
   setChatRunning(false);
 }
 
 // ── Append messages ───────────────────────────────────────────
 function appendUserMessage(text) {
+  state.messages.push({ role: 'user', content: text }); // lightweight mirror for save check
   const container = document.getElementById('chat-messages');
   const div = document.createElement('div');
   div.className = 'msg msg-user';
@@ -1595,9 +1810,8 @@ function onToken(text) {
     }
     last.textContent += text;
     el.scrollTop = el.scrollHeight;
-  }
-  // also stream to chat if chat bubble active
-  if (state.currentAssistantBubble) {
+  } else {
+    ensureAssistantBubble();
     state.streamBuffer += text;
     state.currentAssistantBubble.textContent = state.streamBuffer;
     scrollToBottom(document.getElementById('chat-messages'));
@@ -1626,8 +1840,8 @@ const _origOnToolCall = onToolCall;
 function onToolCall(name, summary) {
   if (state.researchRunning) {
     appendConsole(consoleText(`    🔧 ${name}: ${summary || ''}`, 'console-tool'));
-  }
-  if (!state.researchRunning && state.currentAssistantBubble) {
+  } else {
+    ensureAssistantBubble();
     state.pendingToolCall = { name, summary };
   }
 }
@@ -1877,6 +2091,186 @@ document.getElementById('settings-refresh-btn').addEventListener('click', () => 
 // ════════════════════════════════════════════════════════════
 //  INIT
 // ════════════════════════════════════════════════════════════
+
+// ════════════════════════════════════════════════════════════
+//  CHAT HISTORY
+// ════════════════════════════════════════════════════════════
+
+let _historyOpen = false;
+
+function toggleHistory() {
+  _historyOpen = !_historyOpen;
+  document.getElementById('history-sidebar').classList.toggle('open', _historyOpen);
+  document.getElementById('history-overlay').classList.toggle('open', _historyOpen);
+  if (_historyOpen) loadHistoryList();
+}
+
+function refreshHistoryIfOpen() {
+  if (_historyOpen) loadHistoryList();
+}
+
+async function loadHistoryList() {
+  const list = document.getElementById('history-list');
+  list.innerHTML = '<div class="history-empty">Loading…</div>';
+  try {
+    const resp = await fetch('/api/chats');
+    const data = await resp.json();
+    const chats = data.chats || [];
+    if (!chats.length) {
+      list.innerHTML = '<div class="history-empty">No saved chats yet.</div>';
+      return;
+    }
+    list.innerHTML = '';
+    chats.forEach(chat => {
+      const item = document.createElement('div');
+      item.className = 'history-item' + (chat.id === state.currentChatId ? ' active' : '');
+      item.dataset.id = chat.id;
+
+      const date = chat.updated_at
+        ? new Date(chat.updated_at).toLocaleString([], {month:'short', day:'numeric', hour:'2-digit', minute:'2-digit'})
+        : '';
+      const msgs = chat.message_count ? `${Math.floor(chat.message_count / 2)} exchange${chat.message_count > 2 ? 's' : ''}` : '';
+
+      item.innerHTML = `
+        <div class="history-item-body" onclick="loadChat('${esc(chat.id)}')">
+          <div class="history-item-title" title="${esc(chat.title)}">${esc(chat.title)}</div>
+          <div class="history-item-meta">${esc(date)}${msgs ? ' · ' + msgs : ''}${chat.model ? ' · ' + esc(chat.model) : ''}</div>
+        </div>
+        <button class="history-item-del" title="Delete chat" onclick="deleteChat('${esc(chat.id)}', event)">🗑</button>`;
+      list.appendChild(item);
+    });
+  } catch (e) {
+    list.innerHTML = `<div class="history-empty" style="color:var(--error)">Error: ${esc(e.message)}</div>`;
+  }
+}
+
+function loadChat(chatId) {
+  sendMsg({ type: 'load_chat', chat_id: chatId });
+  toggleHistory(); // close sidebar
+}
+
+function onChatLoaded(msg) {
+  state.currentChatId = msg.id;
+  state.chatIsFirst = false;
+  // Update model dropdown if provided
+  if (msg.model) {
+    const sel = document.getElementById('chat-model-input');
+    if (sel.querySelector(`option[value="${CSS.escape(msg.model)}"]`)) sel.value = msg.model;
+  }
+  restoreChatDisplay(msg.messages || []);
+}
+
+function restoreChatDisplay(messages) {
+  clearChatMessages();
+  state.chatIsFirst = false;
+  const container = document.getElementById('chat-messages');
+
+  for (let i = 0; i < messages.length; i++) {
+    const msg = messages[i];
+    if (msg.role === 'system') continue;
+
+    if (msg.role === 'user') {
+      if (!msg.content) continue;
+      const div = document.createElement('div');
+      div.className = 'msg msg-user';
+      div.innerHTML = `<div class="msg-bubble">${esc(msg.content)}</div>`;
+      container.appendChild(div);
+      continue;
+    }
+
+    if (msg.role === 'assistant') {
+      const wrap   = document.createElement('div');
+      wrap.className = 'msg msg-assistant';
+      const bubble = document.createElement('div');
+      bubble.className = 'msg-bubble';
+
+      if (msg.content) {
+        const textDiv = document.createElement('div');
+        textDiv.className = 'md-content';
+        textDiv.innerHTML = renderMarkdown(msg.content);
+        bubble.appendChild(textDiv);
+      }
+
+      if (msg.tool_calls && msg.tool_calls.length) {
+        const toolsDiv = document.createElement('div');
+        toolsDiv.className = 'tool-calls';
+        msg.tool_calls.forEach(tc => {
+          // find paired tool result
+          const result = messages.slice(i + 1).find(
+            m => m.role === 'tool' && m.tool_call_id === tc.id
+          );
+          const name   = tc.function?.name || '';
+          const icon   = TOOL_ICONS[name] || '🔧';
+          const argStr = (() => {
+            try { const a = JSON.parse(tc.function?.arguments || '{}');
+              return Object.values(a).join(' ').slice(0, 60); }
+            catch { return (tc.function?.arguments || '').slice(0, 60); }
+          })();
+
+          const details = document.createElement('details');
+          details.className = 'tool-block';
+          const sumEl = document.createElement('summary');
+          sumEl.innerHTML =
+            `<span class="tool-icon">${icon}</span>` +
+            `<span class="tool-name">${esc(name)}</span>` +
+            `<span class="tool-summary">${esc(argStr)}</span>`;
+          details.appendChild(sumEl);
+          const detailDiv = document.createElement('div');
+          detailDiv.className = 'tool-detail ok';
+          detailDiv.textContent = (result?.content || '(ok)').slice(0, 400);
+          details.appendChild(detailDiv);
+          toolsDiv.appendChild(details);
+        });
+        bubble.appendChild(toolsDiv);
+      }
+
+      wrap.appendChild(bubble);
+      container.appendChild(wrap);
+    }
+    // skip role:tool — already shown inside the paired assistant bubble
+  }
+  scrollToBottom(container);
+}
+
+async function deleteChat(chatId, event) {
+  event.stopPropagation();
+  if (!confirm('Delete this chat?')) return;
+  try {
+    await fetch(`/api/chats/${encodeURIComponent(chatId)}`, { method: 'DELETE' });
+    if (chatId === state.currentChatId) {
+      state.currentChatId = null;
+    }
+    loadHistoryList();
+  } catch (e) {
+    alert('Failed to delete chat: ' + e.message);
+  }
+}
+
+// ════════════════════════════════════════════════════════════
+//  DIRECTORY PICKER
+// ════════════════════════════════════════════════════════════
+
+async function browseDir(inputId) {
+  const btn = document.querySelector(`[onclick="browseDir('${inputId}')"]`);
+  if (btn) { btn.disabled = true; btn.textContent = '⏳'; }
+  try {
+    const resp = await fetch('/api/pick-dir');
+    if (!resp.ok) throw new Error(resp.statusText);
+    const { path } = await resp.json();
+    if (path) {
+      document.getElementById(inputId).value = path;
+      // sync working dir state when changed from chat bar
+      if (inputId === 'chat-dir-input') {
+        document.getElementById('research-dir').value = path;
+        document.getElementById('files-dir-input').value = path;
+      }
+    }
+  } catch (e) {
+    console.warn('Directory picker failed:', e);
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = '📂'; }
+  }
+}
 
 connect();
 </script>

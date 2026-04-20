@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="assets/logo.svg" alt="OctoSlave" width="220"/>
+<img src="assets/logo.png" alt="OctoSlave" width="220"/>
 
 <h1>OctoSlave</h1>
 
@@ -518,7 +518,7 @@ ots config --show   # print current config (key masked)
 ```
 octoslave/
 ├── assets/
-│   └── logo.svg              ← project logo (teal octopus, gold chain)
+│   └── logo.png              ← project logo (pixel-art octopus)
 ├── octoslave/
 │   ├── agent.py              ← core agent loop, system prompt, context management
 │   ├── config.py             ← config load/save, Ollama helpers, model list
@@ -542,7 +542,7 @@ MIT — see [LICENSE](LICENSE).
 
 <div align="center">
 <br/>
-<img src="assets/logo.svg" alt="OctoSlave" width="80"/>
+<img src="assets/logo.png" alt="OctoSlave" width="80"/>
 <br/>
 <sub>Built for researchers who demand real results.</sub>
 </div>

@@ -148,7 +148,6 @@ TOOL_DEFINITIONS = [
                 "properties": {
                     "path": {"type": "string", "description": "Directory path (defaults to working dir)"},
                 },
-                "required": [],
             },
         },
     },

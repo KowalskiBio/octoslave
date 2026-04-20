@@ -13,6 +13,8 @@ from __future__ import annotations
 import asyncio
 import json
 import threading
+import uuid
+from datetime import datetime
 from pathlib import Path
 from queue import Empty, Queue
 from typing import Any
@@ -29,6 +31,7 @@ from ..research import PIPELINE, run_long_research
 # ---------------------------------------------------------------------------
 
 STATIC_DIR = Path(__file__).parent / "static"
+CHATS_DIR  = Path.home() / ".octoslave" / "chats"
 
 app = FastAPI(title="OctoSlave Web UI", docs_url=None, redoc_url=None)
 
@@ -45,9 +48,115 @@ _ALLOWED_EXT = {
 # ---------------------------------------------------------------------------
 
 
+# ---------------------------------------------------------------------------
+# Chat persistence helpers
+# ---------------------------------------------------------------------------
+
+def _chat_title(messages: list) -> str:
+    for m in messages:
+        if m.get("role") == "user" and m.get("content"):
+            return m["content"][:80]
+    return "Untitled"
+
+def _save_chat(messages: list, model: str = "") -> str:
+    CHATS_DIR.mkdir(parents=True, exist_ok=True)
+    chat_id = f"chat_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:6]}"
+    now = datetime.now().isoformat(timespec="seconds")
+    data = {
+        "id": chat_id,
+        "title": _chat_title(messages),
+        "model": model,
+        "created_at": now,
+        "updated_at": now,
+        "messages": messages,
+    }
+    (CHATS_DIR / f"{chat_id}.json").write_text(json.dumps(data, indent=2))
+    return chat_id
+
+def _safe_chat_id(chat_id: str) -> bool:
+    return chat_id.startswith("chat_") and "/" not in chat_id and ".." not in chat_id
+
+# ---------------------------------------------------------------------------
+# Chat REST endpoints
+# ---------------------------------------------------------------------------
+
+@app.get("/api/chats")
+async def list_chats():
+    CHATS_DIR.mkdir(parents=True, exist_ok=True)
+    chats = []
+    for f in sorted(CHATS_DIR.glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True):
+        try:
+            data = json.loads(f.read_text())
+            chats.append({
+                "id":            data["id"],
+                "title":         data.get("title", "Untitled"),
+                "model":         data.get("model", ""),
+                "created_at":    data.get("created_at", ""),
+                "updated_at":    data.get("updated_at", ""),
+                "message_count": sum(1 for m in data.get("messages", [])
+                                     if m.get("role") in ("user", "assistant")),
+            })
+        except Exception:
+            pass
+    return {"chats": chats}
+
+@app.delete("/api/chats/{chat_id}")
+async def delete_chat(chat_id: str):
+    if not _safe_chat_id(chat_id):
+        return {"error": "Invalid chat id"}
+    f = CHATS_DIR / f"{chat_id}.json"
+    if f.exists():
+        f.unlink()
+    return {"deleted": chat_id}
+
+# ---------------------------------------------------------------------------
+
 @app.get("/")
 async def serve_index():
     return FileResponse(str(STATIC_DIR / "index.html"))
+
+
+@app.get("/api/pick-dir")
+async def pick_directory():
+    """Open a native OS directory-picker dialog and return the selected path."""
+    import asyncio
+    import concurrent.futures
+    import platform
+    import subprocess
+
+    def _open_dialog() -> str:
+        system = platform.system()
+        try:
+            if system == "Darwin":
+                result = subprocess.run(
+                    ["osascript", "-e",
+                     'POSIX path of (choose folder with prompt "Select working directory")'],
+                    capture_output=True, text=True, timeout=120,
+                )
+                if result.returncode == 0:
+                    return result.stdout.strip()
+            elif system == "Linux":
+                for cmd in (
+                    ["zenity", "--file-selection", "--directory",
+                     "--title=Select working directory"],
+                    ["kdialog", "--getexistingdirectory", "--title",
+                     "Select working directory"],
+                ):
+                    try:
+                        result = subprocess.run(
+                            cmd, capture_output=True, text=True, timeout=120)
+                        if result.returncode == 0:
+                            return result.stdout.strip()
+                    except FileNotFoundError:
+                        continue
+        except Exception:
+            pass
+        return ""
+
+    loop = asyncio.get_running_loop()
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+        path = await loop.run_in_executor(pool, _open_dialog)
+    return {"path": path}
 
 
 @app.get("/api/files/list")
@@ -209,7 +318,7 @@ async def ws_endpoint(websocket: WebSocket):
                     continue
 
                 cfg = load_config()
-                model = msg.get("model") or state["model"] or cfg.default_model
+                model = msg.get("model") or state["model"] or cfg.get("default_model", "")
                 working_dir = msg.get("working_dir") or state["working_dir"]
                 message_text = msg.get("message", "").strip()
                 if not message_text:
@@ -219,7 +328,7 @@ async def ws_endpoint(websocket: WebSocket):
                 state["model"] = model
                 state["working_dir"] = working_dir
                 state["running"] = True
-                client = make_client(cfg.api_key, cfg.base_url)
+                client = make_client(cfg.get("api_key", ""), cfg.get("base_url", ""))
 
                 def chat_fn(txt=message_text, mdl=model, wd=working_dir, new=new_conv):
                     display.set_event_callback(make_emit())
@@ -244,6 +353,33 @@ async def ws_endpoint(websocket: WebSocket):
                 state["messages"] = []
                 await send({"type": "cleared"})
 
+            elif mtype == "save_chat":
+                if state["messages"]:
+                    chat_id = _save_chat(state["messages"], state.get("model", ""))
+                    await send({"type": "chat_saved", "id": chat_id})
+                else:
+                    await send({"type": "chat_saved", "id": None})
+
+            elif mtype == "load_chat":
+                chat_id = msg.get("chat_id", "")
+                if not _safe_chat_id(chat_id):
+                    await send({"type": "error", "text": "Invalid chat id"})
+                    continue
+                f = CHATS_DIR / f"{chat_id}.json"
+                if not f.exists():
+                    await send({"type": "error", "text": "Chat not found"})
+                    continue
+                try:
+                    data = json.loads(f.read_text())
+                    state["messages"] = data["messages"]
+                    state["model"]    = data.get("model", state.get("model", ""))
+                    await send({"type": "chat_loaded",
+                                "id": chat_id,
+                                "messages": data["messages"],
+                                "model": data.get("model", "")})
+                except Exception as exc:
+                    await send({"type": "error", "text": f"Failed to load chat: {exc}"})
+
             # ---- research ----
             elif mtype == "research":
                 if state["running"]:
@@ -264,7 +400,7 @@ async def ws_endpoint(websocket: WebSocket):
                 state["running"] = True
 
                 model_overrides = {role: model_all for role in PIPELINE} if model_all else None
-                client = make_client(cfg.api_key, cfg.base_url)
+                client = make_client(cfg.get("api_key", ""), cfg.get("base_url", ""))
 
                 def research_fn(t=topic, r=rounds, mo=model_overrides, wd=working_dir, res=resume):
                     display.set_event_callback(make_emit())

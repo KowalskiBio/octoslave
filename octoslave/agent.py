@@ -185,6 +185,10 @@ def _stream_completion(client: OpenAI, model: str, messages: list) -> dict:
     had_content = bool(content_parts)
     display.stream_end(had_content)
 
+    # Ensure every tool call has a non-empty id (some vllm hosts omit it)
+    for i, tc in enumerate(tool_call_map.values()):
+        if not tc["id"]:
+            tc["id"] = f"call_{i}"
     tool_calls = [tool_call_map[i] for i in sorted(tool_call_map)]
     return {
         "content": "".join(content_parts),
@@ -277,7 +281,7 @@ def _agent_loop(messages: list[dict], model: str, working_dir: str, client: Open
         tool_calls = response["tool_calls"]
         finish_reason = response["finish_reason"]
 
-        assistant_msg: dict = {"role": "assistant", "content": content or None}
+        assistant_msg: dict = {"role": "assistant", "content": content if content else ""}
         if tool_calls:
             assistant_msg["tool_calls"] = tool_calls
         messages.append(assistant_msg)
