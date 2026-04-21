@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="assets/logo.svg" alt="OctoSlave" width="220"/>
+<img src="assets/logo.png" alt="OctoSlave" width="220"/>
 
 <h1>OctoSlave</h1>
 
@@ -30,6 +30,7 @@ It ships two modes:
 - [Features](#features)
 - [Installation](#installation)
 - [Quick start](#quick-start)
+- [Web UI](#web-ui)
 - [Interactive TUI](#interactive-tui)
 - [Slash commands](#slash-commands)
 - [One-shot mode](#one-shot-mode)
@@ -67,12 +68,17 @@ It ships two modes:
 ```bash
 git clone https://github.com/karatedava/octoslave.git
 cd octoslave
+
+# CLI only
 pip install -e .
+
+# CLI + web UI
+pip install -e ".[web]"
 ```
 
 > **Recommended:** use [uv](https://github.com/astral-sh/uv) for faster, reproducible installs:
 > ```bash
-> uv pip install -e .
+> uv pip install -e ".[web]"
 > ```
 
 ### Set your API key
@@ -80,6 +86,9 @@ pip install -e .
 ```bash
 ots config                        # interactive setup wizard
 ots config --api-key sk-YOUR_KEY  # pass key directly
+ots config --model qwen3-coder-30b  # set default model
+ots config --ollama-url http://remote-host:11434/v1  # remote Ollama
+ots config --show                 # print current config (key masked)
 export OCTOSLAVE_API_KEY=sk-...   # or set env var for the session
 ```
 
@@ -96,6 +105,9 @@ ots
 # Interactive TUI (local Ollama)
 ots --local
 
+# Web UI (opens browser automatically)
+ots web
+
 # One-shot task
 ots run "build a Flask REST API for a todo app"
 
@@ -103,6 +115,32 @@ ots run "build a Flask REST API for a todo app"
 ots
 ◆ /long-research "calibration methods for large language models" --rounds 3
 ```
+
+---
+
+## Web UI
+
+OctoSlave includes a browser-based GUI with the same full functionality as the terminal — ideal if you prefer not to use the CLI.
+
+```bash
+# Install web dependencies and launch
+pip install -e ".[web]"
+ots web                          # opens http://127.0.0.1:7860 in your browser
+ots web --port 8080              # custom port
+ots web --host 0.0.0.0           # expose on the network
+ots web --no-browser             # start server without auto-opening browser
+```
+
+The web UI has four tabs:
+
+| Tab | What it does |
+|-----|-------------|
+| **Chat** | Full conversational agent — streaming responses, tool call inspector, conversation history |
+| **Research** | Launch `/long-research` pipeline with live round progress, agent status, and streaming console |
+| **Files** | Browse all research outputs — view HTML reports inline, preview plots and markdown |
+| **Settings** | Inspect current configuration (API key, model, backend) |
+
+All research outputs (HTML reports, plots, markdown) are accessible directly in the Files tab without leaving the browser.
 
 ---
 
@@ -281,10 +319,14 @@ Run `ots models` to see the live list. Default assignments in the research pipel
 | `qwen3.5-122b` | Researcher | Fast reading, web research |
 | `gpt-oss-120b` | Master Reporter | Large context, clean writing |
 | `qwen3-coder` | Lightweight coder | Faster, smaller tasks |
+| `qwen3-coder-next` | — | Next-gen coder preview |
 | `qwen3.5` | Balanced general | Good all-round |
 | `kimi-k2.5` | Long-context tasks | Extended context window |
+| `mistral-small-4` | — | Mistral Small 4 |
 | `llama-4-scout-17b-16e-instruct` | — | Meta Llama 4 |
 | `gemma4` | — | Google Gemma 4 |
+| `glm-4.7` / `glm-5` | — | Zhipu GLM series |
+| `redhatai-scout` | — | Red Hat AI Scout |
 | `thinker` / `coder` / `agentic` / `mini` | — | Alias shortcuts |
 
 Switch mid-session: `/model qwen3-coder-30b` or pass `-m MODEL` to any command.
@@ -413,13 +455,48 @@ Usable for simple interactive tasks. Long-research not recommended on CPU only.
 
 ## Configuration
 
+### Which backend should I use?
+
+```
+Do you have access to e-INFRA CZ? ──yes──▶ use einfra  (best model quality, free for Czech academia)
+         │
+         no
+         │
+         ▼
+Do you have a GPU (≥8 GB VRAM)?  ──yes──▶ use ollama  (fully local, private, no API key needed)
+         │
+         no
+         │
+         ▼
+         use ollama on CPU  (interactive tasks only; long-research not recommended)
+```
+
+Run `ots config` — the interactive wizard will walk you through each choice.
+
+### Which model should I set as default?
+
+| Goal | Recommended default |
+|------|-------------------|
+| Best all-round (reasoning + coding) | `deepseek-v3.2` ← **start here** |
+| Writing-heavy tasks | `gpt-oss-120b` |
+| Code generation focus | `qwen3-coder-30b` |
+| Chain-of-thought / hard problems | `deepseek-v3.2-thinking` |
+| Fast general purpose | `qwen3.5-122b` |
+
+The default model is only the starting point — switch any time with `/model NAME` inside the TUI.
+
+### What about `base_url` and `ollama_url`?
+
+- **`base_url`** — leave at the default (`https://llm.ai.e-infra.cz/v1`) unless you are self-hosting an OpenAI-compatible API.
+- **`ollama_url`** — leave at the default (`http://localhost:11434/v1`) unless Ollama runs on a different machine or port.
+
+### Precedence and environment variables
+
 | Mechanism | Precedence | Notes |
 |-----------|-----------|-------|
 | Environment variable | **Highest** | Overrides everything |
 | `~/.octoslave/config.json` | Medium | Written by `ots config` |
 | Built-in default | Lowest | `deepseek-v3.2`, e-INFRA CZ endpoint |
-
-**Environment variables**
 
 | Variable | Description |
 |----------|-------------|
@@ -441,14 +518,19 @@ ots config --show   # print current config (key masked)
 ```
 octoslave/
 ├── assets/
-│   └── logo.svg              ← project logo (teal octopus, gold chain)
+│   └── logo.png              ← project logo (pixel-art octopus)
 ├── octoslave/
 │   ├── agent.py              ← core agent loop, system prompt, context management
 │   ├── config.py             ← config load/save, Ollama helpers, model list
-│   ├── display.py            ← Rich TUI: mascot, banners, streaming, research display
+│   ├── display.py            ← Rich TUI + web event bridge (thread-safe emit system)
 │   ├── main.py               ← Click CLI, interactive REPL, slash-command handler
 │   ├── research.py           ← multi-agent long-research pipeline
-│   └── tools.py              ← all tool definitions and implementations
+│   ├── tools.py              ← all tool definitions and implementations
+│   └── web/
+│       ├── app.py            ← FastAPI backend: WebSocket handler, file serving
+│       └── static/
+│           └── index.html    ← single-page web UI (Chat / Research / Files / Settings)
+├── run_research.py           ← CLI helper: run long-research without the TUI
 └── pyproject.toml
 ```
 
@@ -460,7 +542,7 @@ MIT — see [LICENSE](LICENSE).
 
 <div align="center">
 <br/>
-<img src="assets/logo.svg" alt="OctoSlave" width="80"/>
+<img src="assets/logo.png" alt="OctoSlave" width="80"/>
 <br/>
 <sub>Built for researchers who demand real results.</sub>
 </div>

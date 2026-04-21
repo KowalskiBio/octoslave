@@ -13,6 +13,33 @@ MAX_ITERATIONS = 80
 # Prevents a single large file/page from blowing up the context window.
 MAX_TOOL_RESULT_CHARS = 50_000
 
+
+def _trim_messages(messages: list[dict], groups: int = 3) -> list[dict]:
+    """
+    Remove the oldest N complete assistant-turn groups (assistant message +
+    all its tool results) to free context space.  Always preserves the system
+    prompt and the first user message (messages[:2]).
+    """
+    system = messages[:2]
+    rest   = list(messages[2:])
+
+    removed = 0
+    while removed < groups and rest:
+        start = next(
+            (i for i, m in enumerate(rest)
+             if m.get("role") == "assistant" and m.get("tool_calls")),
+            None,
+        )
+        if start is None:
+            break
+        end = start + 1
+        while end < len(rest) and rest[end].get("role") == "tool":
+            end += 1
+        rest = rest[:start] + rest[end:]
+        removed += 1
+
+    return system + rest
+
 SYSTEM_PROMPT = """\
 You are OctoSlave — an autonomous AI research and software engineering assistant \
 running on the e-INFRA CZ LLM platform. You complete tasks end-to-end without \
@@ -43,20 +70,24 @@ Web:
 2. Always read a file before editing it
 3. Prefer edit_file over write_file for modifying existing files
 4. Run tests / the code after changes to verify correctness
-5. **Use `uv` as the Python package manager** (faster, safer than pip):
-   - Install packages : `uv pip install <pkg>`
-   - Run a script     : `uv run python script.py`
-   - New project      : `uv init <name>` then `uv add <pkg>`
-   - Virtual env      : `uv venv && source .venv/bin/activate`
-   - If `uv` is not available, fall back to `pip` and note it.
+5. if python project **check the project structure and environment, if starting from scratch: Use `uv` as the Python package manager**:
+   - Install + run (recommended): `uv run script.py`
+   - Or create new project first:  `uv init`
+   - add packages `uv add <pkg>`
+   - If `uv` is not available, try installing it
    - Only switch away from `uv` if the user explicitly asks.
 6. Complete the task fully — don't leave work half-done
 
 ### Research & scientific tasks
 Follow this cycle when given a research topic:
 
-1. **Literature survey** — use read_file on PDFs in the literature folder, or \
-   web_search + web_fetch to find relevant papers, datasets, and prior work.
+0. **Data discovery** — your FIRST action: call list_dir on the working directory to \
+   see what files exist. Read any local CSVs, PDFs, FASTAs, JSON files, or other data \
+   files BEFORE doing any web search. Files placed in the working directory are the \
+   user's primary input and take precedence over anything found online.
+1. **Literature survey** — after checking local files, use web_search + web_fetch for \
+   related papers, datasets, and prior work. If a local PDF is present, read it first \
+   instead of searching for the same topic online.
 2. **Hypothesis / design** — formulate a clear research question or hypothesis based \
    on the survey. Write it to a markdown file.
 3. **Implementation** — build the workflow, experiment, or tool to test the hypothesis. \
@@ -153,6 +184,10 @@ def _stream_completion(client: OpenAI, model: str, messages: list) -> dict:
     had_content = bool(content_parts)
     display.stream_end(had_content)
 
+    # Ensure every tool call has a non-empty id (some vllm hosts omit it)
+    for i, tc in enumerate(tool_call_map.values()):
+        if not tc["id"]:
+            tc["id"] = f"call_{i}"
     tool_calls = [tool_call_map[i] for i in sorted(tool_call_map)]
     return {
         "content": "".join(content_parts),
@@ -192,17 +227,52 @@ def continue_agent(
 
 
 def _agent_loop(messages: list[dict], model: str, working_dir: str, client: OpenAI) -> list[dict]:
+    import time as _time
+    from collections import Counter
     iteration = 0
-    for iteration in range(1, MAX_ITERATIONS + 1):
+    _rate_limit_retries = 0
+    _tool_call_counts: Counter = Counter()  # (name, args_json) → call count
+
+    while iteration < MAX_ITERATIONS:
+        iteration += 1
         try:
             response = _stream_completion(client, model, messages)
+            _rate_limit_retries = 0
         except BadRequestError as e:
             err_str = str(e)
             if "ContextWindowExceeded" in err_str or "context" in err_str.lower():
+                trimmed = _trim_messages(messages)
+                if len(trimmed) < len(messages):
+                    display.print_info(
+                        "Context window exceeded — trimming oldest tool results and retrying."
+                    )
+                    messages = trimmed
+                    iteration -= 1  # context trim doesn't consume a turn
+                    continue
+                # Nothing left to trim
                 display.print_error(
-                    "Context window exceeded — the conversation history is too long.\n"
+                    "Context window exceeded and cannot be trimmed further.\n"
                     "Use /compact to summarise history, or /clear to start fresh."
                 )
+            elif "Unterminated string" in err_str or "Extra data" in err_str:
+                # The model's tool-call arguments were cut off mid-stream, leaving
+                # invalid JSON in the message history.  Roll back the last assistant
+                # turn (and any partial tool results) and ask the model to retry.
+                while messages and messages[-1].get("role") in ("tool", "assistant"):
+                    messages.pop()
+                display.print_info(
+                    "Tool call arguments were truncated — rolling back and retrying."
+                )
+                messages.append({
+                    "role": "user",
+                    "content": (
+                        "Your previous response was cut off before the tool arguments "
+                        "were complete. Please redo the last action from scratch, making "
+                        "sure to produce a complete, valid response."
+                    ),
+                })
+                iteration -= 1
+                continue
             else:
                 display.print_error(f"API error: {e}")
             break
@@ -211,6 +281,17 @@ def _agent_loop(messages: list[dict], model: str, working_dir: str, client: Open
             display.console.print("\n[dim]Interrupted.[/dim]")
             break
         except Exception as e:
+            err_str = str(e)
+            if "429" in err_str or "rate" in err_str.lower() or "RateLimit" in type(e).__name__:
+                _rate_limit_retries += 1
+                wait = min(60, 5 * (2 ** (_rate_limit_retries - 1)))
+                display.print_info(f"Rate limit — waiting {wait}s ({_rate_limit_retries}/5).")
+                if _rate_limit_retries > 5:
+                    display.print_error("Rate limit persists after 5 retries.")
+                    break
+                _time.sleep(wait)
+                iteration -= 1  # don't count this as a used iteration
+                continue
             display.print_error(f"Unexpected error: {e}")
             break
 
@@ -218,7 +299,7 @@ def _agent_loop(messages: list[dict], model: str, working_dir: str, client: Open
         tool_calls = response["tool_calls"]
         finish_reason = response["finish_reason"]
 
-        assistant_msg: dict = {"role": "assistant", "content": content or None}
+        assistant_msg: dict = {"role": "assistant", "content": content if content else ""}
         if tool_calls:
             assistant_msg["tool_calls"] = tool_calls
         messages.append(assistant_msg)
@@ -229,6 +310,7 @@ def _agent_loop(messages: list[dict], model: str, working_dir: str, client: Open
 
         # Execute tool calls
         display.print_separator()
+        repeated_reads: list[str] = []
         for tc in tool_calls:
             name = tc["function"]["name"]
             raw_args = tc["function"]["arguments"]
@@ -236,7 +318,16 @@ def _agent_loop(messages: list[dict], model: str, working_dir: str, client: Open
             try:
                 args = json.loads(raw_args) if raw_args else {}
             except json.JSONDecodeError:
-                args = {}
+                # Arguments were truncated mid-stream — sanitize before they enter
+                # message history (prevents "Unterminated string" on next API call).
+                tc["function"]["arguments"] = "{}"
+                err_msg = (
+                    f"Tool call '{name}' had malformed JSON arguments "
+                    f"(the model's response was truncated). Please retry with complete arguments."
+                )
+                display.print_tool_result(name, err_msg, False)
+                messages.append({"role": "tool", "tool_call_id": tc["id"], "content": err_msg})
+                continue
 
             display.print_tool_call(name, args)
             result, success = execute_tool(name, args, working_dir)
@@ -253,8 +344,25 @@ def _agent_loop(messages: list[dict], model: str, working_dir: str, client: Open
                     "content": result,
                 }
             )
-        display.print_separator()
 
+            # Track repeated read-only tool calls (only reads, not writes/bash)
+            if name in ("read_file", "list_dir", "glob", "grep"):
+                key = (name, raw_args)
+                _tool_call_counts[key] += 1
+                if _tool_call_counts[key] == 2:
+                    repeated_reads.append(f"{name}({args.get('file_path') or args.get('path') or args.get('pattern') or ''})")
+
+        # Nudge the model if it is re-reading files it has already seen
+        if repeated_reads:
+            nudge = (
+                "You have already read these files: "
+                + ", ".join(repeated_reads)
+                + ". Stop re-reading. You have all the information you need. "
+                "Proceed directly: write a Python script, run it with bash, and produce results."
+            )
+            messages.append({"role": "user", "content": nudge})
+
+        display.print_separator()
     else:
         display.print_info(f"Reached max iterations ({MAX_ITERATIONS}).")
 

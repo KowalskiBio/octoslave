@@ -65,3 +65,6 @@ research/          # generated research output (often large)
 config.json
 secrets.json
 credentials.json
+
+debug
+uv.lock

@@ -10,7 +10,7 @@ CONFIG_DIR = Path.home() / ".octoslave"
 CONFIG_FILE = CONFIG_DIR / "config.json"
 
 BASE_URL = "https://llm.ai.e-infra.cz/v1"
-DEFAULT_MODEL = "deepseek-v3.2"
+DEFAULT_MODEL = "deepseek-v3.2-thinking"
 OLLAMA_BASE_URL = "http://localhost:11434/v1"
 
 KNOWN_MODELS = [
@@ -147,6 +147,19 @@ def assign_local_models(pulled_models: list[str]) -> dict[str, str]:
 # ---------------------------------------------------------------------------
 # Config load / save
 # ---------------------------------------------------------------------------
+
+def list_models(cfg: dict | None = None) -> list[str]:
+    """
+    Return available model names.  For e-INFRA CZ, this is the static KNOWN_MODELS
+    list (the API has no /models endpoint).  For Ollama, poll the local server.
+    """
+    if cfg is None:
+        cfg = {}
+    if cfg.get("backend") == "ollama":
+        pulled = ollama_list_models(cfg.get("ollama_url", OLLAMA_BASE_URL))
+        return pulled if pulled else KNOWN_MODELS
+    return list(KNOWN_MODELS)
+
 
 def load_config() -> dict:
     config = {
