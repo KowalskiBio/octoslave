@@ -70,12 +70,11 @@ Web:
 2. Always read a file before editing it
 3. Prefer edit_file over write_file for modifying existing files
 4. Run tests / the code after changes to verify correctness
-5. **Use `uv` as the Python package manager** (faster, safer than pip):
-   - Install + run (recommended): `uv run --with pandas --with scikit-learn python script.py`
-   - Or create venv first:  `uv venv && uv pip install <pkgs> && .venv/bin/python script.py`
-   - Never call `uv pip install <pkg>` bare — it requires a venv to exist first.
-   - New project: `uv init <name>` then `uv add <pkg>`
-   - If `uv` is not available, fall back to `pip` and note it.
+5. if python project **check the project structure and environment, if starting from scratch: Use `uv` as the Python package manager**:
+   - Install + run (recommended): `uv run script.py`
+   - Or create new project first:  `uv init`
+   - add packages `uv add <pkg>`
+   - If `uv` is not available, try installing it
    - Only switch away from `uv` if the user explicitly asks.
 6. Complete the task fully — don't leave work half-done
 
