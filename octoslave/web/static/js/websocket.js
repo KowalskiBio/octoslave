@@ -4,7 +4,7 @@
 
 console.log('[websocket.js] Module loaded');
 
-import { esc, renderMarkdown, scrollToBottom } from './utils.js';
+import { esc, renderMarkdown, scrollToBottom } from './utils.js?v=20260427';
 
 // WebSocket URL
 export const WS_URL = `ws://${location.host}/ws`;

@@ -2,7 +2,8 @@
  * OctoSlave Web UI - Slash Command Handling
  */
 
-import { sendMsg } from './websocket.js';
+import { sendMsg } from './websocket.js?v=20260427';
+import { scrollToBottom } from './utils.js?v=20260427';
 
 /**
  * Handle slash commands - returns true if command was handled
@@ -22,7 +23,7 @@ export function handleSlashCommand(text) {
         '  /clear             Clear chat and reset conversation\n' +
         '  /model [name]      List or switch model\n' +
         '  /dir [path]        Show or change working directory\n' +
-        '  /profile [name]    Show or set prompt profile (base/simple/strict)\n' +
+        '  /profile [name]    Show or set prompt profile (base/coder/analyst)\n' +
         '  /permission [mode] Show or set permission mode (autonomous/controlled/supervised)\n' +
         '  /compact           Summarize conversation history to save tokens\n' +
         '  /local [model]     Switch to Ollama (local mode)\n' +
@@ -67,20 +68,20 @@ export function handleSlashCommand(text) {
     case '/profile':
       if (!arg) {
         const currentProfile = document.getElementById('chat-profile-select')?.value;
-        const profileNames = { base: 'Base', simple: 'Simple', strict: 'Strict' };
-        appendChatInfo(`📝 Current prompt profile: [bold]${profileNames[currentProfile]}[/bold]\n` +
-          'Available: base, simple, strict\n' +
-          'Usage: /profile <name>  e.g., /profile simple');
+        const profileNames = { base: 'Base', coder: 'Coder', analyst: 'Analyst' };
+        appendChatInfo(`📝 Current prompt profile: [bold]${profileNames[currentProfile] || currentProfile}[/bold]\n` +
+          'Available: base, coder, analyst\n' +
+          'Usage: /profile <name>  e.g., /profile coder');
       } else {
         const profileArg = arg.toLowerCase();
-        if (['base', 'simple', 'strict'].includes(profileArg)) {
+        if (['base', 'coder', 'analyst'].includes(profileArg)) {
           const profileSelect = document.getElementById('chat-profile-select');
           if (profileSelect) profileSelect.value = profileArg;
-          const profileNames = { base: 'Base', simple: 'Simple', strict: 'Strict' };
+          const profileNames = { base: 'Base', coder: 'Coder', analyst: 'Analyst' };
           appendChatInfo(`✅ Prompt profile set to [bold]${profileNames[profileArg]}[/bold].\n` +
             '[dim]Note: Profile will be used for the next task (new conversation).[/dim]');
         } else {
-          appendChatError(`❌ Invalid profile '${arg}'. Use: base, simple, or strict.`);
+          appendChatError(`❌ Invalid profile '${arg}'. Use: base, coder, or analyst.`);
         }
       }
       return true;
@@ -195,9 +196,3 @@ function appendChatError(text) {
   scrollToBottom(container);
 }
 
-/**
- * Scroll chat to bottom
- */
-function scrollToBottom(element) {
-  element.scrollTop = element.scrollHeight;
-}

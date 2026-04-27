@@ -19,11 +19,13 @@ from pathlib import Path
 from queue import Empty, Queue
 from typing import Any
 
-from fastapi import FastAPI, File, Form, UploadFile, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, File, Form, Request, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.middleware.base import BaseHTTPMiddleware
 
 from .. import display
+from ..display import resolve_permission
 from ..agent import continue_agent, make_client, run_agent
 from ..config import load_config
 from ..research import PIPELINE, run_long_research
@@ -34,6 +36,15 @@ STATIC_DIR = Path(__file__).parent / "static"
 CHATS_DIR  = Path.home() / ".octoslave" / "chats"
 
 app = FastAPI(title="OctoSlave Web UI", docs_url=None, redoc_url=None)
+
+class _NoCacheJS(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        response = await call_next(request)
+        if request.url.path.endswith('.js'):
+            response.headers['Cache-Control'] = 'no-cache'
+        return response
+
+app.add_middleware(_NoCacheJS)
 
 if STATIC_DIR.exists():
     app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
@@ -267,16 +278,36 @@ async def ws_endpoint(websocket: WebSocket):
         return emit
 
     async def stream_events() -> None:
-        """Drain event_q and forward events to the WebSocket until sentinel."""
-        while True:
-            event = await event_q.get()
-            if event.get("type") == "_sentinel":
-                state["running"] = False
-                return
-            try:
-                await websocket.send_json(event)
-            except Exception:
-                return
+        """Forward agent events to WS; concurrently handle permission_response."""
+        async def _drain():
+            while True:
+                event = await event_q.get()
+                if event.get("type") == "_sentinel":
+                    return
+                try:
+                    await websocket.send_json(event)
+                except Exception:
+                    return
+
+        async def _recv_perm():
+            while True:
+                try:
+                    raw = await websocket.receive_text()
+                    msg = json.loads(raw)
+                    if msg.get("type") == "permission_response":
+                        resolve_permission(bool(msg.get("allow", False)))
+                except Exception:
+                    break
+
+        drain_task = asyncio.create_task(_drain())
+        recv_task  = asyncio.create_task(_recv_perm())
+        await drain_task
+        state["running"] = False
+        recv_task.cancel()
+        try:
+            await recv_task
+        except asyncio.CancelledError:
+            pass
 
     async def send(event: dict) -> None:
         try:
@@ -367,7 +398,7 @@ async def ws_endpoint(websocket: WebSocket):
                                 # Update config
                                 save_config(
                                     cfg.get("api_key", ""),
-                                    cfg.get("base_url", cfg.get("base_url", "")),
+                                    cfg.get("base_url", ""),
                                     chosen,
                                     backend="ollama",
                                     ollama_url=ollama_url,
@@ -385,7 +416,7 @@ async def ws_endpoint(websocket: WebSocket):
                             default_model = cfg.get("default_model", "")
                             save_config(
                                 api_key,
-                                cfg.get("base_url", cfg.get("base_url", "")),
+                                cfg.get("base_url", ""),
                                 default_model,
                                 backend="einfra",
                                 ollama_url=cfg.get("ollama_url", ""),
@@ -404,7 +435,7 @@ async def ws_endpoint(websocket: WebSocket):
                     model_name = msg.get("model", "")
                     if not model_name:
                         await send({"type": "error", "text": "Model name required."})
-                        return
+                        continue
                     
                     ollama_url = load_config().get("ollama_url", "http://localhost:11434/v1")
                     if not ollama_is_running(ollama_url):

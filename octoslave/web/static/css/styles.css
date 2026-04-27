@@ -534,6 +534,102 @@ button {
   font-size: 13px;
 }
 
+/* Permission request card */
+.msg-permission {
+  align-items: flex-start;
+  margin: 6px 0;
+}
+
+.perm-card {
+  background: rgba(244, 193, 15, 0.06);
+  border: 1px solid rgba(244, 193, 15, 0.35);
+  border-radius: var(--radius-md);
+  padding: 14px 18px;
+  max-width: 520px;
+  font-size: 13px;
+}
+
+.perm-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 600;
+  color: var(--warning);
+  margin-bottom: 10px;
+}
+
+.perm-icon { font-size: 15px; }
+
+.perm-mode-badge {
+  margin-left: auto;
+  font-size: 11px;
+  font-weight: 500;
+  background: rgba(244, 193, 15, 0.12);
+  color: var(--warning);
+  padding: 2px 8px;
+  border-radius: 999px;
+}
+
+.perm-body {
+  color: var(--text);
+  margin-bottom: 6px;
+  line-height: 1.5;
+}
+
+.perm-tool {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--primary);
+  background: var(--primary-glow);
+  padding: 1px 6px;
+  border-radius: 4px;
+}
+
+.perm-dir {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-bottom: 12px;
+  font-family: var(--mono);
+}
+
+.perm-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.perm-btn {
+  padding: 6px 18px;
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  border: none;
+  transition: opacity 0.15s;
+}
+
+.perm-btn:hover { opacity: 0.85; }
+
+.perm-allow {
+  background: var(--primary);
+  color: #000;
+}
+
+.perm-deny {
+  background: var(--surface);
+  border: 1px solid var(--border-light);
+  color: var(--text-muted);
+}
+
+.perm-resolved {
+  font-size: 12px;
+  font-weight: 600;
+  padding: 4px 10px;
+  border-radius: 4px;
+}
+
+.perm-resolved-allow { color: var(--success); }
+.perm-resolved-deny  { color: var(--text-muted); }
+
 /* Markdown content */
 .md-content h1, .md-content h2, .md-content h3 {
   margin: 18px 0 8px;
