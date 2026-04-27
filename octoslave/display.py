@@ -16,6 +16,11 @@ import threading as _threading
 
 _tl = _threading.local()  # thread-local storage for per-session callbacks
 
+# Permission request state — shared across threads (agent sets, WS handler resolves)
+_perm_lock = _threading.Lock()
+_perm_event: "_threading.Event | None" = None
+_perm_result: bool = False
+
 
 def set_event_callback(cb) -> None:
     """Register a structured-event callback for the current thread (web mode)."""
@@ -25,6 +30,15 @@ def set_event_callback(cb) -> None:
 def clear_event_callback() -> None:
     """Remove the callback for the current thread."""
     _tl.emit = None
+
+
+def resolve_permission(allow: bool) -> None:
+    """Called from the web handler to unblock a pending permission request."""
+    global _perm_result, _perm_event
+    with _perm_lock:
+        _perm_result = allow
+        if _perm_event is not None:
+            _perm_event.set()
 
 
 def _emit(event: dict) -> None:
@@ -499,8 +513,28 @@ def request_permission(tool_name: str, args: dict, working_dir: str, permission_
         )
     )
     console.print()
-    
-    # Get user input
+
+    # Web mode: emit a permission_request event and wait for the browser response
+    if getattr(_tl, "emit", None) is not None:
+        global _perm_event, _perm_result
+        with _perm_lock:
+            _perm_event = _threading.Event()
+            _perm_result = False
+        _emit({
+            "type": "permission_request",
+            "tool": tool_name,
+            "desc": desc,
+            "icon": icon,
+            "working_dir": working_dir,
+            "mode": permission_mode,
+        })
+        _perm_event.wait(timeout=300)   # 5-minute timeout → default deny
+        with _perm_lock:
+            result = _perm_result
+            _perm_event = None
+        return result
+
+    # Console mode: block on user input
     while True:
         try:
             response = console.input(
@@ -509,7 +543,7 @@ def request_permission(tool_name: str, args: dict, working_dir: str, permission_
         except (EOFError, KeyboardInterrupt):
             console.print()
             return False
-        
+
         if response in ("y", "yes", "ok", "allow"):
             return True
         elif response in ("n", "no", "deny"):

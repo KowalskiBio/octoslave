@@ -52,7 +52,7 @@ _HISTORY_FILE = Path.home() / ".octoslave" / "history"
 @click.option("--api-key", default=None, envvar="OCTOSLAVE_API_KEY")
 @click.option("--base-url", default=None, envvar="OCTOSLAVE_BASE_URL")
 @click.option("--local", is_flag=True, default=False, help="Use local Ollama models")
-@click.option("-p", "--prompt-profile", default="base", help="Prompt profile to use (default: base, options: base, simple, strict)")
+@click.option("-p", "--prompt-profile", default="base", help="Prompt profile to use (default: base, options: base, coder, analyst)")
 @click.option("--permission-mode", default=None, 
               type=click.Choice(["autonomous", "controlled", "supervised"]),
               help="Permission mode: autonomous (default), controlled (ask before all edits), or supervised (ask before file edits only)")
@@ -86,7 +86,7 @@ def cli(ctx, model, working_dir, api_key, base_url, local, prompt_profile, permi
 @click.option("--api-key", default=None, envvar="OCTOSLAVE_API_KEY")
 @click.option("--base-url", default=None, envvar="OCTOSLAVE_BASE_URL")
 @click.option("--local", is_flag=True, default=False, help="Use local Ollama models")
-@click.option("-p", "--prompt-profile", default="base", help="Prompt profile to use (default: base, options: base, simple, strict)")
+@click.option("-p", "--prompt-profile", default="base", help="Prompt profile to use (default: base, options: base, coder, analyst)")
 @click.option("-i", "--interactive", is_flag=True, help="Stay interactive after task")
 @click.option("--permission-mode", default=None, 
               type=click.Choice(["autonomous", "controlled", "supervised"]),
@@ -100,8 +100,8 @@ def run(task, model, working_dir, api_key, base_url, local, prompt_profile, inte
       ots run "research recent papers on RAG" --model qwen3-coder
       ots run "add unit tests" -i
       ots run "explain this codebase" --local
-      ots run "do whatever" -p simple  # use simple profile for more flexibility
-      ots run "fix the bug" -p strict  # use strict profile to confirm before editing
+      ots run "build a REST API" -p coder    # pure coding mode
+      ots run "analyze this dataset" -p analyst  # data analysis mode
       ots run "edit files" --permission-mode controlled  # ask before each edit
     """
     cfg = _resolve_config(model, working_dir, api_key, base_url, local=local)

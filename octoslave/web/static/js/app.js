@@ -4,15 +4,15 @@
 
 console.log('[app.js] Module loaded');
 
-import { 
-  WS_URL, connectWebSocket, sendMsg, applyConfig, populateModelSelects, onConfigUpdated 
-} from './websocket.js';
-import { handleSlashCommand } from './slash-commands.js';
+import {
+  WS_URL, connectWebSocket, sendMsg, applyConfig, populateModelSelects, onConfigUpdated
+} from './websocket.js?v=20260427';
+import { handleSlashCommand } from './slash-commands.js?v=20260427';
 import {
   toggleHistory, browseDir, refreshHistory, refreshFileTree, viewFile,
   uploadFile, removeAttachment, clearChatMessages, appendChatInfo, appendChatError
-} from './components.js';
-import { scrollToBottom, autoResizeTextarea, renderMarkdown, esc } from './utils.js';
+} from './components.js?v=20260427';
+import { scrollToBottom, autoResizeTextarea, renderMarkdown, esc } from './utils.js?v=20260427';
 
 // Export functions to global scope for inline handlers
 window.toggleHistory = toggleHistory;
@@ -20,6 +20,7 @@ window.browseDir = browseDir;
 window.refreshHistory = refreshHistory;
 window.viewFile = viewFile;
 window.removeAttachment = removeAttachment;
+window.appendChatInfo = appendChatInfo;
 window.loadChat = (id) => { window.loadChatImpl && window.loadChatImpl(id); };
 window.deleteChat = (id) => { window.deleteChatImpl && window.deleteChatImpl(id); };
 
@@ -50,7 +51,8 @@ function handleServerMessage(msg) {
     case 'round_done':        onRoundDone(msg); break;
     case 'agent_start':       onAgentStart(msg); break;
     case 'agent_done':        onAgentDone(msg); break;
-    case 'research_complete': onResearchComplete(msg); break;
+    case 'research_complete':    onResearchComplete(msg); break;
+    case 'permission_request':  onPermissionRequest(msg); break;
     default: break;
   }
 }
@@ -324,6 +326,48 @@ function appendToConsole(text) {
 }
 
 // ──────────────────────────────────────────────────────────────
+// Permission request UI
+// ──────────────────────────────────────────────────────────────
+
+function onPermissionRequest(msg) {
+  const container = document.getElementById('chat-messages');
+  const wrap = document.createElement('div');
+  wrap.className = 'msg msg-permission';
+
+  const modeLabel = msg.mode === 'supervised' ? 'Supervised' : 'Controlled';
+  wrap.innerHTML = `
+    <div class="perm-card">
+      <div class="perm-header">
+        <span class="perm-icon">⚠</span>
+        <span>Permission Required</span>
+        <span class="perm-mode-badge">${modeLabel} Mode</span>
+      </div>
+      <div class="perm-body">
+        <span class="perm-tool">${esc(msg.tool)}</span>
+        wants to: <strong>${esc(msg.desc)}</strong>
+      </div>
+      <div class="perm-dir">${esc(msg.working_dir)}</div>
+      <div class="perm-actions">
+        <button class="perm-btn perm-allow" onclick="window.resolvePermission(this, true)">✓ Allow</button>
+        <button class="perm-btn perm-deny"  onclick="window.resolvePermission(this, false)">✗ Deny</button>
+      </div>
+    </div>`;
+
+  container.appendChild(wrap);
+  scrollToBottom(container);
+}
+
+window.resolvePermission = function(btn, allow) {
+  sendMsg({ type: 'permission_response', allow });
+  const actions = btn.closest('.perm-actions');
+  if (actions) {
+    actions.innerHTML = allow
+      ? '<span class="perm-resolved perm-resolved-allow">✓ Allowed</span>'
+      : '<span class="perm-resolved perm-resolved-deny">✗ Denied</span>';
+  }
+};
+
+// ──────────────────────────────────────────────────────────────
 // Initialization
 // ──────────────────────────────────────────────────────────────
 
@@ -376,10 +420,16 @@ function initApp() {
     refreshHistory();
   });
 
+  // Model select change handler - update the badge in the sidebar
+  document.getElementById('chat-model-select')?.addEventListener('change', (e) => {
+    const badge = document.getElementById('model-badge');
+    if (badge) badge.textContent = e.target.value || '—';
+  });
+
   // Profile and permission select change handlers
   document.getElementById('chat-profile-select')?.addEventListener('change', (e) => {
-    const profileNames = { base: 'Base', simple: 'Simple', strict: 'Strict' };
-    appendChatInfo(`📝 Profile set to [bold]${profileNames[e.target.value]}[/bold]. Will apply to next task.`);
+    const profileNames = { base: 'Base', coder: 'Coder', analyst: 'Analyst' };
+    appendChatInfo(`📝 Profile set to [bold]${profileNames[e.target.value] || e.target.value}[/bold]. Will apply to next task.`);
   });
 
   document.getElementById('chat-permission-select')?.addEventListener('change', (e) => {
