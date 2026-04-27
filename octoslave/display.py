@@ -342,7 +342,7 @@ def print_help():
         "[bold white]Slash commands[/bold white]\n\n"
         "  [cyan]/model [NAME][/cyan]         Switch model (or list if no name given)\n"
         "  [cyan]/dir [PATH][/cyan]           Change working directory\n"
-        "  [cyan]/profile [NAME][/cyan]       Switch prompt profile (base/simple/strict)\n"
+        "  [cyan]/profile [NAME][/cyan]       Switch prompt profile (base/coder/analyst)\n"
         "  [cyan]/permission [MODE][/cyan]    Switch permission mode (autonomous/controlled)\n"
         "  [cyan]/clear[/cyan]                Clear screen and conversation history\n"
         "  [cyan]/compact[/cyan]              Summarise history to save context\n"

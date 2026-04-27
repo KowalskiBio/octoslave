@@ -493,10 +493,10 @@ def _handle_slash(cmd: str, state: dict, cfg: dict, messages: list, client) -> s
         from .agent import load_system_prompt
         if not arg:
             current = state.get("prompt_profile", "base")
-            available = ["base", "simple", "strict"]
+            available = ["base", "coder", "analyst"]
             display.console.print(f"[dim]Current profile:[/dim] [bold]{current}[/bold]")
             display.console.print(f"[dim]Available profiles:[/dim] {', '.join(available)}")
-            display.console.print("[dim]Usage: /profile <name>  e.g. /profile simple[/dim]")
+            display.console.print("[dim]Usage: /profile <name>  e.g. /profile coder[/dim]")
         else:
             # Validate profile exists
             try:

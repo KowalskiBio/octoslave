@@ -32,7 +32,7 @@ ROLES: dict[str, dict] = {
         "label": "Researcher",
         "icon": "🔬",
         "color": "bold cyan",
-        "default_model": "qwen3.5-122b",           # large — fast reading + search
+        "default_model": "deepseek-v3.2-thinking",           # large — fast reading + search
         "max_iter": 15,                             # 15 = budget for ~5 web ops + write
         "tools": ["read_file", "write_file", "web_search", "web_fetch",
                   "list_dir", "glob"],              # no bash — researcher surveys, never installs
@@ -84,7 +84,7 @@ ROLES: dict[str, dict] = {
         "label": "Reporter",
         "icon": "📊",
         "color": "bold bright_cyan",
-        "default_model": "gpt-oss-120b",            # large general — clean HTML/writing
+        "default_model": "deepseek-v3.2",            # large general — clean HTML/writing
         "max_iter": 40,
         "tools": ["read_file", "write_file", "bash", "list_dir", "glob"],
     },
@@ -609,6 +609,11 @@ def _stream_completion_with_tools(
     had_content = bool(content_parts)
     display.stream_end(had_content)
 
+    # Ensure every tool call has a non-empty id (some vllm hosts omit it)
+    for i, tc in enumerate(tool_call_map.values()):
+        if not tc["id"]:
+            tc["id"] = f"call_{i}"
+
     return {
         "content": "".join(content_parts),
         "tool_calls": [tool_call_map[i] for i in sorted(tool_call_map)],
@@ -656,12 +661,14 @@ def _run_specialist(
     t0 = time.time()
     iteration = 0
     _rate_limit_retries = 0
+    _timeout_retries = 0
 
     while iteration < max_iter:
         iteration += 1
         try:
             response = _stream_completion_with_tools(client, model, messages, tools)
-            _rate_limit_retries = 0  # reset on success
+            _rate_limit_retries = 0
+            _timeout_retries = 0
         except BadRequestError as e:
             err = str(e)
             if "ContextWindow" in err or "context" in err.lower():
@@ -705,6 +712,18 @@ def _run_specialist(
                     return False
                 time.sleep(wait)
                 iteration -= 1  # don't count this as a used iteration
+                continue
+            elif "timeout" in err_str.lower() or "timed out" in err_str.lower() or "Timeout" in type(e).__name__:
+                _timeout_retries += 1
+                wait = min(30, 5 * (2 ** (_timeout_retries - 1)))
+                display.print_info(
+                    f"  [{cfg['label']}] Request timeout — retrying in {wait}s ({_timeout_retries}/3)."
+                )
+                if _timeout_retries > 3:
+                    display.print_error(f"[{cfg['label']}] Request keeps timing out after 3 retries. Aborting.")
+                    return False
+                time.sleep(wait)
+                iteration -= 1
                 continue
             display.print_error(f"[{cfg['label']}] Unexpected error: {e}")
             return False
@@ -892,13 +911,20 @@ def _run_merger(
 
     t0 = time.time()
     iteration = 0
-    for iteration in range(1, cfg["max_iter"] + 1):
+    _rate_limit_retries = 0
+    _timeout_retries = 0
+
+    while iteration < cfg["max_iter"]:
+        iteration += 1
         try:
             response = _stream_completion_with_tools(client, cfg["default_model"], messages, tools)
+            _rate_limit_retries = 0
+            _timeout_retries = 0
         except BadRequestError as e:
             err = str(e)
             if "ContextWindow" in err or "context" in err.lower():
                 messages = _trim_messages(messages)
+                iteration -= 1
                 continue
             if "Unterminated string" in err or "Extra data" in err:
                 while messages and messages[-1].get("role") in ("tool", "assistant"):
@@ -911,8 +937,33 @@ def _run_merger(
                         "were complete. Please redo the last action with complete, valid arguments."
                     ),
                 })
+                iteration -= 1
                 continue
             display.print_error(f"[Merger] API error: {e}")
+            return False
+        except Exception as e:
+            err_str = str(e)
+            if "429" in err_str or "rate" in err_str.lower() or "RateLimit" in type(e).__name__:
+                _rate_limit_retries += 1
+                wait = min(60, 5 * (2 ** (_rate_limit_retries - 1)))
+                display.print_info(f"  [Merger] Rate limit — waiting {wait}s ({_rate_limit_retries}/5).")
+                if _rate_limit_retries > 5:
+                    display.print_error("[Merger] Rate limit persists after 5 retries. Aborting.")
+                    return False
+                time.sleep(wait)
+                iteration -= 1
+                continue
+            elif "timeout" in err_str.lower() or "timed out" in err_str.lower() or "Timeout" in type(e).__name__:
+                _timeout_retries += 1
+                wait = min(30, 5 * (2 ** (_timeout_retries - 1)))
+                display.print_info(f"  [Merger] Request timeout — retrying in {wait}s ({_timeout_retries}/3).")
+                if _timeout_retries > 3:
+                    display.print_error("[Merger] Request keeps timing out. Aborting.")
+                    return False
+                time.sleep(wait)
+                iteration -= 1
+                continue
+            display.print_error(f"[Merger] Unexpected error: {e}")
             return False
         except KeyboardInterrupt:
             display.stream_end(False)
@@ -927,7 +978,19 @@ def _run_merger(
             assistant_msg["tool_calls"] = tool_calls
         messages.append(assistant_msg)
 
-        if not tool_calls or finish_reason == "stop":
+        if not tool_calls:
+            if canonical_path.exists():
+                break
+            nudge = (
+                f"REQUIRED ACTION: You have not yet written the merged output. "
+                f"The EXACT path you must write is: {canonical_path}\n"
+                f"Call write_file with path=\"{canonical_path}\" RIGHT NOW."
+            )
+            messages.append({"role": "user", "content": nudge})
+            iteration -= 1
+            continue
+
+        if finish_reason == "stop":
             break
 
         display.print_separator()
@@ -1238,13 +1301,14 @@ def _run_master_reporter(
             import pathlib as _pl2
             if (_pl2.Path(research_dir) / "final_report.html").exists():
                 break
-            # Not written yet — nudge the model
+            # Not written yet — nudge the model (decrement so the nudge counts as a free slot)
             nudge = (
                 f"You have not yet written {research_dir}/final_report.html. "
                 "Write build_master_report.py and run it, OR write final_report.html directly. "
                 "Call write_file or bash now."
             )
             messages.append({"role": "user", "content": nudge})
+            iteration -= 1
             continue
 
         if finish_reason == "stop":

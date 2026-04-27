@@ -41,3 +41,8 @@ ots = "octoslave.main:cli"
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["octoslave*"]
+
+[tool.uv.workspace]
+members = [
+    "debug/new_benchmark",
+]

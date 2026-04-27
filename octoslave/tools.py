@@ -100,14 +100,17 @@ TOOL_DEFINITIONS = [
             "name": "bash",
             "description": (
                 "Execute a shell command and return stdout + stderr. "
-                "Use for running tests, installing packages, building, git operations, etc."
-                "Always use timeout on every bash command to avoid getting stuck"
+                "Use for running tests, installing packages, building, git operations, etc. "
+                "Do NOT start long-running servers or blocking processes (e.g. 'python app.py', 'flask run') — "
+                "they will block until timeout. To verify a web app, use syntax checks or import tests instead. "
+                "Default timeout is 300 s. "
+                "For longer jobs set timeout explicitly: e.g. 600 for a slow test suite or large pip install, 28800 for ML training."
             ),
             "parameters": {
                 "type": "object",
                 "properties": {
                     "command": {"type": "string", "description": "Shell command to run"},
-                    "timeout": {"type": "integer", "description": "Timeout in seconds (default 3600). For ML model training that may take hours pass a high value, e.g. 28800 (8 h) or 86400 (24 h). There is no hard cap — size it to the expected job duration."},
+                    "timeout": {"type": "integer", "description": "Timeout in seconds (default 300). Increase for slow installs (600), full test suites (600-3600), or ML training (28800-86400). No hard cap."},
                 },
                 "required": ["command"],
             },
@@ -371,7 +374,7 @@ def _edit_file(path: str, old_string: str, new_string: str, working_dir: str) ->
     return f"Edited {path}", True
 
 
-def _bash(command: str, working_dir: str, timeout: int = 3600) -> tuple[str, bool]:
+def _bash(command: str, working_dir: str, timeout: int = 300) -> tuple[str, bool]:
     # Unset VIRTUAL_ENV so uv doesn't emit a mismatch warning when the conda/system
     # venv doesn't match the project's .venv.
     env = {k: v for k, v in os.environ.items() if k != "VIRTUAL_ENV"}
@@ -468,7 +471,7 @@ def _web_search(query: str, max_results: int = 10, region: str = "wt-wt") -> tup
 
     max_results = min(max_results, 20)
     try:
-        with _DDGS() as ddgs:
+        with _DDGS(timeout=20) as ddgs:
             results = list(ddgs.text(query, region=region, max_results=max_results))
     except Exception as e:
         return f"Search failed: {e}", False
@@ -505,6 +508,18 @@ def _web_fetch(url: str, max_chars: int = 8000) -> tuple[str, bool]:
     try:
         resp = _requests.get(url, headers=headers, timeout=30, allow_redirects=True)
         resp.raise_for_status()
+    except _requests.exceptions.HTTPError as e:
+        status = getattr(e.response, "status_code", None)
+        if status == 403:
+            return (
+                f"Fetch failed: 403 Forbidden — {url}\n"
+                "The page requires login or is behind a paywall. "
+                "Try: (1) searching for a preprint or open-access version, "
+                "(2) fetching https://web.archive.org/web/*/" + url + " for a cached copy, "
+                "or (3) using web_search to find a summary of the content.",
+                False,
+            )
+        return f"Fetch failed: {e}", False
     except Exception as e:
         return f"Fetch failed: {e}", False
 
