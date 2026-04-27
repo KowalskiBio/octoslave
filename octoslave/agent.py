@@ -91,9 +91,11 @@ def _trim_messages(messages: list[dict], groups: int = 3) -> list[dict]:
 def make_client(api_key: str, base_url: str) -> OpenAI:
     # Ollama doesn't require a real API key; use a placeholder so the SDK
     # doesn't raise a missing-key error.
+    # 1-hour timeout: large models on e-INFRA CZ can have long TTFT
     return OpenAI(
         api_key=api_key if api_key else "ollama",
         base_url=base_url,
+        timeout=3600.0,
     )
 
 
@@ -225,6 +227,7 @@ def _agent_loop(
     from collections import Counter
     iteration = 0
     _rate_limit_retries = 0
+    _timeout_retries = 0
     _tool_call_counts: Counter = Counter()  # (name, args_json) → call count
 
     while iteration < MAX_ITERATIONS:
@@ -232,6 +235,7 @@ def _agent_loop(
         try:
             response = _stream_completion(client, model, messages)
             _rate_limit_retries = 0
+            _timeout_retries = 0
         except BadRequestError as e:
             err_str = str(e)
             if "ContextWindowExceeded" in err_str or "context" in err_str.lower():
@@ -285,6 +289,16 @@ def _agent_loop(
                     break
                 _time.sleep(wait)
                 iteration -= 1  # don't count this as a used iteration
+                continue
+            elif "timeout" in err_str.lower() or "timed out" in err_str.lower() or "Timeout" in type(e).__name__:
+                _timeout_retries += 1
+                wait = min(30, 5 * (2 ** (_timeout_retries - 1)))
+                display.print_info(f"Request timeout — retrying in {wait}s ({_timeout_retries}/3).")
+                if _timeout_retries > 3:
+                    display.print_error("Request keeps timing out after 3 retries.")
+                    break
+                _time.sleep(wait)
+                iteration -= 1
                 continue
             display.print_error(f"Unexpected error: {e}")
             break
@@ -359,5 +373,6 @@ def _agent_loop(
         display.print_separator()
     else:
         display.print_info(f"Reached max iterations ({MAX_ITERATIONS}).")
+        display.print_done(iteration)  # unblock web UI — done event must always fire
 
     return messages

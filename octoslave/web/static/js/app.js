@@ -196,6 +196,7 @@ function onToolResult(name, ok, preview) {
 
 function onDone(iterations) {
   setChatRunning(false);
+  appendChatInfo(`✓ Done (${iterations} iteration${iterations !== 1 ? 's' : ''})`);
 }
 
 function onServerError(text) {
@@ -499,9 +500,13 @@ function initApp() {
   // Initialize WebSocket connection
   connectWebSocket(
     () => {
-      // On open - request config and models
+      // On open - request config and models; reset any stuck running state
       sendMsg({ type: 'get_config' });
       sendMsg({ type: 'list_models' });
+      if (window.appState.running) {
+        window.appState.running = false;
+        setChatRunning(false);
+      }
     },
     () => {
       // On close - show error
