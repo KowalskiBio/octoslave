@@ -313,25 +313,16 @@ def _is_binary(path: Path) -> bool:
 
 def _extract_pdf(resolved: Path, offset: int = None, limit: int = None) -> tuple[str, bool]:
     try:
-        import pypdf
+        import fitz  # pymupdf
+        doc = fitz.open(str(resolved))
+        parts = [f"--- Page {i+1} ---\n{page.get_text()}" for i, page in enumerate(doc)]
+        num_pages = len(doc)
     except ImportError:
-        return "pypdf not installed. Run: pip install pypdf", False
-
-    try:
-        reader = pypdf.PdfReader(str(resolved))
+        return "pymupdf not installed. Run: pip install pymupdf", False
     except Exception as e:
         return f"Could not open PDF: {e}", False
 
-    parts = []
-    for i, page in enumerate(reader.pages):
-        try:
-            text = page.extract_text() or ""
-        except Exception:
-            text = ""
-        if text.strip():
-            parts.append(f"--- Page {i + 1} ---\n{text.strip()}")
-
-    if not parts:
+    if not any(p.strip() for p in parts):
         return "PDF contains no extractable text (may be scanned/image-based).", False
 
     full_text = "\n\n".join(parts)
@@ -342,7 +333,92 @@ def _extract_pdf(resolved: Path, offset: int = None, limit: int = None) -> tuple
     end = (start + limit) if limit else total
     selected = lines[start:end]
 
-    header = f"PDF: {resolved.name} ({len(reader.pages)} pages, {total} lines extracted)\n\n"
+    header = f"PDF: {resolved.name} ({num_pages} pages, {total} lines extracted)\n\n"
+    return header + "\n".join(selected), True
+
+
+def _extract_excel(resolved: Path, offset: int = None, limit: int = None) -> tuple[str, bool]:
+    try:
+        import openpyxl
+    except ImportError:
+        try:
+            import subprocess, sys
+            subprocess.check_call([sys.executable, "-m", "pip", "install", "openpyxl", "-q"])
+            import openpyxl
+        except Exception:
+            return "openpyxl not installed. Run: pip install openpyxl", False
+
+    try:
+        wb = openpyxl.load_workbook(str(resolved), read_only=True, data_only=True)
+    except Exception as e:
+        return f"Could not open Excel file: {e}", False
+
+    parts = []
+    for sheet_name in wb.sheetnames:
+        ws = wb[sheet_name]
+        rows = []
+        for row in ws.iter_rows(values_only=True):
+            # Skip entirely empty rows
+            if any(cell is not None for cell in row):
+                rows.append("\t".join("" if v is None else str(v) for v in row))
+        if rows:
+            parts.append(f"=== Sheet: {sheet_name} ===\n" + "\n".join(rows))
+
+    if not parts:
+        return f"Excel file {resolved.name} appears empty.", False
+
+    full_text = "\n\n".join(parts)
+    lines = full_text.splitlines()
+    total = len(lines)
+
+    start = (offset - 1) if offset and offset > 0 else 0
+    end = (start + limit) if limit else total
+    selected = lines[start:end]
+
+    header = f"Excel: {resolved.name} ({len(wb.sheetnames)} sheet(s), {total} lines)\n\n"
+    return header + "\n".join(selected), True
+
+
+def _extract_docx(resolved: Path, offset: int = None, limit: int = None) -> tuple[str, bool]:
+    try:
+        import docx as _docx
+    except ImportError:
+        try:
+            import subprocess, sys
+            subprocess.check_call([sys.executable, "-m", "pip", "install", "python-docx", "-q"])
+            import docx as _docx
+        except Exception:
+            return "python-docx not installed. Run: pip install python-docx", False
+
+    try:
+        doc = _docx.Document(str(resolved))
+    except Exception as e:
+        return f"Could not open Word document: {e}", False
+
+    parts = []
+    for para in doc.paragraphs:
+        if para.text.strip():
+            parts.append(para.text)
+
+    # Also extract tables
+    for table in doc.tables:
+        for row in table.rows:
+            row_text = "\t".join(cell.text.strip() for cell in row.cells)
+            if row_text.strip():
+                parts.append(row_text)
+
+    if not parts:
+        return f"Word document {resolved.name} appears empty.", False
+
+    full_text = "\n".join(parts)
+    lines = full_text.splitlines()
+    total = len(lines)
+
+    start = (offset - 1) if offset and offset > 0 else 0
+    end = (start + limit) if limit else total
+    selected = lines[start:end]
+
+    header = f"Word: {resolved.name} ({total} lines extracted)\n\n"
     return header + "\n".join(selected), True
 
 
@@ -356,6 +432,14 @@ def _read_file(path: str, working_dir: str, offset: int = None, limit: int = Non
     # PDF → extract text
     if resolved.suffix.lower() == ".pdf":
         return _extract_pdf(resolved, offset, limit)
+
+    # Excel → convert to CSV-like text
+    if resolved.suffix.lower() in (".xlsx", ".xls", ".xlsm", ".ods"):
+        return _extract_excel(resolved, offset, limit)
+
+    # Word → extract text
+    if resolved.suffix.lower() in (".docx", ".doc"):
+        return _extract_docx(resolved, offset, limit)
 
     # Other binary → reject early with a clear message
     if _is_binary(resolved):
