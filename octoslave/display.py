@@ -68,6 +68,21 @@ _THEME = Theme(
 console = Console(theme=_THEME, highlight=False)
 err_console = Console(stderr=True, theme=_THEME)
 
+# ---------------------------------------------------------------------------
+# Verbose mode
+# ---------------------------------------------------------------------------
+
+_verbose: bool = False
+
+
+def set_verbose(v: bool) -> None:
+    global _verbose
+    _verbose = v
+
+
+def is_verbose() -> bool:
+    return _verbose
+
 
 # ---------------------------------------------------------------------------
 # Pixel-art octopus mascot  (20 chars wide)
@@ -259,6 +274,39 @@ def print_tool_call(name: str, args: dict):
     summary = _tool_summary(name, args)
     console.print(f"  [tool.name]{icon} {name}[/tool.name] [tool.arg]{summary}[/tool.arg]")
 
+    if not _verbose:
+        return
+
+    # Verbose: show full content of the call
+    if name == "edit_file":
+        old = args.get("old_string", "")
+        new = args.get("new_string", "")
+        console.print("    [bold red]─── removing ─────────────────────────────[/bold red]")
+        for ln in old.splitlines():
+            console.print(f"    [red]- {ln}[/red]")
+        console.print("    [bold green]─── inserting ────────────────────────────[/bold green]")
+        for ln in new.splitlines():
+            console.print(f"    [green]+ {ln}[/green]")
+        console.print("    [dim]──────────────────────────────────────────[/dim]")
+
+    elif name == "write_file":
+        content = args.get("content", "")
+        lines = content.splitlines()
+        console.print(f"    [dim]─── content ({len(lines)} lines) ─────────────────[/dim]")
+        for ln in lines:
+            console.print(f"    [dim white]{ln}[/dim white]")
+        console.print("    [dim]──────────────────────────────────────────[/dim]")
+
+    elif name == "bash":
+        cmd = args.get("command", "")
+        console.print(f"    [bold yellow]$ {cmd}[/bold yellow]")
+
+    elif name == "web_fetch":
+        console.print(f"    [dim]↳ {args.get('url', '')}[/dim]")
+
+    elif name == "web_search":
+        console.print(f"    [dim]↳ \"{args.get('query', '')}\"[/dim]")
+
 
 def print_tool_result(name: str, result: str, success: bool):
     _emit({"type": "tool_result", "name": name, "ok": success,
@@ -269,10 +317,15 @@ def print_tool_result(name: str, result: str, success: bool):
         console.print(f"    [tool.err]✗ {result.strip()}[/tool.err]")
         return
     lines = result.splitlines()
-    preview = "\n".join(f"    {ln}" for ln in lines[:6])
-    if len(lines) > 6:
-        preview += f"\n    [info]… {len(lines) - 6} more lines[/info]"
-    console.print(f"[tool.ok]{preview}[/tool.ok]")
+    if _verbose:
+        # Show everything
+        for ln in lines:
+            console.print(f"    [tool.ok]{ln}[/tool.ok]")
+    else:
+        preview = "\n".join(f"    {ln}" for ln in lines[:6])
+        if len(lines) > 6:
+            preview += f"\n    [info]… {len(lines) - 6} more lines[/info]"
+        console.print(f"[tool.ok]{preview}[/tool.ok]")
 
 
 def _tool_summary(name: str, args: dict) -> str:
@@ -342,8 +395,9 @@ def print_help():
         "[bold white]Slash commands[/bold white]\n\n"
         "  [cyan]/model [NAME][/cyan]         Switch model (or list if no name given)\n"
         "  [cyan]/dir [PATH][/cyan]           Change working directory\n"
-        "  [cyan]/profile [NAME][/cyan]       Switch prompt profile (base/coder/analyst)\n"
+        "  [cyan]/profile [NAME][/cyan]       Switch prompt profile (base/coder/analyst/biomedic)\n"
         "  [cyan]/permission [MODE][/cyan]    Switch permission mode (autonomous/controlled)\n"
+        "  [cyan]/verbose[/cyan]              Toggle verbose mode (show full diffs & output live)\n"
         "  [cyan]/clear[/cyan]                Clear screen and conversation history\n"
         "  [cyan]/compact[/cyan]              Summarise history to save context\n"
         "  [cyan]/long-research TOPIC[/cyan]  Launch multi-agent research pipeline\n"

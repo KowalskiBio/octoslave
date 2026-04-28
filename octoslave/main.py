@@ -52,12 +52,13 @@ _HISTORY_FILE = Path.home() / ".octoslave" / "history"
 @click.option("--api-key", default=None, envvar="OCTOSLAVE_API_KEY")
 @click.option("--base-url", default=None, envvar="OCTOSLAVE_BASE_URL")
 @click.option("--local", is_flag=True, default=False, help="Use local Ollama models")
-@click.option("-p", "--prompt-profile", default="base", help="Prompt profile to use (default: base, options: base, coder, analyst)")
-@click.option("--permission-mode", default=None, 
+@click.option("-p", "--prompt-profile", default="base", help="Prompt profile to use (default: base, options: base, coder, analyst, biomedic)")
+@click.option("--permission-mode", default=None,
               type=click.Choice(["autonomous", "controlled", "supervised"]),
               help="Permission mode: autonomous (default), controlled (ask before all edits), or supervised (ask before file edits only)")
+@click.option("-v", "--verbose", is_flag=True, default=False, help="Verbose mode: show full diffs, complete tool output, and bash commands live")
 @click.pass_context
-def cli(ctx, model, working_dir, api_key, base_url, local, prompt_profile, permission_mode):
+def cli(ctx, model, working_dir, api_key, base_url, local, prompt_profile, permission_mode, verbose):
     """OctoSlave — autonomous AI research & coding assistant.
 
     Run without arguments to enter interactive mode.
@@ -70,6 +71,9 @@ def cli(ctx, model, working_dir, api_key, base_url, local, prompt_profile, permi
     ctx.obj["local"] = local
     ctx.obj["prompt_profile"] = prompt_profile
     ctx.obj["permission_mode"] = permission_mode
+    ctx.obj["verbose"] = verbose
+    if verbose:
+        display.set_verbose(True)
 
     if ctx.invoked_subcommand is None:
         _interactive(ctx.obj)
@@ -86,12 +90,13 @@ def cli(ctx, model, working_dir, api_key, base_url, local, prompt_profile, permi
 @click.option("--api-key", default=None, envvar="OCTOSLAVE_API_KEY")
 @click.option("--base-url", default=None, envvar="OCTOSLAVE_BASE_URL")
 @click.option("--local", is_flag=True, default=False, help="Use local Ollama models")
-@click.option("-p", "--prompt-profile", default="base", help="Prompt profile to use (default: base, options: base, coder, analyst)")
+@click.option("-p", "--prompt-profile", default="base", help="Prompt profile to use (default: base, options: base, coder, analyst, biomedic)")
 @click.option("-i", "--interactive", is_flag=True, help="Stay interactive after task")
-@click.option("--permission-mode", default=None, 
+@click.option("--permission-mode", default=None,
               type=click.Choice(["autonomous", "controlled", "supervised"]),
               help="Permission mode: autonomous (default), controlled (ask before all edits), or supervised (ask before file edits only)")
-def run(task, model, working_dir, api_key, base_url, local, prompt_profile, interactive, permission_mode):
+@click.option("-v", "--verbose", is_flag=True, default=False, help="Verbose mode: show full diffs, complete tool output, and bash commands live")
+def run(task, model, working_dir, api_key, base_url, local, prompt_profile, interactive, permission_mode, verbose):
     """Run a single TASK and exit (or continue interactively with -i).
 
     \b
@@ -103,10 +108,13 @@ def run(task, model, working_dir, api_key, base_url, local, prompt_profile, inte
       ots run "build a REST API" -p coder    # pure coding mode
       ots run "analyze this dataset" -p analyst  # data analysis mode
       ots run "edit files" --permission-mode controlled  # ask before each edit
+      ots run "reorganize notes" -v           # see every edit live
     """
+    if verbose:
+        display.set_verbose(True)
     cfg = _resolve_config(model, working_dir, api_key, base_url, local=local)
     cfg["prompt_profile"] = prompt_profile
-    
+
     # Override permission mode if specified
     if permission_mode:
         cfg["permission_mode"] = permission_mode
@@ -323,7 +331,8 @@ def _interactive(ctx_obj: dict):
         local=ctx_obj.get("local", False),
     )
     cfg["prompt_profile"] = ctx_obj.get("prompt_profile", "base")
-    
+    cfg["verbose"] = ctx_obj.get("verbose", False)
+
     # Handle permission mode from CLI or config
     if ctx_obj.get("permission_mode"):
         cfg["permission_mode"] = ctx_obj["permission_mode"]
@@ -376,7 +385,10 @@ def _repl_loop(client, cfg: dict, messages: list[dict]):
         "base_url":    cfg.get("base_url", BASE_URL),
         "prompt_profile": cfg.get("prompt_profile", "base"),
         "permission_mode": cfg.get("permission_mode", "autonomous"),
+        "verbose": cfg.get("verbose", False),
     }
+    if state["verbose"]:
+        display.set_verbose(True)
 
     while True:
         try:
@@ -445,6 +457,14 @@ def _handle_slash(cmd: str, state: dict, cfg: dict, messages: list, client) -> s
         display.print_welcome(state["model"], state["working_dir"],
                                local=state["backend"] == "ollama")
         return "clear"
+
+    if name == "/verbose":
+        new_state = not display.is_verbose()
+        display.set_verbose(new_state)
+        state["verbose"] = new_state
+        status = "[bold green]ON[/bold green]" if new_state else "[bold red]OFF[/bold red]"
+        display.console.print(f"[dim]Verbose mode:[/dim] {status}")
+        return "ok"
 
     if name == "/model":
         if not arg:
