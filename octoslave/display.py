@@ -277,16 +277,17 @@ def print_tool_call(name: str, args: dict):
     if not _verbose:
         return
 
+    from rich.markup import escape as _escape
     # Verbose: show full content of the call
     if name == "edit_file":
         old = args.get("old_string", "")
         new = args.get("new_string", "")
         console.print("    [bold red]─── removing ─────────────────────────────[/bold red]")
         for ln in old.splitlines():
-            console.print(f"    [red]- {ln}[/red]")
+            console.print(f"    [red]- {_escape(ln)}[/red]")
         console.print("    [bold green]─── inserting ────────────────────────────[/bold green]")
         for ln in new.splitlines():
-            console.print(f"    [green]+ {ln}[/green]")
+            console.print(f"    [green]+ {_escape(ln)}[/green]")
         console.print("    [dim]──────────────────────────────────────────[/dim]")
 
     elif name == "write_file":
@@ -294,7 +295,7 @@ def print_tool_call(name: str, args: dict):
         lines = content.splitlines()
         console.print(f"    [dim]─── content ({len(lines)} lines) ─────────────────[/dim]")
         for ln in lines:
-            console.print(f"    [dim white]{ln}[/dim white]")
+            console.print(f"    [dim white]{_escape(ln)}[/dim white]")
         console.print("    [dim]──────────────────────────────────────────[/dim]")
 
     elif name == "bash":
@@ -309,20 +310,21 @@ def print_tool_call(name: str, args: dict):
 
 
 def print_tool_result(name: str, result: str, success: bool):
+    from rich.markup import escape as _escape
     _emit({"type": "tool_result", "name": name, "ok": success,
            "preview": (result.strip()[:400] if result.strip() else "")})
     if not result.strip():
         return
     if not success:
-        console.print(f"    [tool.err]✗ {result.strip()}[/tool.err]")
+        console.print(f"    [tool.err]✗ {_escape(result.strip())}[/tool.err]")
         return
     lines = result.splitlines()
     if _verbose:
-        # Show everything
         for ln in lines:
-            console.print(f"    [tool.ok]{ln}[/tool.ok]")
+            console.print(f"    [tool.ok]{_escape(ln)}[/tool.ok]")
     else:
-        preview = "\n".join(f"    {ln}" for ln in lines[:6])
+        show = lines[:6]
+        preview = "\n".join(f"    {_escape(ln)}" for ln in show)
         if len(lines) > 6:
             preview += f"\n    [info]… {len(lines) - 6} more lines[/info]"
         console.print(f"[tool.ok]{preview}[/tool.ok]")

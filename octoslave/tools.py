@@ -525,6 +525,19 @@ def _web_fetch(url: str, max_chars: int = 8000) -> tuple[str, bool]:
 
     content_type = resp.headers.get("content-type", "")
 
+    # Reject binary / non-text content types up-front
+    _BINARY_TYPES = ("application/pdf", "application/octet-stream",
+                     "image/", "audio/", "video/", "application/zip",
+                     "application/x-", "application/vnd.")
+    if any(content_type.startswith(bt) for bt in _BINARY_TYPES):
+        return (
+            f"Skipped {url} — binary content ({content_type}). "
+            "This is not a readable web page. "
+            "For PDFs try fetching the abstract/HTML page instead, "
+            "or search for a PubMed / PMC HTML version.",
+            False,
+        )
+
     # Plain text / markdown / code — return as-is
     if "text/plain" in content_type or url.endswith((".md", ".txt", ".rst", ".py", ".js", ".ts")):
         text = resp.text[:max_chars]
