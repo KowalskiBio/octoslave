@@ -561,16 +561,33 @@ def _web_fetch(url: str, max_chars: int = 8000) -> tuple[str, bool]:
 
     content_type = resp.headers.get("content-type", "")
 
-    # Reject binary / non-text content types up-front
-    _BINARY_TYPES = ("application/pdf", "application/octet-stream",
-                     "image/", "audio/", "video/", "application/zip",
-                     "application/x-", "application/vnd.")
+    # PDF — extract text with pymupdf if available, else warn
+    if "application/pdf" in content_type or url.lower().endswith(".pdf"):
+        try:
+            import fitz  # pymupdf
+            doc = fitz.open(stream=resp.content, filetype="pdf")
+            pages = []
+            for i, page in enumerate(doc):
+                pages.append(f"--- Page {i+1} ---\n{page.get_text()}")
+            text = "\n\n".join(pages)
+            if len(text) > max_chars:
+                text = text[:max_chars] + f"\n\n… [truncated, {len(text)} total chars]"
+            return f"PDF: {url}\n\n{text}", True
+        except ImportError:
+            return (
+                f"Skipped {url} — PDF detected but pymupdf is not installed. "
+                "Run: pip install pymupdf",
+                False,
+            )
+        except Exception as e:
+            return f"Failed to extract PDF text from {url}: {e}", False
+
+    # Reject other binary content types
+    _BINARY_TYPES = ("application/octet-stream", "image/", "audio/",
+                     "video/", "application/zip", "application/x-", "application/vnd.")
     if any(content_type.startswith(bt) for bt in _BINARY_TYPES):
         return (
-            f"Skipped {url} — binary content ({content_type}). "
-            "This is not a readable web page. "
-            "For PDFs try fetching the abstract/HTML page instead, "
-            "or search for a PubMed / PMC HTML version.",
+            f"Skipped {url} — binary content ({content_type}), cannot read.",
             False,
         )
 
