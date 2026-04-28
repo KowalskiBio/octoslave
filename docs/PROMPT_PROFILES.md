@@ -1,108 +1,116 @@
 # Prompt Profiles
 
-OctoSlave now supports multiple prompt profiles that control how much guidance the agent receives about its behavior.
+Prompt profiles control the writing style, language, and workflow the agent follows. Set them with `-p` / `--prompt-profile` or `/profile` in interactive mode.
 
-## Available Profiles
+---
+
+## Available profiles
 
 ### `base` (default)
-The full prompt with detailed instructions for:
-- Software engineering tasks (exploration, testing, uv package manager)
-- Research & scientific tasks (data discovery, literature survey, hypothesis design, implementation, analysis, iteration, reporting)
-- Important notes about tool usage and context management
 
-Use this profile when you want the agent to follow established best practices for coding and research tasks.
+General-purpose profile. Best for software engineering, research, and mixed tasks.
 
-### `simple`
-A minimal prompt that only includes:
-- Basic agent identity
-- Available tools list
-
-Use this profile when you want maximum flexibility to specify custom behavior in your task description. The agent will still have access to all tools but won't follow predefined workflows.
-
-### `strict`
-A conservative profile that requires explicit user confirmation before any file modifications or potentially destructive operations. Includes:
-- Basic agent identity
-- Available tools list
-- **CRITICAL RULE**: Must ask for confirmation before using `write_file`, `edit_file`, or any `bash` command that could change the project state
-- Clear workflow: read → analyze → present plan → wait for approval → execute
-
-Use this profile when working with critical codebases where accidental changes could be costly, or when you want full control over what changes are made.
-
-## Usage
-
-### Command Line
+- Full instructions for coding (exploration, testing, uv package manager)
+- Research workflow (literature, hypothesis, implementation, analysis, reporting)
+- English language
 
 ```bash
-# Use default base profile
-ots run "build a REST API"
-
-# Use simple profile for custom behavior
-ots run "do whatever makes sense for this data" -p simple
-
-# Use strict profile to confirm before editing
-ots run "fix the bug in main.py" -p strict
-
-# Or with full option name
-ots run "analyze this dataset" --prompt-profile simple
+octoslave -p base
+octoslave run "build a REST API" -p base
 ```
 
-### Interactive Mode
+---
+
+### `coder`
+
+Pure coding profile. No research preamble — goes straight to implementation.
+
+- Focused on writing, editing, and debugging code
+- English language
+- Best for: refactoring, feature implementation, test writing
 
 ```bash
-# Start session
-ots
+octoslave -p coder
+octoslave run "add unit tests for all functions in src/" -p coder
+```
 
-# Check current profile
-/profile
+---
 
-# Switch to simple profile
-/profile simple
+### `analyst`
 
-# Switch to strict profile
-/profile strict
+Data analysis profile. Best for datasets, statistics, and visualisations.
 
-# Switch back to base profile
+- Focused on data exploration, statistical analysis, plots
+- Uses pandas, matplotlib, scipy by default
+- English language
+- Best for: CSV/JSON data analysis, research data, sales reports
+
+```bash
+octoslave -p analyst
+octoslave run "analyze sales_data.csv and create summary plots" -p analyst -d ~/data
+```
+
+---
+
+### `biomedic`
+
+Czech biomedical study notes profile. Designed for Obsidian vaults with medical/scientific content.
+
+- **Language: Czech** throughout
+- Latin terminology in parentheses: *jádro buňky (nucleus cellulae)*
+- `[[wikilinks]]` to every related concept — builds knowledge graph
+- Every note must include `## Zajímavosti` (3–5 surprising facts)
+- `## Kontext` block with parent/sibling node links
+- `## Související témata` closing section
+- Sources: Junqueira, Sadler, Stryer, Alberts, Harrison, Cecil
+- Clinical correlations included where relevant
+
+```bash
+octoslave -p biomedic
+octoslave vault-improve ~/Brain2 --profile biomedic
+/profile biomedic
+/long-research "Histologie jaterní tkáně" --rounds 5
+```
+
+---
+
+## Switching profiles
+
+```bash
+# At startup
+octoslave -p analyst
+octoslave run "task" -p coder
+
+# Mid-session (resets conversation)
+/profile biomedic
 /profile base
 
-# List available profiles
+# Show current profile and available options
 /profile
 ```
 
-## How It Works
+**Note:** Profile changes take effect at the start of the next task. Use `/clear` first if you want to switch mid-session.
 
-When you start a new task (or clear the conversation), the system prompt is loaded from the selected profile file in `octoslave/prompt_profiles/`. The profile is automatically populated with:
-- Current working directory
-- Today's date
+---
 
-**Note:** Profile changes only affect new conversations. If you want to switch profiles mid-session, use `/clear` first to reset the conversation.
+## Creating a custom profile
 
-## Adding Custom Profiles
-
-You can create additional profiles by adding `.md` files to the `octoslave/prompt_profiles/` directory:
+Add a `.md` file to `octoslave/prompt_profiles/`:
 
 ```bash
-# Create a custom profile
-cat > octoslave/prompt_profiles/coding.md << 'EOF'
-"""\
-You are OctoSlave — a focused coding assistant.
+cat > octoslave/prompt_profiles/legal.md << 'EOF'
+You are OctoSlave — a legal document assistant.
 
 Working directory: {working_dir}
 Today: {date}
 
-## Tools available
-
-[... your custom instructions ...]
-"""
+Write in formal legal English. Cite relevant legislation where applicable.
+Structure documents with numbered sections. Flag any ambiguities explicitly.
 EOF
 
-# Use it
-ots run "refactor this code" -p coding
+octoslave -p legal
 ```
 
-## Profile Format
-
-Profile files should be Markdown with optional Python string formatting placeholders:
-- `{working_dir}` - Current working directory
-- `{date}` - Today's date in ISO format
-
-Files can optionally be wrapped in triple quotes (`"""`) for compatibility with Python string literals.
+Available template variables:
+- `{working_dir}` — current working directory
+- `{date}` — today's date in ISO format
