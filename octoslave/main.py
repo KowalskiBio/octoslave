@@ -988,6 +988,7 @@ def _handle_long_research(arg: str, state: dict, cfg: dict, client):
         resume=resume,
         num_parallel=num_parallel,
         scrape_mode=scrape_mode,
+        prompt_profile=state.get("prompt_profile", "base"),
     )
 
 

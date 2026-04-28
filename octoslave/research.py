@@ -833,6 +833,7 @@ def _build_system_prompt(
     brief: str,
     is_final: bool = False,
     scrape_mode: bool = False,
+    prompt_profile: str = "base",
 ) -> str:
     role_cfg = ROLES[role]
     final_tag = "← FINAL ROUND — prioritise conclusions over exploration" if is_final else ""
@@ -859,7 +860,15 @@ def _build_system_prompt(
             next_brief_marker=NEXT_BRIEF_MARKER,
             complete_marker=COMPLETE_MARKER,
         )
-    return header + body
+    # Prepend prompt profile style instructions if not base
+    profile_prefix = ""
+    if prompt_profile and prompt_profile != "base":
+        try:
+            from .agent import load_system_prompt as _load_profile
+            profile_prefix = _load_profile(prompt_profile, working_dir) + "\n\n---\n\n"
+        except Exception:
+            pass
+    return profile_prefix + header + body
 
 
 # ---------------------------------------------------------------------------
@@ -958,6 +967,7 @@ def _run_specialist(
     brief: str,
     client: OpenAI,
     scrape_mode: bool = False,
+    prompt_profile: str = "base",
 ) -> bool:
     """
     Run one specialist agent for one round.
@@ -974,6 +984,7 @@ def _run_specialist(
         round_dir, research_dir, working_dir, brief,
         is_final=(round_num == max_rounds),
         scrape_mode=scrape_mode,
+        prompt_profile=prompt_profile,
     )
 
     messages: list[dict] = [
@@ -1199,6 +1210,7 @@ def _run_parallel_specialists(
     brief: str,
     client: OpenAI,
     scrape_mode: bool = False,
+    prompt_profile: str = "base",
 ) -> list[Path]:
     """
     Run n independent copies of role in parallel, each writing to
@@ -1220,6 +1232,7 @@ def _run_parallel_specialists(
             brief=brief,
             client=client,
             scrape_mode=scrape_mode,
+            prompt_profile=prompt_profile,
         )
         out = sub_dir / OUTPUT_FILES[role]
         return out if out.exists() else None
@@ -2206,6 +2219,7 @@ def run_long_research(
     resume: bool = False,
     num_parallel: int = 1,
     scrape_mode: bool = False,
+    prompt_profile: str = "base",
 ) -> None:
     """
     Run the full autonomous multi-agent research pipeline.
@@ -2322,6 +2336,7 @@ def run_long_research(
                         brief=brief,
                         client=client,
                         scrape_mode=scrape_mode,
+                        prompt_profile=prompt_profile,
                     )
                     if parallel_outputs:
                         _run_merger(
@@ -2355,6 +2370,7 @@ def run_long_research(
                         brief=brief,
                         client=client,
                         scrape_mode=scrape_mode,
+                        prompt_profile=prompt_profile,
                     )
             except KeyboardInterrupt:
                 display.console.print(
