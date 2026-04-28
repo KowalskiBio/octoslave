@@ -157,6 +157,38 @@ EXECUTION RULES — non-negotiable:
 ---
 """
 
+_SCRAPE_RESEARCHER_PROMPT = """\
+YOUR MISSION
+You are a web scraping specialist. Your job is to crawl the target website's full
+category/content tree, extract structured data, and save it for downstream analysis.
+
+STEPS
+1. Call crawl_tree on the root URL. Set max_depth and url_pattern to stay focused
+   on the content tree (e.g. url_pattern to match category paths).
+   Always set output_path to {round_dir}/scraped_tree.json.
+2. Review the returned tree — identify the deepest leaf pages that contain actual data.
+3. web_fetch up to 5 representative leaf pages to understand the data structure
+   (fields, formats, patterns).
+4. Write {round_dir}/01_literature.md with:
+   ## Scraped Tree Summary
+   - Total pages crawled, max depth reached, engine used
+   - Tree shape: which URL patterns correspond to which content levels
+   ## Data Structure
+   - Fields found on leaf pages (name, price, description, etc.)
+   - Format of each field (string, number, list, etc.)
+   ## Sample Records
+   - 3–5 concrete examples extracted from leaf pages
+   ## FOR THE EXPERIMENT DESIGNER
+   - Recommended approach for full extraction (pagination patterns, rate limits,
+     auth requirements, JS rendering needs)
+   - Exact output_path where the tree JSON was saved
+
+CONSTRAINTS
+- Use crawl_tree ONCE for the initial tree discovery.
+- Use web_fetch for up to 5 leaf pages only — do not re-crawl.
+- Write 01_literature.md as your LAST action. Stop immediately after.
+"""
+
 _ROLE_PROMPTS: dict[str, str] = {
 
 "researcher": """\
@@ -512,10 +544,10 @@ def _build_system_prompt(
     working_dir: str,
     brief: str,
     is_final: bool = False,
+    scrape_mode: bool = False,
 ) -> str:
     role_cfg = ROLES[role]
     final_tag = "← FINAL ROUND — prioritise conclusions over exploration" if is_final else ""
-    # Cap brief length for roles that only need the direction, not full synthesis prose
     if role not in ("orchestrator", "reporter") and len(brief) > _BRIEF_CAP:
         brief = brief[:_BRIEF_CAP].rstrip() + "\n…[brief truncated — read findings.md for full context]"
     header = _SHARED_HEADER.format(
@@ -529,13 +561,16 @@ def _build_system_prompt(
         working_dir=working_dir,
         brief=brief,
     )
-    body = _ROLE_PROMPTS[role].format(
-        round_dir=round_dir,
-        research_dir=research_dir,
-        working_dir=working_dir,
-        next_brief_marker=NEXT_BRIEF_MARKER,
-        complete_marker=COMPLETE_MARKER,
-    )
+    if scrape_mode and role == "researcher":
+        body = _SCRAPE_RESEARCHER_PROMPT.format(round_dir=round_dir)
+    else:
+        body = _ROLE_PROMPTS[role].format(
+            round_dir=round_dir,
+            research_dir=research_dir,
+            working_dir=working_dir,
+            next_brief_marker=NEXT_BRIEF_MARKER,
+            complete_marker=COMPLETE_MARKER,
+        )
     return header + body
 
 
@@ -543,8 +578,10 @@ def _build_system_prompt(
 # Filtered tool list per role
 # ---------------------------------------------------------------------------
 
-def _tools_for_role(role: str) -> list[dict]:
+def _tools_for_role(role: str, scrape_mode: bool = False) -> list[dict]:
     allowed = set(ROLES[role]["tools"])
+    if scrape_mode and role == "researcher":
+        allowed.add("crawl_tree")
     return [t for t in TOOL_DEFINITIONS if t["function"]["name"] in allowed]
 
 
@@ -632,13 +669,14 @@ def _run_specialist(
     working_dir: str,
     brief: str,
     client: OpenAI,
+    scrape_mode: bool = False,
 ) -> bool:
     """
     Run one specialist agent for one round.
     Returns True on success, False if a fatal error occurred.
     """
     cfg = ROLES[role]
-    tools = _tools_for_role(role)
+    tools = _tools_for_role(role, scrape_mode=scrape_mode)
     max_iter = cfg["max_iter"]
 
     display.print_agent_banner(role, model, round_num, max_rounds)
@@ -647,6 +685,7 @@ def _run_specialist(
         role, topic, round_num, max_rounds,
         round_dir, research_dir, working_dir, brief,
         is_final=(round_num == max_rounds),
+        scrape_mode=scrape_mode,
     )
 
     messages: list[dict] = [
@@ -819,6 +858,7 @@ def _run_parallel_specialists(
     working_dir: str,
     brief: str,
     client: OpenAI,
+    scrape_mode: bool = False,
 ) -> list[Path]:
     """
     Run n independent copies of role in parallel, each writing to
@@ -839,6 +879,7 @@ def _run_parallel_specialists(
             working_dir=working_dir,
             brief=brief,
             client=client,
+            scrape_mode=scrape_mode,
         )
         out = sub_dir / OUTPUT_FILES[role]
         return out if out.exists() else None
@@ -1440,6 +1481,12 @@ def _probe_hardware(research_dir: str) -> dict:
     return profile
 
 
+_SCRAPE_KEYWORDS = frozenset({
+    "scrape", "scraping", "crawl", "crawling", "spider", "spidering",
+    "harvest", "harvesting", "extract from website", "extract from site",
+    "extract from url", "web extraction", "data extraction from",
+})
+
 def run_long_research(
     topic: str,
     working_dir: str,
@@ -1448,6 +1495,7 @@ def run_long_research(
     model_overrides: dict[str, str] | None = None,
     resume: bool = False,
     num_parallel: int = 1,
+    scrape_mode: bool = False,
 ) -> None:
     """
     Run the full autonomous multi-agent research pipeline.
@@ -1461,7 +1509,15 @@ def run_long_research(
         resume:          If True, skip rounds whose output files already exist.
         num_parallel:    Number of independent agent copies to run for parallelisable
                          roles (researcher, hypothesis, evaluator). Default 1 = sequential.
+        scrape_mode:     If True (or auto-detected from topic keywords), gives the
+                         researcher the crawl_tree tool and a scraping-focused prompt.
     """
+    # Auto-detect scrape intent from topic
+    topic_lower = topic.lower()
+    if not scrape_mode:
+        scrape_mode = any(kw in topic_lower for kw in _SCRAPE_KEYWORDS)
+    if scrape_mode:
+        display.print_info("  [bold yellow]🕷  Scrape mode active — researcher has crawl_tree tool.[/bold yellow]")
     overrides = model_overrides or {}
     research_dir = Path(working_dir) / "research"
     research_dir.mkdir(parents=True, exist_ok=True)
@@ -1497,12 +1553,21 @@ def run_long_research(
         )
 
     # Initial brief
-    brief = (
-        f"Initial research round. Conduct a broad literature survey on: {topic}\n"
-        "Identify key papers, available datasets, existing methods, and open problems.\n"
-        "Generate first hypotheses and implement the most promising experiment."
-        f"{local_files_block}"
-    )
+    if scrape_mode:
+        brief = (
+            f"Scraping task: {topic}\n"
+            "Use crawl_tree to map the full site structure, then web_fetch leaf pages "
+            "to understand data fields. Save the tree JSON to the round dir. "
+            "Subsequent rounds will implement and run the full extractor."
+            f"{local_files_block}"
+        )
+    else:
+        brief = (
+            f"Initial research round. Conduct a broad literature survey on: {topic}\n"
+            "Identify key papers, available datasets, existing methods, and open problems.\n"
+            "Generate first hypotheses and implement the most promising experiment."
+            f"{local_files_block}"
+        )
 
     completed_early = False
 
@@ -1546,6 +1611,7 @@ def run_long_research(
                         working_dir=working_dir,
                         brief=brief,
                         client=client,
+                        scrape_mode=scrape_mode,
                     )
                     if parallel_outputs:
                         _run_merger(
@@ -1577,6 +1643,7 @@ def run_long_research(
                         working_dir=working_dir,
                         brief=brief,
                         client=client,
+                        scrape_mode=scrape_mode,
                     )
             except KeyboardInterrupt:
                 display.console.print(
