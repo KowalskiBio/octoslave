@@ -14,6 +14,7 @@ from prompt_toolkit.key_binding import KeyBindings
 from . import display
 from .agent import make_client, run_agent, continue_agent
 from .research import run_long_research, ROLES as RESEARCH_ROLES
+from .vault import run_vault_improve
 from .config import (
     KNOWN_MODELS, DEFAULT_MODEL, BASE_URL, OLLAMA_BASE_URL,
     NIM_BASE_URL, NIM_DEFAULT_MODEL, NIM_KNOWN_MODELS,
@@ -678,6 +679,10 @@ def _handle_slash(cmd: str, state: dict, cfg: dict, messages: list, client) -> s
         _handle_research_roles(arg, state, cfg)
         return "ok"
 
+    if name == "/vault-improve":
+        _handle_vault_improve(arg, state, client)
+        return "ok"
+
     display.print_error(f"Unknown command: {name}  (type /help)")
     return "ok"
 
@@ -970,6 +975,67 @@ def _handle_long_research(arg: str, state: dict, cfg: dict, client):
         num_parallel=num_parallel,
         scrape_mode=scrape_mode,
     )
+
+
+def _handle_vault_improve(arg: str, state: dict, client):
+    """Parse /vault-improve flags and launch the autonomous vault pipeline."""
+    import shlex
+
+    try:
+        tokens = shlex.split(arg)
+    except ValueError:
+        tokens = arg.split()
+
+    vault_path: str | None = None
+    resume = False
+    model: str | None = None
+
+    i = 0
+    while i < len(tokens):
+        t = tokens[i]
+        if t == "--resume":
+            resume = True
+            i += 1
+        elif t == "--model" and i + 1 < len(tokens):
+            model = tokens[i + 1]
+            i += 2
+        elif not t.startswith("--"):
+            vault_path = str(Path(t).expanduser().resolve())
+            i += 1
+        else:
+            display.print_error(f"Unknown flag: {t}")
+            return
+
+    if not vault_path:
+        # Default to current working dir
+        vault_path = state["working_dir"]
+
+    if not Path(vault_path).is_dir():
+        display.print_error(f"Not a directory: {vault_path}")
+        return
+
+    profile = state.get("prompt_profile", "base")
+
+    display.console.print()
+    display.console.print(
+        f"[bold bright_white]🐙 VAULT IMPROVE[/bold bright_white]\n"
+        f"[dim]vault   :[/dim] {vault_path}\n"
+        f"[dim]profile :[/dim] {profile}\n"
+        f"[dim]model   :[/dim] {model or 'role defaults'}\n"
+        f"[dim]resume  :[/dim] {resume}"
+    )
+    display.console.print()
+
+    try:
+        run_vault_improve(
+            vault_path=vault_path,
+            client=client,
+            prompt_profile=profile,
+            model=model,
+            resume=resume,
+        )
+    except KeyboardInterrupt:
+        display.console.print("\n[dim]Vault improve interrupted. Run again with --resume to continue.[/dim]")
 
 
 # ---------------------------------------------------------------------------
