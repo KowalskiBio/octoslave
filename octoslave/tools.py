@@ -467,6 +467,14 @@ def _read_file(path: str, working_dir: str, offset: int = None, limit: int = Non
 
 def _write_file(path: str, content: str, working_dir: str) -> tuple[str, bool]:
     resolved = _resolve(path, working_dir)
+    size = len(content.encode("utf-8"))
+    if size > _MAX_DOWNLOAD_BYTES:
+        size_gb = size / (1024 ** 3)
+        return (
+            f"Refused to write {path} — content is {size_gb:.2f} GB, "
+            f"exceeds the 1 GB limit.",
+            False,
+        )
     resolved.parent.mkdir(parents=True, exist_ok=True)
     resolved.write_text(content)
     lines = content.count("\n") + 1
@@ -614,6 +622,9 @@ def _web_search(query: str, max_results: int = 10, region: str = "wt-wt") -> tup
     return "\n".join(lines), True
 
 
+_MAX_DOWNLOAD_BYTES = 1 * 1024 * 1024 * 1024  # 1 GB hard limit
+
+
 def _web_fetch(url: str, max_chars: int = 8000) -> tuple[str, bool]:
     if not _HAS_REQUESTS:
         return "requests package not installed. Run: pip install requests", False
@@ -626,8 +637,50 @@ def _web_fetch(url: str, max_chars: int = 8000) -> tuple[str, bool]:
         )
     }
     try:
-        resp = _requests.get(url, headers=headers, timeout=30, allow_redirects=True)
+        # HEAD request first — check Content-Length before downloading anything
+        try:
+            head = _requests.head(url, headers=headers, timeout=10,
+                                  allow_redirects=True)
+            content_length = int(head.headers.get("content-length", 0))
+            if content_length > _MAX_DOWNLOAD_BYTES:
+                size_gb = content_length / (1024 ** 3)
+                return (
+                    f"Refused to download {url} — "
+                    f"Content-Length is {size_gb:.2f} GB, exceeds the 1 GB limit.",
+                    False,
+                )
+        except Exception:
+            pass  # HEAD not supported by all servers — proceed with GET
+
+        resp = _requests.get(url, headers=headers, timeout=30,
+                             allow_redirects=True, stream=True)
         resp.raise_for_status()
+
+        # Check Content-Length from GET response headers too
+        content_length = int(resp.headers.get("content-length", 0))
+        if content_length > _MAX_DOWNLOAD_BYTES:
+            resp.close()
+            size_gb = content_length / (1024 ** 3)
+            return (
+                f"Refused to download {url} — "
+                f"Content-Length is {size_gb:.2f} GB, exceeds the 1 GB limit.",
+                False,
+            )
+
+        # Read with a rolling size guard (handles chunked/no Content-Length)
+        chunks = []
+        downloaded = 0
+        for chunk in resp.iter_content(chunk_size=1024 * 1024):  # 1 MB chunks
+            downloaded += len(chunk)
+            if downloaded > _MAX_DOWNLOAD_BYTES:
+                resp.close()
+                return (
+                    f"Aborted download of {url} — "
+                    f"exceeded 1 GB limit after {downloaded / (1024**3):.2f} GB.",
+                    False,
+                )
+            chunks.append(chunk)
+        resp._content = b"".join(chunks)
     except _requests.exceptions.HTTPError as e:
         status = getattr(e.response, "status_code", None)
         if status == 403:
