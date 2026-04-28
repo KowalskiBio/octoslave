@@ -120,6 +120,10 @@ def run(task, model, working_dir, api_key, base_url, local, prompt_profile, inte
     cfg = _resolve_config(model, working_dir, api_key, base_url, local=local)
     cfg["prompt_profile"] = prompt_profile
 
+    # Auto-create project dir if no explicit dir given
+    if not working_dir:
+        cfg["working_dir"] = _make_project_dir(task)
+
     # Override permission mode if specified
     if permission_mode:
         cfg["permission_mode"] = permission_mode
@@ -391,6 +395,7 @@ def _interactive(ctx_obj: dict):
     )
     cfg["prompt_profile"] = ctx_obj.get("prompt_profile", "base")
     cfg["verbose"] = ctx_obj.get("verbose", False)
+    cfg["explicit_dir"] = bool(ctx_obj.get("working_dir"))
 
     # Handle permission mode from CLI or config
     if ctx_obj.get("permission_mode"):
@@ -480,6 +485,15 @@ def _repl_loop(client, cfg: dict, messages: list[dict]):
                 client = make_client(state["api_key"], state["base_url"])
                 messages = []
             continue
+
+        # Auto-create project dir on first task if no explicit dir was set
+        if not messages and not cfg.get("explicit_dir"):
+            project_dir = _make_project_dir(user_input)
+            if project_dir != state["working_dir"]:
+                state["working_dir"] = project_dir
+                display.console.print(
+                    f"[dim]📁 project dir:[/dim] [bold]{project_dir}[/bold]"
+                )
 
         display.print_task(user_input)
         try:
@@ -1085,6 +1099,28 @@ def _make_keybindings() -> KeyBindings:
         event.app.renderer.clear()
 
     return kb
+
+
+# ---------------------------------------------------------------------------
+# Project directory helper
+# ---------------------------------------------------------------------------
+
+def _make_project_dir(task: str) -> str:
+    """
+    Create ~/octoslave/projects/<slug> from the task description.
+    Returns the absolute path (already created).
+    """
+    import re
+    slug = task.lower().strip()
+    slug = re.sub(r"[^\w\s-]", "", slug)       # remove punctuation
+    slug = re.sub(r"[\s_]+", "-", slug)         # spaces → dashes
+    slug = slug[:48].strip("-")                 # max 48 chars
+    if not slug:
+        slug = "project"
+    projects_root = Path.home() / "octoslave" / "projects"
+    project_dir = projects_root / slug
+    project_dir.mkdir(parents=True, exist_ok=True)
+    return str(project_dir)
 
 
 # ---------------------------------------------------------------------------
