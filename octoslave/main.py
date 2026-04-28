@@ -1112,12 +1112,95 @@ def _make_project_dir(task: str) -> str:
     Returns the absolute path (already created).
     """
     import re
-    slug = task.lower().strip()
-    slug = re.sub(r"[^\w\s-]", "", slug)       # remove punctuation
-    slug = re.sub(r"[\s_]+", "-", slug)         # spaces → dashes
-    slug = slug[:48].strip("-")                 # max 48 chars
-    if not slug:
+    # Common stop words in English and Czech
+    STOP_WORDS = {
+        # English
+        "i", "me", "my", "myself", "we", "our", "ours", "ourselves", "you", "your", "yours",
+        "yourself", "yourselves", "he", "him", "his", "himself", "she", "her", "hers",
+        "herself", "it", "its", "itself", "they", "them", "their", "theirs", "themselves",
+        "what", "which", "who", "whom", "this", "that", "these", "those", "am", "is", "are",
+        "was", "were", "be", "been", "being", "have", "has", "had", "having", "do", "does",
+        "did", "doing", "a", "an", "the", "and", "but", "if", "or", "because", "as", "until",
+        "while", "of", "at", "by", "for", "with", "about", "against", "between", "into",
+        "through", "during", "before", "after", "above", "below", "to", "from", "up", "down",
+        "in", "out", "on", "off", "over", "under", "again", "further", "then", "once",
+        "here", "there", "when", "where", "why", "how", "all", "any", "both", "each",
+        "few", "more", "most", "other", "some", "such", "no", "nor", "not", "only", "own",
+        "same", "so", "than", "too", "very", "s", "t", "can", "will", "just", "don",
+        "should", "now",
+        # Czech common words
+        "a", "aby", "ale", "ani", "ano", "asi", "během", "bez", "bude", "budeme", "budete",
+        "budeš", "budou", "by", "byl", "byla", "byli", "bylo", "byly", "bys", "často", "či",
+        "co", "což", "či", "článek", "článku", "články", "další", "dnes", "do", "ho", "i",
+        "já", "je", "jeden", "jedna", "jedno", "jeho", "jej", "její", "jejich", "jen", "jenž",
+        "ještě", "ji", "jiné", "již", "jsem", "jsi", "jsme", "jsou", "jste", "k", "kam",
+        "každý", "kde", "ke", "kdo", "kdy", "když", "ke", "která", "které", "který", "kteří",
+        "ku", "ma", "me", "mě", "mezi", "mi", "mne", "mně", "mno", "mou", "možná", "můj",
+        "musí", "my", "na", "nad", "nám", "námi", "naproti", "nás", "náš", "naše", "naši",
+        "ne", "nebo", "nebyl", "nebyla", "nebyli", "nebyly", "nechť", "ně", "něco", "nějak",
+        "nejsi", "někdo", "některý", "nemá", "nemají", "neměl", "není", "nestačí", "nevím",
+        "než", "nic", "nich", "ním", "nimi", "němu", "ní", "něj", "nyní", "od", "ode", "on",
+        "ona", "oni", "ono", "ony", "o", "po", "pod", "podle", "pokud", "pouze", "pro",
+        "proč", "proto", "protože", "před", "přes", "při", "roku", "s", "se", "si", "sice",
+        "skoro", "sobě", "spolu", "sta", "své", "svůj", "svých", "svým", "svými", "ta",
+        "tak", "také", "takže", "tam", "tamhle", "tamhleto", "tamto", "tě", "tebe", "tebou",
+        "ted'", "tedy", "ten", "tento", "této", "ti", "tím", "tímto", "tip", "tipy", "to",
+        "tobě", "tohle", "toho", "tohoto", "tom", "tomto", "tomu", "tomuto", "toto", "tu",
+        "tuto", "tvá", "tvé", "tvoje", "tvůj", "ty", "tý", "tyto", "u", "už", "v", "váš",
+        "vaše", "vaši", "ve", "více", "vlastně", "však", "všechen", "všechno", "všechny",
+        "všichni", "vůbec", "vy", "vám", "vámi", "vás", "z", "za", "že",
+        # Common programming/tech words that might not be informative
+        "check", "code", "build", "create", "make", "write", "edit", "fix", "update",
+        "add", "remove", "delete", "test", "run", "execute", "implement", "please",
+        "need", "want", "could", "would", "should", "maybe", "perhaps", "help",
+        "using", "via", "based", "like", "similar", "example", "etc", "eg", "ie",
+        "vs", "ok", "yes", "no", "well", "also", "too", "very", "really", "quite",
+        "actually", "basically", "literally", "seriously", "honestly", "probably",
+        # Czech verbs and common words
+        "přepiš", "přepisovat", "napiš", "udělej", "vytvoř", "zkontroluj", "oprav", "uprav",
+        "změň", "přidej", "odeber", "smaž", "spusť", "testuj", "implementuj", "prosím",
+        "potřebuji", "chci", "mohl", "by", "asi", "možná", "snad", "pomoc",
+        # Generic nouns that might not be informative
+        "notes", "note", "data", "file", "files", "folder", "directory", "project",
+        "task", "work", "job", "thing", "stuff", "items", "element", "component",
+    }
+    
+    # Clean and tokenize
+    task_lower = task.lower().strip()
+    # Keep alphanumeric and some special chars for non-English languages
+    words = re.findall(r'[\wěščřžýáíéůúďťňó]+', task_lower)
+    
+    # Filter out stop words and short words (less than 2 chars)
+    filtered = [w for w in words if w not in STOP_WORDS and len(w) > 2]
+    
+    # If we filtered out too much, fall back to original words but still filter very short ones
+    if not filtered:
+        filtered = [w for w in words if len(w) > 2]
+    
+    # Take at most 3 words
+    selected = filtered[:3]
+    
+    if not selected:
+        # Fallback: take first 3 alphanumeric tokens from original
+        selected = words[:3]
+    
+    if not selected:
         slug = "project"
+    else:
+        # Join with underscores and limit total length
+        slug = "_".join(selected)
+        # Ensure slug is not too long (max 48 chars)
+        if len(slug) > 48:
+            # Try to shorten while keeping words whole
+            parts = slug.split('_')
+            shortened = []
+            for part in parts:
+                if len('_'.join(shortened + [part])) <= 48:
+                    shortened.append(part)
+                else:
+                    break
+            slug = '_'.join(shortened) if shortened else slug[:48]
+    
     projects_root = Path.home() / "octoslave" / "projects"
     project_dir = projects_root / slug
     project_dir.mkdir(parents=True, exist_ok=True)
