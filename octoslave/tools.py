@@ -600,6 +600,32 @@ def _web_fetch(url: str, max_chars: int = 8000) -> tuple[str, bool]:
     return f"URL: {url}\n\n{text}", True
 
 
+def _ensure_playwright() -> bool:
+    """Install playwright + chromium if not present. Returns True if available after attempt."""
+    global _HAS_PLAYWRIGHT, _sync_playwright  # noqa: PLW0603
+    if _HAS_PLAYWRIGHT:
+        return True
+    try:
+        import sys
+        print("[crawl_tree] Playwright not found — installing automatically…")
+        subprocess.run(
+            [sys.executable, "-m", "pip", "install", "playwright", "-q"],
+            check=True, capture_output=True,
+        )
+        subprocess.run(
+            [sys.executable, "-m", "playwright", "install", "chromium", "--with-deps"],
+            check=True, capture_output=True,
+        )
+        from playwright.sync_api import sync_playwright as _sp
+        _sync_playwright = _sp  # type: ignore[assignment]
+        _HAS_PLAYWRIGHT = True
+        print("[crawl_tree] Playwright installed successfully.")
+        return True
+    except Exception as e:
+        print(f"[crawl_tree] Auto-install failed: {e} — falling back to requests+BS4.")
+        return False
+
+
 def _crawl_tree(
     root_url: str,
     link_selector: str = "a",
@@ -629,7 +655,9 @@ def _crawl_tree(
         )
     }
 
-    use_playwright = _HAS_PLAYWRIGHT and (use_js or not _HAS_REQUESTS)
+    # Auto-install Playwright on first use; fall back to requests if it fails
+    playwright_ok = _ensure_playwright()
+    use_playwright = playwright_ok and (use_js or not _HAS_REQUESTS)
 
     if use_playwright:
         browser_ctx = _sync_playwright().__enter__()
