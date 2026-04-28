@@ -1165,6 +1165,58 @@ def _resolve_config(model, working_dir, api_key, base_url, local: bool = False) 
     }
 
 
+@cli.command("vault-improve")
+@click.argument("vault_path", default=None, required=False)
+@click.option("-p", "--profile", "prompt_profile", default="base",
+              help="Prompt profile (default: base, options: base, coder, analyst, biomedic)")
+@click.option("-m", "--model", default=None, help="Model override for all vault agents")
+@click.option("--resume", is_flag=True, default=False, help="Resume interrupted run")
+@click.option("--api-key", default=None, envvar="OCTOSLAVE_API_KEY")
+@click.option("--base-url", default=None, envvar="OCTOSLAVE_BASE_URL")
+def vault_improve_cmd(vault_path, prompt_profile, model, resume, api_key, base_url):
+    """Autonomously improve every note in a vault (Obsidian / markdown folder).
+
+    \b
+    Examples:
+      octoslave vault-improve ~/Brain2 --profile biomedic
+      octoslave vault-improve ~/Brain2 --profile biomedic --resume
+      octoslave vault-improve ~/Brain2 --model deepseek-v3.2-thinking
+    """
+    from .vault import run_vault_improve
+    from .agent import make_client
+
+    cfg = _resolve_config(None, vault_path, api_key, base_url)
+    vault = str(Path(vault_path).expanduser().resolve()) if vault_path else os.getcwd()
+
+    if not Path(vault).is_dir():
+        display.print_error(f"Not a directory: {vault}")
+        sys.exit(1)
+
+    client = make_client(cfg["api_key"], cfg["base_url"])
+
+    display.console.print()
+    display.console.print(
+        f"[bold bright_white]🐙 VAULT IMPROVE[/bold bright_white]\n"
+        f"[dim]vault  :[/dim] {vault}\n"
+        f"[dim]profile:[/dim] {prompt_profile}\n"
+        f"[dim]model  :[/dim] {model or 'role defaults'}\n"
+        f"[dim]resume :[/dim] {resume}"
+    )
+    display.console.print()
+
+    try:
+        run_vault_improve(
+            vault_path=vault,
+            client=client,
+            prompt_profile=prompt_profile,
+            model=model,
+            resume=resume,
+        )
+    except KeyboardInterrupt:
+        display.console.print("\n[dim]Interrupted. Run with --resume to continue.[/dim]")
+        sys.exit(0)
+
+
 @cli.command()
 @click.option("--host", default="127.0.0.1", show_default=True, help="Host to bind to")
 @click.option("--port", default=7860, show_default=True, help="Port to listen on")
