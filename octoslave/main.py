@@ -91,7 +91,7 @@ def cli(ctx, model, working_dir, api_key, base_url, local, prompt_profile, permi
 @cli.command()
 @click.argument("task")
 @click.option("-m", "--model", default=None)
-@click.option("-d", "--dir", "working_dir", default=None)
+@click.option("-d", "--dir", "working_dir", default=None, help="Working directory (default: current directory)")
 @click.option("--api-key", default=None, envvar="OCTOSLAVE_API_KEY")
 @click.option("--base-url", default=None, envvar="OCTOSLAVE_BASE_URL")
 @click.option("--local", is_flag=True, default=False, help="Use local Ollama models")
@@ -101,8 +101,13 @@ def cli(ctx, model, working_dir, api_key, base_url, local, prompt_profile, permi
               type=click.Choice(["autonomous", "controlled", "supervised"]),
               help="Permission mode: autonomous (default), controlled (ask before all edits), or supervised (ask before file edits only)")
 @click.option("-v", "--verbose", is_flag=True, default=False, help="Verbose mode: show full diffs, complete tool output, and bash commands live")
-def run(task, model, working_dir, api_key, base_url, local, prompt_profile, interactive, permission_mode, verbose):
+@click.option("-n", "--new-project", is_flag=True, default=False, help="Create a new project dir in ~/octoslave/projects/ for output")
+def run(task, model, working_dir, api_key, base_url, local, prompt_profile, interactive, permission_mode, verbose, new_project):
     """Run a single TASK and exit (or continue interactively with -i).
+
+    \b
+    Default working directory is where you ran octoslave (current dir).
+    Use -d to specify a directory, or -n to auto-create a project folder.
 
     \b
     Examples:
@@ -110,19 +115,20 @@ def run(task, model, working_dir, api_key, base_url, local, prompt_profile, inte
       ots run "research recent papers on RAG" --model qwen3-coder
       ots run "add unit tests" -i
       ots run "explain this codebase" --local
-      ots run "build a REST API" -p coder    # pure coding mode
-      ots run "analyze this dataset" -p analyst  # data analysis mode
-      ots run "edit files" --permission-mode controlled  # ask before each edit
-      ots run "reorganize notes" -v           # see every edit live
+      ots run "build a REST API" -p coder
+      ots run "analyze this dataset" -p analyst -d ~/data
+      ots run "write a report" -n                # auto-create project dir
+      ots run "reorganize notes" -v
     """
     if verbose:
         display.set_verbose(True)
     cfg = _resolve_config(model, working_dir, api_key, base_url, local=local)
     cfg["prompt_profile"] = prompt_profile
 
-    # Auto-create project dir if no explicit dir given
-    if not working_dir:
+    # Only create project dir if explicitly requested with -n
+    if new_project and not working_dir:
         cfg["working_dir"] = _make_project_dir(task)
+        display.console.print(f"[dim]📁 project dir:[/dim] [bold]{cfg['working_dir']}[/bold]")
 
     # Override permission mode if specified
     if permission_mode:
@@ -486,15 +492,6 @@ def _repl_loop(client, cfg: dict, messages: list[dict]):
                 messages = []
             continue
 
-        # Auto-create project dir on first task if no explicit dir was set
-        if not messages and not cfg.get("explicit_dir"):
-            project_dir = _make_project_dir(user_input)
-            if project_dir != state["working_dir"]:
-                state["working_dir"] = project_dir
-                display.console.print(
-                    f"[dim]📁 project dir:[/dim] [bold]{project_dir}[/bold]"
-                )
-
         display.print_task(user_input)
         try:
             if messages:
@@ -598,6 +595,14 @@ def _handle_slash(cmd: str, state: dict, cfg: dict, messages: list, client) -> s
                 state["working_dir"] = new_dir
                 display.console.print(f"[dim]Dir set to[/dim] {new_dir}")
                 messages.clear()
+        return "ok"
+
+    if name == "/new-project":
+        task_hint = arg if arg else "project"
+        new_dir = _make_project_dir(task_hint)
+        state["working_dir"] = new_dir
+        display.console.print(f"[dim]📁 project dir:[/dim] [bold]{new_dir}[/bold]")
+        messages.clear()
         return "ok"
 
     if name == "/profile":
