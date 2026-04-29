@@ -1108,10 +1108,11 @@ def _make_keybindings() -> KeyBindings:
 
 def _make_project_dir(task: str) -> str:
     """
-    Create ~/octoslave/projects/<slug> from the task description.
+    Create ~/octoslave/projects/MMDD-word1-word2 from the task description.
     Returns the absolute path (already created).
     """
     import re
+    from datetime import date as _date
     # Common stop words in English and Czech
     STOP_WORDS = {
         # English
@@ -1166,43 +1167,34 @@ def _make_project_dir(task: str) -> str:
     }
     
     # Clean and tokenize
-    task_lower = task.lower().strip()
-    # Keep alphanumeric and some special chars for non-English languages
-    words = re.findall(r'[\wěščřžýáíéůúďťňó]+', task_lower)
-    
-    # Filter out stop words and short words (less than 2 chars)
+    words = re.findall(r'[\wěščřžýáíéůúďťňó]+', task.lower().strip())
+
+    # Filter stop words and short words, take 2 most meaningful
     filtered = [w for w in words if w not in STOP_WORDS and len(w) > 2]
-    
-    # If we filtered out too much, fall back to original words but still filter very short ones
     if not filtered:
         filtered = [w for w in words if len(w) > 2]
-    
-    # Take at most 3 words
-    selected = filtered[:3]
-    
-    if not selected:
-        # Fallback: take first 3 alphanumeric tokens from original
-        selected = words[:3]
-    
-    if not selected:
-        slug = "project"
-    else:
-        # Join with underscores and limit total length
-        slug = "_".join(selected)
-        # Ensure slug is not too long (max 48 chars)
-        if len(slug) > 48:
-            # Try to shorten while keeping words whole
-            parts = slug.split('_')
-            shortened = []
-            for part in parts:
-                if len('_'.join(shortened + [part])) <= 48:
-                    shortened.append(part)
-                else:
-                    break
-            slug = '_'.join(shortened) if shortened else slug[:48]
-    
+    selected = filtered[:2] if filtered else (words[:2] if words else ["project"])
+
+    # Truncate each word to 12 chars, join with dash
+    slug = "-".join(w[:12] for w in selected)
+
+    # Prefix with MMDD date
+    today = _date.today()
+    slug = f"{today.month:02d}{today.day:02d}-{slug}"
+
     projects_root = Path.home() / "octoslave" / "projects"
     project_dir = projects_root / slug
+
+    # If dir already exists (same task same day), add suffix
+    if project_dir.exists():
+        base = project_dir
+        for n in range(2, 99):
+            candidate = projects_root / f"{slug}-{n}"
+            if not candidate.exists():
+                project_dir = candidate
+                break
+            project_dir = base  # fallback: reuse existing
+
     project_dir.mkdir(parents=True, exist_ok=True)
     return str(project_dir)
 
