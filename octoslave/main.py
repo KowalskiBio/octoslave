@@ -1337,6 +1337,142 @@ def vault_improve_cmd(vault_path, prompt_profile, model, resume, api_key, base_u
         sys.exit(0)
 
 
+@cli.command("batch")
+@click.argument("tasks_file")
+@click.option("-m", "--model", default=None, help="Model to use for all tasks")
+@click.option("-p", "--profile", "prompt_profile", default="base",
+              help="Prompt profile (default: base)")
+@click.option("--permission-mode", default=None,
+              type=click.Choice(["autonomous", "controlled", "supervised"]))
+@click.option("--resume", is_flag=True, default=False,
+              help="Skip tasks already marked done in the state file")
+@click.option("--output-dir", default=None,
+              help="Root dir for task outputs (default: ~/octoslave/projects/)")
+@click.option("--api-key", default=None, envvar="OCTOSLAVE_API_KEY")
+@click.option("--base-url", default=None, envvar="OCTOSLAVE_BASE_URL")
+def batch_cmd(tasks_file, model, prompt_profile, permission_mode, resume,
+              output_dir, api_key, base_url):
+    """Run a list of tasks from a file, one by one, with resume support.
+
+    \b
+    TASKS_FILE: plain text file, one task per line. Lines starting with #
+    are treated as comments and skipped. Empty lines are skipped.
+
+    \b
+    Examples:
+      octoslave batch tasks.txt
+      octoslave batch tasks.txt --profile biomedic --resume
+      octoslave batch tasks.txt -m deepseek-v3.2-thinking --output-dir ~/results
+    \b
+    State is saved to TASKS_FILE.state.json after every completed task.
+    Re-run with --resume to skip already completed tasks.
+    """
+    import json as _json
+    from .agent import make_client, run_agent
+
+    tasks_path = Path(tasks_file).expanduser().resolve()
+    if not tasks_path.exists():
+        display.print_error(f"Tasks file not found: {tasks_file}")
+        sys.exit(1)
+
+    # Parse tasks — skip comments and blank lines
+    raw_lines = tasks_path.read_text(encoding="utf-8").splitlines()
+    tasks = [ln.strip() for ln in raw_lines
+             if ln.strip() and not ln.strip().startswith("#")]
+
+    if not tasks:
+        display.print_error("No tasks found in file.")
+        sys.exit(1)
+
+    # State file — tracks which tasks are done
+    state_file = tasks_path.with_suffix(".state.json")
+    state: dict = {}
+    if resume and state_file.exists():
+        try:
+            state = _json.loads(state_file.read_text(encoding="utf-8"))
+        except Exception:
+            state = {}
+
+    cfg = _resolve_config(None, None, api_key, base_url)
+    if model:
+        cfg["model"] = model
+    if permission_mode:
+        cfg["permission_mode"] = permission_mode
+    else:
+        saved_cfg = load_config()
+        cfg["permission_mode"] = saved_cfg.get("permission_mode", "autonomous")
+
+    client = make_client(cfg["api_key"], cfg["base_url"])
+
+    root_dir = Path(output_dir).expanduser().resolve() if output_dir \
+        else Path.home() / "octoslave" / "projects"
+    root_dir.mkdir(parents=True, exist_ok=True)
+
+    total = len(tasks)
+    done = sum(1 for t in tasks if state.get(t) == "done")
+
+    display.console.print()
+    display.console.print(
+        f"[bold bright_white]🐙 BATCH RUN[/bold bright_white]\n"
+        f"[dim]tasks  :[/dim] {total} ({done} already done)\n"
+        f"[dim]model  :[/dim] {cfg['model']}\n"
+        f"[dim]profile:[/dim] {prompt_profile}\n"
+        f"[dim]output :[/dim] {root_dir}\n"
+        f"[dim]resume :[/dim] {resume}"
+    )
+    display.console.print()
+
+    for i, task in enumerate(tasks, 1):
+        if state.get(task) == "done":
+            display.console.print(
+                f"[dim]  [{i}/{total}] skipping (done): {task[:60]}[/dim]"
+            )
+            continue
+
+        project_dir = _make_project_dir(task)
+        display.console.print(
+            f"\n[bold bright_white]  [{i}/{total}] {task[:80]}[/bold bright_white]\n"
+            f"[dim]  → {project_dir}[/dim]\n"
+        )
+        display.print_task(task)
+
+        try:
+            run_agent(
+                task, cfg["model"], project_dir, client,
+                prompt_profile, cfg["permission_mode"]
+            )
+            state[task] = "done"
+        except KeyboardInterrupt:
+            display.console.print(
+                "\n[bold yellow]Batch paused.[/bold yellow] "
+                "Re-run with --resume to continue."
+            )
+            state_file.write_text(
+                _json.dumps(state, indent=2, ensure_ascii=False),
+                encoding="utf-8"
+            )
+            sys.exit(0)
+        except Exception as e:
+            display.print_error(f"Task failed: {e}")
+            state[task] = f"failed: {e}"
+
+        # Save state after every task
+        state_file.write_text(
+            _json.dumps(state, indent=2, ensure_ascii=False),
+            encoding="utf-8"
+        )
+
+    done_count = sum(1 for v in state.values() if v == "done")
+    failed_count = sum(1 for v in state.values() if str(v).startswith("failed"))
+    display.console.print()
+    display.console.print(
+        f"[bold bright_green]✓ Batch complete[/bold bright_green]  "
+        f"{done_count}/{total} done"
+        + (f"  [bold red]{failed_count} failed[/bold red]" if failed_count else "")
+    )
+    display.console.print(f"[dim]State saved to: {state_file}[/dim]")
+
+
 @cli.command()
 @click.option("--host", default="127.0.0.1", show_default=True, help="Host to bind to")
 @click.option("--port", default=7860, show_default=True, help="Port to listen on")
