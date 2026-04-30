@@ -615,12 +615,12 @@ Usable for simple interactive tasks. Long-research not recommended on CPU only.
 ### Which backend should I use?
 
 ```
-Do you have access to e-INFRA CZ? ──yes──▶ use einfra  (best model quality, free for Czech academia)
+Do you have access to e-INFRA CZ? ──yes──▶ use einfra  (best model quality, free for Masaryk University)
          │
          no
          │
          ▼
-Do you have an NVIDIA NIM key?   ──yes──▶ use nim      (frontier models, pay-per-token, no local GPU needed)
+Do you have an NVIDIA NIM key?   ──yes──▶ use nim      (good models, no local GPU needed)
          │
          no
          │
