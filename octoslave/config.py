@@ -66,6 +66,28 @@ NIM_KNOWN_MODELS = [
     "mistralai/mistral-small-4-119b-2603",
 ]
 
+# ---------------------------------------------------------------------------
+# Per-backend default role models for the research pipeline
+# ---------------------------------------------------------------------------
+
+PIPELINE_ROLES = (
+    "researcher", "hypothesis", "coder", "debugger",
+    "evaluator", "orchestrator", "reporter", "merger",
+)
+
+EINFRA_ROLE_MODELS: dict[str, str] = {
+    "researcher":   "deepseek-v3.2-thinking",
+    "hypothesis":   "deepseek-v3.2-thinking",
+    "coder":        "qwen3-coder-30b",
+    "debugger":     "qwen3-coder-30b",
+    "evaluator":    "deepseek-v3.2-thinking",
+    "orchestrator": "deepseek-v3.2",
+    "reporter":     "deepseek-v3.2",
+    "merger":       "deepseek-v3.2",
+}
+
+NIM_ROLE_MODELS: dict[str, str] = {role: NIM_DEFAULT_MODEL for role in PIPELINE_ROLES}
+
 
 # ---------------------------------------------------------------------------
 # NVIDIA NIM helpers
@@ -201,6 +223,70 @@ def assign_local_models(pulled_models: list[str]) -> dict[str, str]:
 
 
 # ---------------------------------------------------------------------------
+# Role model helpers
+# ---------------------------------------------------------------------------
+
+def get_role_models(cfg: dict | None = None) -> dict[str, str]:
+    """
+    Return role → model mapping for the research pipeline.
+    Starts from per-backend defaults, then applies any custom overrides
+    stored in the config under 'role_models_<backend>'.
+    """
+    if cfg is None:
+        cfg = {}
+    backend = cfg.get("backend", "einfra")
+
+    if backend == "nim":
+        base = dict(NIM_ROLE_MODELS)
+    elif backend == "ollama":
+        pulled = ollama_list_models(cfg.get("ollama_url", OLLAMA_BASE_URL))
+        base = assign_local_models(pulled) if pulled else dict(EINFRA_ROLE_MODELS)
+    else:  # einfra
+        base = dict(EINFRA_ROLE_MODELS)
+
+    # Apply any per-backend custom overrides saved by the user
+    custom = cfg.get(f"role_models_{backend}") or {}
+    base.update(custom)
+    return base
+
+
+def save_role_model(role: str, model: str, backend: str) -> None:
+    """Persist a single per-role model override for the given backend."""
+    cfg = load_config()
+    key = f"role_models_{backend}"
+    role_models = dict(cfg.get(key) or {})
+    role_models[role] = model
+    save_config(
+        api_key=cfg.get("api_key", ""),
+        base_url=cfg.get("base_url", BASE_URL),
+        default_model=cfg.get("default_model", DEFAULT_MODEL),
+        backend=cfg.get("backend", "einfra"),
+        ollama_url=cfg.get("ollama_url", OLLAMA_BASE_URL),
+        permission_mode=cfg.get("permission_mode", "autonomous"),
+        nim_api_key=cfg.get("nim_api_key"),
+        nim_url=cfg.get("nim_url"),
+        **{key: role_models},
+    )
+
+
+def reset_role_models(backend: str) -> None:
+    """Clear all custom per-role overrides for the given backend."""
+    cfg = load_config()
+    key = f"role_models_{backend}"
+    save_config(
+        api_key=cfg.get("api_key", ""),
+        base_url=cfg.get("base_url", BASE_URL),
+        default_model=cfg.get("default_model", DEFAULT_MODEL),
+        backend=cfg.get("backend", "einfra"),
+        ollama_url=cfg.get("ollama_url", OLLAMA_BASE_URL),
+        permission_mode=cfg.get("permission_mode", "autonomous"),
+        nim_api_key=cfg.get("nim_api_key"),
+        nim_url=cfg.get("nim_url"),
+        **{key: {}},
+    )
+
+
+# ---------------------------------------------------------------------------
 # Config load / save
 # ---------------------------------------------------------------------------
 
@@ -235,6 +321,9 @@ def load_config() -> dict:
         "permission_mode": "autonomous",  # "autonomous" | "controlled" | "supervised"
         "nim_api_key": "",
         "nim_url": NIM_BASE_URL,
+        "role_models_einfra": {},
+        "role_models_nim": {},
+        "role_models_ollama": {},
     }
     # Env vars override config file
     if os.environ.get("OCTOSLAVE_API_KEY"):
@@ -271,6 +360,10 @@ def load_config() -> dict:
             for key, env_var in _env_keys.items():
                 if not os.environ.get(env_var) and saved.get(key):
                     config[key] = saved[key]
+            # role_models_* are dicts — no env-var override, just load from file
+            for rm_key in ("role_models_einfra", "role_models_nim", "role_models_ollama"):
+                if isinstance(saved.get(rm_key), dict):
+                    config[rm_key] = saved[rm_key]
         except (json.JSONDecodeError, OSError):
             pass
 
@@ -286,8 +379,11 @@ def save_config(
     permission_mode: str = "autonomous",
     nim_api_key: str | None = None,
     nim_url: str | None = None,
+    role_models_einfra: dict | None = None,
+    role_models_nim: dict | None = None,
+    role_models_ollama: dict | None = None,
 ):
-    # Load existing config to preserve nim values when not explicitly provided
+    # Load existing config to preserve values not explicitly provided
     _existing: dict = {}
     if CONFIG_FILE.exists():
         try:
@@ -306,6 +402,9 @@ def save_config(
         "permission_mode": permission_mode,
         "nim_api_key": nim_api_key if nim_api_key is not None else _existing.get("nim_api_key", ""),
         "nim_url": nim_url if nim_url is not None else _existing.get("nim_url", NIM_BASE_URL),
+        "role_models_einfra":  role_models_einfra  if role_models_einfra  is not None else _existing.get("role_models_einfra",  {}),
+        "role_models_nim":     role_models_nim      if role_models_nim     is not None else _existing.get("role_models_nim",     {}),
+        "role_models_ollama":  role_models_ollama   if role_models_ollama  is not None else _existing.get("role_models_ollama",  {}),
     }
     with open(CONFIG_FILE, "w") as f:
         json.dump(data, f, indent=2)

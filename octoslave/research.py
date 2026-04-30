@@ -904,12 +904,14 @@ def _run_merger(
     research_dir: str,
     working_dir: str,
     client: OpenAI,
+    model: str | None = None,
 ) -> bool:
     """
     Reconcile parallel agent outputs into one canonical file.
     Returns True if canonical_path was written successfully.
     """
     cfg = ROLES["merger"]
+    _model = model or cfg["default_model"]
     tools = _tools_for_role("merger")
     paths_block = "\n".join(f"  {i + 1}. {p}" for i, p in enumerate(parallel_outputs))
     role_label = ROLES[role]["label"]
@@ -948,7 +950,7 @@ def _run_merger(
         )},
     ]
 
-    display.print_agent_banner("merger", cfg["default_model"], round_num, max_rounds)
+    display.print_agent_banner("merger", _model, round_num, max_rounds)
 
     t0 = time.time()
     iteration = 0
@@ -958,7 +960,7 @@ def _run_merger(
     while iteration < cfg["max_iter"]:
         iteration += 1
         try:
-            response = _stream_completion_with_tools(client, cfg["default_model"], messages, tools)
+            response = _stream_completion_with_tools(client, _model, messages, tools)
             _rate_limit_retries = 0
             _timeout_retries = 0
         except BadRequestError as e:
@@ -1624,6 +1626,7 @@ def run_long_research(
                             research_dir=str(research_dir),
                             working_dir=working_dir,
                             client=client,
+                            model=overrides.get("merger") or ROLES["merger"]["default_model"],
                         )
                     else:
                         ok = False

@@ -17,10 +17,12 @@ from .research import run_long_research, ROLES as RESEARCH_ROLES
 from .config import (
     KNOWN_MODELS, DEFAULT_MODEL, BASE_URL, OLLAMA_BASE_URL,
     NIM_BASE_URL, NIM_DEFAULT_MODEL, NIM_KNOWN_MODELS,
+    PIPELINE_ROLES, EINFRA_ROLE_MODELS, NIM_ROLE_MODELS,
     load_config, save_config,
     ollama_is_running, ollama_list_models, ollama_pull_model,
     nim_list_models,
     assign_local_models,
+    get_role_models, save_role_model, reset_role_models,
 )
 
 # ---------------------------------------------------------------------------
@@ -663,6 +665,10 @@ def _handle_slash(cmd: str, state: dict, cfg: dict, messages: list, client) -> s
         _handle_long_research(arg, state, cfg, client)
         return "ok"
 
+    if name == "/research-roles":
+        _handle_research_roles(arg, state, cfg)
+        return "ok"
+
     display.print_error(f"Unknown command: {name}  (type /help)")
     return "ok"
 
@@ -807,6 +813,47 @@ def _do_pull(model_name: str, state: dict):
         display.print_error(f"Failed to pull {model_name}.")
 
 
+def _handle_research_roles(arg: str, state: dict, cfg: dict):
+    """View or modify per-role model assignments for the research pipeline."""
+    backend = state.get("backend", "einfra")
+    tokens = arg.split() if arg else []
+
+    # /research-roles reset [backend]
+    if tokens and tokens[0] == "reset":
+        target_backend = tokens[1] if len(tokens) > 1 else backend
+        if target_backend not in ("einfra", "nim", "ollama"):
+            display.print_error(f"Unknown backend '{target_backend}'. Use einfra, nim, or ollama.")
+            return
+        reset_role_models(target_backend)
+        cfg.update(load_config())
+        display.console.print(
+            f"[dim]Custom role models cleared for backend[/dim] [bold]{target_backend}[/bold]"
+        )
+        return
+
+    # /research-roles <role> <model>
+    if len(tokens) >= 2:
+        role_name = tokens[0].lower()
+        model_name = tokens[1]
+        if role_name not in PIPELINE_ROLES:
+            display.print_error(
+                f"Unknown role '{role_name}'. Valid roles: {', '.join(PIPELINE_ROLES)}"
+            )
+            return
+        save_role_model(role_name, model_name, backend)
+        cfg.update(load_config())
+        display.console.print(
+            f"[dim]Role[/dim] [bold cyan]{role_name}[/bold cyan] "
+            f"[dim]→[/dim] [bold magenta]{model_name}[/bold magenta] "
+            f"[dim](backend: {backend})[/dim]"
+        )
+        return
+
+    # /research-roles — show current assignments
+    effective = get_role_models(cfg)
+    display.print_role_models_config(backend, effective, cfg.get(f"role_models_{backend}") or {})
+
+
 def _handle_long_research(arg: str, state: dict, cfg: dict, client):
     """Parse /long-research flags and launch the research pipeline."""
     import shlex
@@ -820,6 +867,7 @@ def _handle_long_research(arg: str, state: dict, cfg: dict, client):
     max_rounds = 5
     all_model: str | None = None
     overseer_model: str | None = None
+    role_flag_overrides: dict[str, str] = {}
     resume = False
     num_parallel = 1
     scrape_mode = False
@@ -849,6 +897,16 @@ def _handle_long_research(arg: str, state: dict, cfg: dict, client):
         elif t == "--overseer" and i + 1 < len(tokens):
             overseer_model = tokens[i + 1]
             i += 2
+        elif t == "--role" and i + 2 < len(tokens):
+            role_name = tokens[i + 1].lower()
+            role_model = tokens[i + 2]
+            if role_name not in PIPELINE_ROLES:
+                display.print_error(
+                    f"Unknown role '{role_name}'. Valid roles: {', '.join(PIPELINE_ROLES)}"
+                )
+                return
+            role_flag_overrides[role_name] = role_model
+            i += 3
         elif t == "--resume":
             resume = True
             i += 1
@@ -863,26 +921,35 @@ def _handle_long_research(arg: str, state: dict, cfg: dict, client):
     if not topic:
         display.print_error(
             "Usage: /long-research <topic> [--rounds N] [--parallel N] "
-            "[--all MODEL] [--overseer MODEL] [--resume] [--scrape]"
+            "[--all MODEL] [--overseer MODEL] [--role ROLE MODEL] [--resume] [--scrape]"
         )
         return
 
     overrides: dict[str, str] = {}
 
     if state["backend"] == "ollama" and not all_model:
-        # Auto-assign local models across roles
+        # Auto-assign local models across roles then apply any saved custom overrides
         pulled = ollama_list_models(state.get("ollama_url", OLLAMA_BASE_URL))
         if not pulled:
             display.print_error("No Ollama models available for local research.")
             return
         overrides = assign_local_models(pulled)
+        # Apply saved custom ollama role overrides
+        overrides.update(cfg.get("role_models_ollama") or {})
         display.print_local_research_assignment(overrides)
+    elif all_model:
+        for role in PIPELINE_ROLES:
+            overrides[role] = all_model
     else:
-        if all_model:
-            for role in RESEARCH_ROLES:
-                overrides[role] = all_model
-        if overseer_model:
-            overrides["orchestrator"] = overseer_model
+        # Load per-backend defaults + any saved custom role overrides
+        overrides = get_role_models(cfg)
+
+    # --overseer flag takes priority over everything for the orchestrator
+    if overseer_model:
+        overrides["orchestrator"] = overseer_model
+
+    # --role flags take final priority
+    overrides.update(role_flag_overrides)
 
     run_long_research(
         topic=topic,

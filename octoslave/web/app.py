@@ -27,7 +27,11 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from .. import display
 from ..display import resolve_permission
 from ..agent import continue_agent, make_client, run_agent
-from ..config import load_config
+from ..config import (
+    load_config,
+    get_role_models, save_role_model, reset_role_models,
+    PIPELINE_ROLES,
+)
 from ..research import PIPELINE, run_long_research
 
 # ---------------------------------------------------------------------------
@@ -577,7 +581,10 @@ async def ws_endpoint(websocket: WebSocket):
                 state["working_dir"] = working_dir
                 state["running"] = True
 
-                model_overrides = {role: model_all for role in PIPELINE} if model_all else None
+                if model_all:
+                    model_overrides = {role: model_all for role in PIPELINE_ROLES}
+                else:
+                    model_overrides = get_role_models(cfg)
                 _backend = state.get("backend") or cfg.get("backend", "einfra")
                 if _backend == "nim":
                     _api_key = cfg.get("nim_api_key", "")
@@ -611,6 +618,57 @@ async def ws_endpoint(websocket: WebSocket):
 
                 threading.Thread(target=research_fn, daemon=True).start()
                 await stream_events()
+
+            # ---- role model config ----
+            elif mtype == "get_role_models":
+                cfg = load_config()
+                effective = get_role_models(cfg)
+                backend = state.get("backend") or cfg.get("backend", "einfra")
+                custom = cfg.get(f"role_models_{backend}") or {}
+                await send({
+                    "type": "role_models",
+                    "backend": backend,
+                    "effective": effective,
+                    "custom": custom,
+                })
+
+            elif mtype == "set_role_model":
+                role = msg.get("role", "").lower()
+                model_name = msg.get("model", "").strip()
+                cfg = load_config()
+                backend = msg.get("backend") or state.get("backend") or cfg.get("backend", "einfra")
+                if role not in PIPELINE_ROLES:
+                    await send({"type": "error", "text": f"Unknown role '{role}'"})
+                    continue
+                if not model_name:
+                    await send({"type": "error", "text": "model is required"})
+                    continue
+                save_role_model(role, model_name, backend)
+                cfg = load_config()
+                effective = get_role_models(cfg)
+                custom = cfg.get(f"role_models_{backend}") or {}
+                await send({
+                    "type": "role_models",
+                    "backend": backend,
+                    "effective": effective,
+                    "custom": custom,
+                })
+
+            elif mtype == "reset_role_models":
+                cfg = load_config()
+                backend = msg.get("backend") or state.get("backend") or cfg.get("backend", "einfra")
+                if backend not in ("einfra", "nim", "ollama"):
+                    await send({"type": "error", "text": f"Unknown backend '{backend}'"})
+                    continue
+                reset_role_models(backend)
+                cfg = load_config()
+                effective = get_role_models(cfg)
+                await send({
+                    "type": "role_models",
+                    "backend": backend,
+                    "effective": effective,
+                    "custom": {},
+                })
 
     except WebSocketDisconnect:
         pass
