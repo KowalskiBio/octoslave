@@ -822,6 +822,7 @@ def _handle_long_research(arg: str, state: dict, cfg: dict, client):
     overseer_model: str | None = None
     resume = False
     num_parallel = 1
+    scrape_mode = False
 
     i = 0
     while i < len(tokens):
@@ -851,6 +852,9 @@ def _handle_long_research(arg: str, state: dict, cfg: dict, client):
         elif t == "--resume":
             resume = True
             i += 1
+        elif t == "--scrape":
+            scrape_mode = True
+            i += 1
         else:
             topic_parts.append(t)
             i += 1
@@ -859,7 +863,7 @@ def _handle_long_research(arg: str, state: dict, cfg: dict, client):
     if not topic:
         display.print_error(
             "Usage: /long-research <topic> [--rounds N] [--parallel N] "
-            "[--all MODEL] [--overseer MODEL] [--resume]"
+            "[--all MODEL] [--overseer MODEL] [--resume] [--scrape]"
         )
         return
 
@@ -888,6 +892,7 @@ def _handle_long_research(arg: str, state: dict, cfg: dict, client):
         model_overrides=overrides,
         resume=resume,
         num_parallel=num_parallel,
+        scrape_mode=scrape_mode,
     )
 
 

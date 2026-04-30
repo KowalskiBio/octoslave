@@ -27,6 +27,12 @@ try:
 except ImportError:
     _HAS_BS4 = False
 
+try:
+    from playwright.sync_api import sync_playwright as _sync_playwright
+    _HAS_PLAYWRIGHT = True
+except ImportError:
+    _HAS_PLAYWRIGHT = False
+
 # Tools that require permission in controlled mode
 MODIFYING_TOOLS = {"write_file", "edit_file", "bash"}
 
@@ -200,6 +206,34 @@ TOOL_DEFINITIONS = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "crawl_tree",
+            "description": (
+                "Crawl a website tree starting from a root URL using BFS. "
+                "Follows internal links up to max_depth levels deep and returns a JSON tree "
+                "of {url: {title, text_snippet, children, depth}}. "
+                "Uses Playwright (handles JS-rendered pages) if available, otherwise requests+BeautifulSoup. "
+                "Ideal for scraping category trees, product hierarchies, documentation trees, or any "
+                "multi-level site structure. Save results with output_path."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "root_url": {"type": "string", "description": "Starting URL to crawl from"},
+                    "link_selector": {"type": "string", "description": "CSS selector for links to follow (default 'a')"},
+                    "url_pattern": {"type": "string", "description": "Regex — only follow URLs matching this pattern (optional)"},
+                    "max_depth": {"type": "integer", "description": "Maximum depth to crawl (default 3)"},
+                    "max_pages": {"type": "integer", "description": "Maximum number of pages to visit (default 100)"},
+                    "same_domain": {"type": "boolean", "description": "Only follow links on the same domain (default true)"},
+                    "use_js": {"type": "boolean", "description": "Force Playwright even for static sites (default false — auto-selects best engine)"},
+                    "output_path": {"type": "string", "description": "If given, save full JSON tree to this file path"},
+                },
+                "required": ["root_url"],
+            },
+        },
+    },
 ]
 
 
@@ -248,6 +282,8 @@ def execute_tool(name: str, args: dict, working_dir: str, permission_mode: str =
             return _web_search(**args)
         elif name == "web_fetch":
             return _web_fetch(**args)
+        elif name == "crawl_tree":
+            return _crawl_tree(**args)
         else:
             return f"Unknown tool: {name}", False
     except TypeError as e:
@@ -575,3 +611,173 @@ def _web_fetch(url: str, max_chars: int = 8000) -> tuple[str, bool]:
         text = text[:max_chars] + f"\n\n… [truncated, {len(text)} total chars]"
 
     return f"URL: {url}\n\n{text}", True
+
+
+def _ensure_playwright() -> bool:
+    """Install playwright + chromium if not present. Returns True if available after attempt."""
+    global _HAS_PLAYWRIGHT, _sync_playwright  # noqa: PLW0603
+    if _HAS_PLAYWRIGHT:
+        return True
+    try:
+        import sys
+        print("[crawl_tree] Playwright not found — installing automatically…")
+        subprocess.run(
+            [sys.executable, "-m", "pip", "install", "playwright", "-q"],
+            check=True, capture_output=True,
+        )
+        subprocess.run(
+            [sys.executable, "-m", "playwright", "install", "chromium", "--with-deps"],
+            check=True, capture_output=True,
+        )
+        from playwright.sync_api import sync_playwright as _sp
+        _sync_playwright = _sp  # type: ignore[assignment]
+        _HAS_PLAYWRIGHT = True
+        print("[crawl_tree] Playwright installed successfully.")
+        return True
+    except Exception as e:
+        print(f"[crawl_tree] Auto-install failed: {e} — falling back to requests+BS4.")
+        return False
+
+
+def _crawl_tree(
+    root_url: str,
+    link_selector: str = "a",
+    url_pattern: str = "",
+    max_depth: int = 3,
+    max_pages: int = 100,
+    same_domain: bool = True,
+    use_js: bool = False,
+    output_path: str = "",
+) -> tuple[str, bool]:
+    """BFS tree crawl. Returns JSON: {url: {title, text_snippet, children, depth}}"""
+    import json
+    import re
+    from collections import deque
+    from urllib.parse import urljoin, urlparse
+
+    url_re = re.compile(url_pattern) if url_pattern else None
+    origin = urlparse(root_url).netloc
+    visited: dict[str, dict] = {}
+    queue: deque[tuple[str, int]] = deque([(root_url, 0)])
+
+    _HEADERS = {
+        "User-Agent": (
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/120.0.0.0 Safari/537.36"
+        )
+    }
+
+    # Auto-install Playwright on first use; fall back to requests if it fails
+    playwright_ok = _ensure_playwright()
+    use_playwright = playwright_ok and (use_js or not _HAS_REQUESTS)
+
+    if use_playwright:
+        browser_ctx = _sync_playwright().__enter__()
+        browser = browser_ctx.chromium.launch(headless=True)
+        page = browser.new_page()
+    else:
+        browser_ctx = browser = page = None  # type: ignore
+
+    def _fetch_html(url: str) -> str | None:
+        try:
+            if use_playwright and page is not None:
+                page.goto(url, timeout=15000, wait_until="domcontentloaded")
+                try:
+                    page.wait_for_load_state("networkidle", timeout=5000)
+                except Exception:
+                    pass
+                return page.content()
+            else:
+                if not _HAS_REQUESTS:
+                    return None
+                r = _requests.get(url, headers=_HEADERS, timeout=15, allow_redirects=True)
+                r.raise_for_status()
+                return r.text
+        except Exception:
+            return None
+
+    def _extract(html: str, base_url: str) -> tuple[str, str, list[str]]:
+        """Returns (title, text_snippet, child_urls)."""
+        if not _HAS_BS4:
+            import re as _re
+            title = (_re.search(r"<title[^>]*>(.*?)</title>", html, _re.I | _re.S) or ["", ""])[1]
+            text = _re.sub(r"<[^>]+>", " ", html)
+            text = " ".join(text.split())[:300]
+            hrefs = _re.findall(r'href=["\']([^"\']+)["\']', html)
+            return str(title), text, [urljoin(base_url, h) for h in hrefs]
+
+        soup = _BS4(html, "html.parser")
+        title = soup.title.get_text(strip=True) if soup.title else base_url
+        for tag in soup(["script", "style", "nav", "footer", "header", "aside", "noscript"]):
+            tag.decompose()
+        body = soup.find("main") or soup.find("article") or soup.find("body") or soup
+        snippet = " ".join(body.get_text(separator=" ", strip=True).split())[:300]
+        links = []
+        for a in soup.select(link_selector):
+            href = a.get("href", "")
+            if not href or href.startswith(("#", "mailto:", "javascript:", "tel:")):
+                continue
+            links.append(urljoin(base_url, href).split("#")[0])
+        return title, snippet, links
+
+    try:
+        while queue and len(visited) < max_pages:
+            url, depth = queue.popleft()
+            if url in visited:
+                continue
+
+            html = _fetch_html(url)
+            if html is None:
+                visited[url] = {"title": "FETCH_ERROR", "text_snippet": "", "children": [], "depth": depth}
+                continue
+
+            title, snippet, raw_links = _extract(html, url)
+
+            children: list[str] = []
+            if depth < max_depth:
+                seen_this_page: set[str] = set()
+                for child in raw_links:
+                    if child in visited or child in seen_this_page:
+                        continue
+                    if same_domain and urlparse(child).netloc != origin:
+                        continue
+                    if url_re and not url_re.search(child):
+                        continue
+                    seen_this_page.add(child)
+                    children.append(child)
+                    queue.append((child, depth + 1))
+
+            visited[url] = {
+                "title": title,
+                "text_snippet": snippet,
+                "children": children,
+                "depth": depth,
+            }
+    finally:
+        if use_playwright and browser_ctx is not None:
+            try:
+                browser.close()  # type: ignore
+                browser_ctx.__exit__(None, None, None)
+            except Exception:
+                pass
+
+    result_json = json.dumps(visited, indent=2, ensure_ascii=False)
+
+    if output_path:
+        try:
+            Path(output_path).parent.mkdir(parents=True, exist_ok=True)
+            Path(output_path).write_text(result_json, encoding="utf-8")
+            saved_msg = f"\n\nSaved to: {output_path}"
+        except Exception as e:
+            saved_msg = f"\n\nFailed to save: {e}"
+    else:
+        saved_msg = ""
+
+    engine = "Playwright" if use_playwright else "requests+BS4"
+    summary = (
+        f"Crawled {len(visited)} pages from {root_url} "
+        f"(depth≤{max_depth}, engine={engine}){saved_msg}\n\n"
+        + result_json
+    )
+    return summary, True
