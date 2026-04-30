@@ -157,6 +157,38 @@ EXECUTION RULES — non-negotiable:
 ---
 """
 
+_SCRAPE_RESEARCHER_PROMPT = """\
+YOUR MISSION
+You are a web scraping specialist. Your job is to crawl the target website's full
+category/content tree, extract structured data, and save it for downstream analysis.
+
+STEPS
+1. Call crawl_tree on the root URL. Set max_depth and url_pattern to stay focused
+   on the content tree (e.g. url_pattern to match category paths).
+   Always set output_path to {round_dir}/scraped_tree.json.
+2. Review the returned tree — identify the deepest leaf pages that contain actual data.
+3. web_fetch up to 5 representative leaf pages to understand the data structure
+   (fields, formats, patterns).
+4. Write {round_dir}/01_literature.md with:
+   ## Scraped Tree Summary
+   - Total pages crawled, max depth reached, engine used
+   - Tree shape: which URL patterns correspond to which content levels
+   ## Data Structure
+   - Fields found on leaf pages (name, price, description, etc.)
+   - Format of each field (string, number, list, etc.)
+   ## Sample Records
+   - 3–5 concrete examples extracted from leaf pages
+   ## FOR THE EXPERIMENT DESIGNER
+   - Recommended approach for full extraction (pagination patterns, rate limits,
+     auth requirements, JS rendering needs)
+   - Exact output_path where the tree JSON was saved
+
+CONSTRAINTS
+- Use crawl_tree ONCE for the initial tree discovery.
+- Use web_fetch for up to 5 leaf pages only — do not re-crawl.
+- Write 01_literature.md as your LAST action. Stop immediately after.
+"""
+
 _ROLE_PROMPTS: dict[str, str] = {
 
 "researcher": """\
@@ -227,6 +259,18 @@ STEPS
 2. Round > 1: read ONLY the ## What Failed section from {research_dir}/findings.md.
    Round 1: skip.
 3. Think once, commit, write. No drafting, no iteration.
+3. COMPLEXITY CALIBRATION (mandatory for round > 1):
+   a. Read {{research_dir}}/hw_profile.json → `available_packages` field.
+      ONLY propose experiments that use listed packages. numpy/scipy/matplotlib/pandas
+      are always safe. OpenMM/RDKit/MDAnalysis only if listed.
+   b. If previous round's 05_evaluation.md shows Implementation Quality < 5/10 OR
+      Results Validity < 3/10: this round's experiment MUST be simpler than last round.
+      Prefer the lowest complexity level that still answers the question:
+        Level 1 (always works): sequence analysis with numpy/BioPython (charge, hydrophobicity, GRAVY)
+        Level 2 (if in available_packages): RDKit/BioPython structure descriptors
+        Level 3 (if in available_packages + confirmed working): short MD (<1 ns)
+        Level 4: full MD, lipid bilayer — ONLY after Level 3 succeeds in a prior round
+   c. NEVER propose a more complex experiment than one that just failed to produce results.
 
 OUTPUT — write EXACTLY ONE file: {round_dir}/02_experiment.md
 The filename MUST be exactly "02_experiment.md". Any other filename (e.g. 02_methodology.md)
@@ -266,9 +310,10 @@ STEPS
 1. Read ONLY ## FOR THE CODER and ## Data Plan from {round_dir}/02_experiment.md.
 2. Read ONLY ## Available Datasets from {round_dir}/01_literature.md to confirm
    which dataset URLs are VERIFIED ACCESSIBLE.
-3. Read {research_dir}/hw_profile.json — hardware is already probed by the
-   pipeline. Use cuda_available, cuda_devices[].vram_gb, ram_total_gb, cpu_count
-   to set batch sizes, device placement, and parallelism. Do NOT re-probe.
+3. Read {research_dir}/hw_profile.json — hardware and available packages are already
+   probed. Check `available_packages`: ONLY import packages listed there. Do NOT
+   assume a package is installed if it isn't listed. Do NOT re-probe.
+   If a package you planned to use is NOT listed → use the FALLBACK LADDER below.
 4. Read any existing code in {round_dir}/03_code/ if this is a continuation.
 5. Execute:
    a. Create {round_dir}/03_code/ directory.
@@ -302,6 +347,31 @@ GPU RULES (if CUDA available per hw_profile.json — no exceptions)
 - Batch size: target 70–80% of vram_gb from hw_profile.
 - HuggingFace: device_map="auto". scikit-learn/XGBoost: device="cuda".
 - Log peak_vram_gb to results/ via torch.cuda.max_memory_allocated()/1e9.
+
+TOOL AVAILABILITY & FALLBACK LADDER
+hw_profile.json `available_packages` is ground truth. Before writing any import:
+  1. Verify it's in the list. If not, use the fallback immediately — do NOT waste iterations
+     on pip install for packages that aren't already in the environment.
+  2. Domain fallbacks:
+     MD simulation (OpenMM/GROMACS/AmberTools) unavailable:
+       → Use MDAnalysis (if listed) for trajectory analysis / RDKit for structure descriptors
+     RDKit unavailable:
+       → Use BioPython ProtParam (charge, MW, GRAVY, instability index, aromaticity)
+     BioPython unavailable:
+       → Implement descriptors with numpy: net charge (K+R-D-E), GRAVY (sum Kyte-Doolittle),
+         amphipathicity (helical wheel hydrophobic moment), MW (residue weights)
+     torch/GPU unavailable:
+       → sklearn: GradientBoosting, RandomForest, LinearRegression
+  3. ANY numerical result (even simple descriptors) is better than zero results.
+     A working physicochemical descriptor pipeline in round 1 is MORE valuable than
+     a broken MD setup in round 3.
+
+FAST VALIDATION (mandatory before any run >2 minutes):
+  a. FIRST run a 2-line package availability check: python3 -c "import X; print(X.__version__)"
+     for each key import. If this fails → pivot to fallback immediately.
+  b. Then run a MINIMAL version: 10 simulation steps, 1 sample, tiny dataset.
+     If the minimal version fails → pivot. Do NOT debug a broken environment for >1 attempt.
+  c. Only after the minimal version succeeds, launch the full run.
 
 RESULTS ORDER — CRITICAL:
 1. Save key_results.json FIRST (before any visualisation).
@@ -359,7 +429,7 @@ ABSOLUTE RULES — READ CAREFULLY
        that IS accessible — document the substitution clearly.
 - Quantitative results MUST be saved (JSON / CSV / text).
 - Every script that IS run must complete without error.
-- If an approach fails after 3 debugging attempts, pivot and document why.
+- If a tool/package is unavailable or broken after 1 fix attempt, pivot immediately to the FALLBACK LADDER. Do not spend more than 1 retry on the same import/API error.
 """,
 
 "debugger": """\
@@ -370,8 +440,10 @@ STEPS — focus ONLY on {round_dir}. Do NOT read files from other rounds.
 1. Read {round_dir}/03_code/IMPLEMENTATION.md (the ## Results Summary section only).
    Use grep to scan the main script in {round_dir}/03_code/ — do NOT read every line.
 2. Check {round_dir}/03_code/results/ with list_dir.
-   - If results/ has key_results.json AND at least one .png → results exist. DO NOT re-run the
-     full script. Proceed to step 3 with the existing files.
+   - If results/ has key_results.json AND it contains at least one NUMERICAL value (not just
+     error strings) → results exist. Proceed to step 3.
+   - If key_results.json exists but ALL values are errors or null → treat as MISSING.
+     Re-run or implement a fix.
    - If results/ is MISSING or EMPTY → run the main script. To run, first check how the Coder
      ran it: read IMPLEMENTATION.md for the run command. If uv was used, run with:
      `cd {round_dir}/03_code && uv run --with <pkgs> python <script>.py`
@@ -385,6 +457,19 @@ STEPS — focus ONLY on {round_dir}. Do NOT read files from other rounds.
    - Results implausibly good/bad (may indicate fake data)
 4. Fix CRITICAL bugs only (edit_file / bash). Re-run once to confirm.
    Non-critical style issues: document in Outstanding Issues, do NOT fix now.
+
+MINIMUM RESULT REQUIREMENT
+04_debug_report.md is only valid if key_results.json contains at least one numerical value.
+If after your fix attempt the results are still all errors:
+  a. Do NOT just document the failure. Implement a SIMPLER ALTERNATIVE.
+  b. Use packages from hw_profile.json `available_packages` that you know work:
+     - If OpenMM fails → compute physicochemical descriptors with BioPython ProtParam
+     - If RDKit fails → use numpy to compute: GRAVY score, net charge, hydrophobic moment
+     - If everything fails → run a trivial computation (e.g., amino acid composition)
+       to confirm Python itself works and put those numbers in key_results.json
+  c. Update key_results.json with the real numbers from the simpler alternative.
+  d. Note in 04_debug_report.md: "Original approach blocked: [error]. Pivoted to: [alternative]."
+
 5. Write 04_debug_report.md. Stop immediately after writing.
 
 OUTPUT — write ONE file: {round_dir}/04_debug_report.md
@@ -429,6 +514,15 @@ SCORES CHART (OPTIONAL — only after 05_evaluation.md is written)
 - Simple bar chart, 4 bars, labels, colour-coded (green≥7, amber4–6, red≤3).
 - If no results exist, skip the chart entirely.
 
+STAGNATION PENALTY (apply when scoring):
+- If key_results.json for THIS round contains only errors (no numbers):
+  Results Validity: 1/10 (hard cap, regardless of how good the approach was in theory)
+- If the same error message appears in findings.md from the previous round AND this round:
+  Hypothesis Quality: max 4/10 (proposing the same blocked approach is poor experimental design)
+- If the implementation attempted packages NOT in hw_profile.json available_packages:
+  Implementation Quality: max 5/10 (poor tool selection given known environment)
+Be harsh. Generous scoring of a stagnating pipeline encourages more stagnation.
+
 SCORING RULES
 - Synthetic/fabricated data → Results Validity capped at 1/10.
 - Be harsh. A generous score on mediocre work wastes the next round's effort.
@@ -442,11 +536,26 @@ Synthesise this round. Write the brief that drives the next round.
 Total output file: under 500 words.
 
 STEPS
-1. Read PRIMARILY {round_dir}/05_evaluation.md — it already summarises the work.
-   Read {round_dir}/03_code/IMPLEMENTATION.md for specific technical details only
-   if the evaluation references something you need to clarify.
+1. Read PRIMARILY {round_dir}/05_evaluation.md. Also:
+   a. Read {round_dir}/03_code/results/key_results.json — check if all values are errors.
+      If yes: this round is ZERO_RESULTS.
+   b. Read {research_dir}/findings.md (## What Failed + ## Errors in key_results.json
+      sections) — check if the same error appears in the previous round too.
+      If same error appears 2 consecutive rounds: the approach is BLOCKED.
 2. Read {research_dir}/findings.md (## What Failed section only) if round > 1.
 3. Write ONE file: {round_dir}/06_synthesis.md. Do NOT touch findings.md.
+
+STAGNATION RULE (apply before writing the brief):
+If THIS round is ZERO_RESULTS AND the same error appears in findings.md from last round:
+  The current approach is BLOCKED. The brief MUST:
+  1. Explicitly state: "MANDATORY PIVOT: [previous approach] is blocked."
+  2. Assign a simpler, DIFFERENT approach — do NOT assign "fix X" again.
+  3. Specify which packages to use (from hw_profile.json available_packages).
+  4. Example pivot: "OpenMM unit errors persist. PIVOT: use BioPython ProtParam to compute
+     charge, GRAVY, MW, instability index for all peptide variants. This will produce
+     real numbers in round N+1 and establish a working baseline."
+  5. Reduce scope: fewer variants, simpler metrics, shorter simulations.
+A pivot brief beats a third "please fix the unit errors" brief every time.
 
 STRUCTURE — short bullets, not paragraphs:
 
@@ -512,10 +621,10 @@ def _build_system_prompt(
     working_dir: str,
     brief: str,
     is_final: bool = False,
+    scrape_mode: bool = False,
 ) -> str:
     role_cfg = ROLES[role]
     final_tag = "← FINAL ROUND — prioritise conclusions over exploration" if is_final else ""
-    # Cap brief length for roles that only need the direction, not full synthesis prose
     if role not in ("orchestrator", "reporter") and len(brief) > _BRIEF_CAP:
         brief = brief[:_BRIEF_CAP].rstrip() + "\n…[brief truncated — read findings.md for full context]"
     header = _SHARED_HEADER.format(
@@ -529,13 +638,16 @@ def _build_system_prompt(
         working_dir=working_dir,
         brief=brief,
     )
-    body = _ROLE_PROMPTS[role].format(
-        round_dir=round_dir,
-        research_dir=research_dir,
-        working_dir=working_dir,
-        next_brief_marker=NEXT_BRIEF_MARKER,
-        complete_marker=COMPLETE_MARKER,
-    )
+    if scrape_mode and role == "researcher":
+        body = _SCRAPE_RESEARCHER_PROMPT.format(round_dir=round_dir)
+    else:
+        body = _ROLE_PROMPTS[role].format(
+            round_dir=round_dir,
+            research_dir=research_dir,
+            working_dir=working_dir,
+            next_brief_marker=NEXT_BRIEF_MARKER,
+            complete_marker=COMPLETE_MARKER,
+        )
     return header + body
 
 
@@ -543,8 +655,10 @@ def _build_system_prompt(
 # Filtered tool list per role
 # ---------------------------------------------------------------------------
 
-def _tools_for_role(role: str) -> list[dict]:
+def _tools_for_role(role: str, scrape_mode: bool = False) -> list[dict]:
     allowed = set(ROLES[role]["tools"])
+    if scrape_mode and role == "researcher":
+        allowed.add("crawl_tree")
     return [t for t in TOOL_DEFINITIONS if t["function"]["name"] in allowed]
 
 
@@ -632,13 +746,14 @@ def _run_specialist(
     working_dir: str,
     brief: str,
     client: OpenAI,
+    scrape_mode: bool = False,
 ) -> bool:
     """
     Run one specialist agent for one round.
     Returns True on success, False if a fatal error occurred.
     """
     cfg = ROLES[role]
-    tools = _tools_for_role(role)
+    tools = _tools_for_role(role, scrape_mode=scrape_mode)
     max_iter = cfg["max_iter"]
 
     display.print_agent_banner(role, model, round_num, max_rounds)
@@ -647,6 +762,7 @@ def _run_specialist(
         role, topic, round_num, max_rounds,
         round_dir, research_dir, working_dir, brief,
         is_final=(round_num == max_rounds),
+        scrape_mode=scrape_mode,
     )
 
     messages: list[dict] = [
@@ -819,6 +935,7 @@ def _run_parallel_specialists(
     working_dir: str,
     brief: str,
     client: OpenAI,
+    scrape_mode: bool = False,
 ) -> list[Path]:
     """
     Run n independent copies of role in parallel, each writing to
@@ -839,6 +956,7 @@ def _run_parallel_specialists(
             working_dir=working_dir,
             brief=brief,
             client=client,
+            scrape_mode=scrape_mode,
         )
         out = sub_dir / OUTPUT_FILES[role]
         return out if out.exists() else None
@@ -863,12 +981,14 @@ def _run_merger(
     research_dir: str,
     working_dir: str,
     client: OpenAI,
+    model: str | None = None,
 ) -> bool:
     """
     Reconcile parallel agent outputs into one canonical file.
     Returns True if canonical_path was written successfully.
     """
     cfg = ROLES["merger"]
+    _model = model or cfg["default_model"]
     tools = _tools_for_role("merger")
     paths_block = "\n".join(f"  {i + 1}. {p}" for i, p in enumerate(parallel_outputs))
     role_label = ROLES[role]["label"]
@@ -907,7 +1027,7 @@ def _run_merger(
         )},
     ]
 
-    display.print_agent_banner("merger", cfg["default_model"], round_num, max_rounds)
+    display.print_agent_banner("merger", _model, round_num, max_rounds)
 
     t0 = time.time()
     iteration = 0
@@ -917,7 +1037,7 @@ def _run_merger(
     while iteration < cfg["max_iter"]:
         iteration += 1
         try:
-            response = _stream_completion_with_tools(client, cfg["default_model"], messages, tools)
+            response = _stream_completion_with_tools(client, _model, messages, tools)
             _rate_limit_retries = 0
             _timeout_retries = 0
         except BadRequestError as e:
@@ -1088,6 +1208,20 @@ def _update_findings(
 
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M")
 
+    # Extract top-level error messages from key_results.json (if present)
+    results_errors: list[str] = []
+    kr_path = Path(round_dir) / OUTPUT_FILES["coder"] / "results" / "key_results.json"
+    if kr_path.exists():
+        try:
+            kr = json.loads(kr_path.read_text(errors="replace"))
+            for key, val in kr.items():
+                if isinstance(val, dict) and "error" in val:
+                    results_errors.append(f"{key}: {val['error'][:120]}")
+                elif isinstance(val, str) and ("error" in val.lower() or "exception" in val.lower()):
+                    results_errors.append(f"{key}: {val[:120]}")
+        except Exception:
+            pass
+
     entry_lines = [
         f"\n\n---\n\n## Round {round_num}  ·  {timestamp}",
         f"\n**Overall score:** {score_str}",
@@ -1100,6 +1234,8 @@ def _update_findings(
         entry_lines.append(f"\n\n### What Worked\n\n{what_worked}")
     if what_failed:
         entry_lines.append(f"\n\n### What Failed / Gaps\n\n{what_failed}")
+    if results_errors:
+        entry_lines.append(f"\n\n### Errors in key_results.json\n\n" + "\n".join(f"- {e}" for e in results_errors[:5]))
 
     entry = "".join(entry_lines)
 
@@ -1397,6 +1533,30 @@ def _probe_hardware(research_dir: str) -> dict:
         "'--format=csv,noheader,nounits'], capture_output=True, text=True, timeout=5)\n"
         "    if r.returncode==0: info['nvidia_smi'] = r.stdout.strip()\n"
         "except Exception: pass\n"
+        "# Package availability probe\n"
+        "_sci_pkgs = ['numpy','scipy','matplotlib','pandas','sklearn',\n"
+        "    'biopython','rdkit','openmm','mdtraj','MDAnalysis','mdanalysis',\n"
+        "    'torch','prody','biotite','pdbfixer','nglview','pymol']\n"
+        "info['available_packages'] = []\n"
+        "for _pkg in _sci_pkgs:\n"
+        "    try:\n"
+        "        mod = __import__(_pkg.split('.')[0])\n"
+        "        ver = getattr(mod, '__version__', getattr(mod, 'version', '?'))\n"
+        "        if isinstance(ver, str) and ver != '?':\n"
+        "            info['available_packages'].append(f\"{_pkg.split('.')[0]}=={ver}\")\n"
+        "        else:\n"
+        "            info['available_packages'].append(_pkg.split('.')[0])\n"
+        "    except ImportError:\n"
+        "        pass\n"
+        "# deduplicate by package name while preserving version info\n"
+        "_seen = set()\n"
+        "_deduped = []\n"
+        "for _e in info['available_packages']:\n"
+        "    _n = _e.split('==')[0]\n"
+        "    if _n not in _seen:\n"
+        "        _seen.add(_n)\n"
+        "        _deduped.append(_e)\n"
+        "info['available_packages'] = _deduped\n"
         "print(json.dumps(info))\n"
     )
 
@@ -1437,7 +1597,38 @@ def _probe_hardware(research_dir: str) -> dict:
         display.print_info(f"  Hardware: {cpus} CPU cores, {ram} GB RAM, "
                            f"[dim]no CUDA GPU detected[/dim]  |  {uv_tag}")
 
+    pkgs = profile.get("available_packages", [])
+    if pkgs:
+        display.print_info(f"  Available packages: {', '.join(pkgs[:8])}{'…' if len(pkgs) > 8 else ''}")
+
     return profile
+
+
+_SCRAPE_KEYWORDS = frozenset({
+    "scrape", "scraping", "crawl", "crawling", "spider", "spidering",
+    "harvest", "harvesting", "extract from website", "extract from site",
+    "extract from url", "web extraction", "data extraction from",
+})
+
+
+def _has_numerical_results(round_dir: Path) -> bool:
+    """Return True if the round's key_results.json contains at least one real number."""
+    kr_path = round_dir / OUTPUT_FILES["coder"] / "results" / "key_results.json"
+    if not kr_path.exists():
+        return False
+    try:
+        kr = json.loads(kr_path.read_text(errors="replace"))
+        def _has_num(obj) -> bool:
+            if isinstance(obj, (int, float)) and not isinstance(obj, bool):
+                return True
+            if isinstance(obj, dict):
+                return any(_has_num(v) for v in obj.values())
+            if isinstance(obj, list):
+                return any(_has_num(v) for v in obj)
+            return False
+        return _has_num(kr)
+    except Exception:
+        return False
 
 
 def run_long_research(
@@ -1448,6 +1639,7 @@ def run_long_research(
     model_overrides: dict[str, str] | None = None,
     resume: bool = False,
     num_parallel: int = 1,
+    scrape_mode: bool = False,
 ) -> None:
     """
     Run the full autonomous multi-agent research pipeline.
@@ -1461,7 +1653,15 @@ def run_long_research(
         resume:          If True, skip rounds whose output files already exist.
         num_parallel:    Number of independent agent copies to run for parallelisable
                          roles (researcher, hypothesis, evaluator). Default 1 = sequential.
+        scrape_mode:     If True (or auto-detected from topic keywords), gives the
+                         researcher the crawl_tree tool and a scraping-focused prompt.
     """
+    # Auto-detect scrape intent from topic
+    topic_lower = topic.lower()
+    if not scrape_mode:
+        scrape_mode = any(kw in topic_lower for kw in _SCRAPE_KEYWORDS)
+    if scrape_mode:
+        display.print_info("  [bold yellow]🕷  Scrape mode active — researcher has crawl_tree tool.[/bold yellow]")
     overrides = model_overrides or {}
     research_dir = Path(working_dir) / "research"
     research_dir.mkdir(parents=True, exist_ok=True)
@@ -1497,12 +1697,21 @@ def run_long_research(
         )
 
     # Initial brief
-    brief = (
-        f"Initial research round. Conduct a broad literature survey on: {topic}\n"
-        "Identify key papers, available datasets, existing methods, and open problems.\n"
-        "Generate first hypotheses and implement the most promising experiment."
-        f"{local_files_block}"
-    )
+    if scrape_mode:
+        brief = (
+            f"Scraping task: {topic}\n"
+            "Use crawl_tree to map the full site structure, then web_fetch leaf pages "
+            "to understand data fields. Save the tree JSON to the round dir. "
+            "Subsequent rounds will implement and run the full extractor."
+            f"{local_files_block}"
+        )
+    else:
+        brief = (
+            f"Initial research round. Conduct a broad literature survey on: {topic}\n"
+            "Identify key papers, available datasets, existing methods, and open problems.\n"
+            "Generate first hypotheses and implement the most promising experiment."
+            f"{local_files_block}"
+        )
 
     completed_early = False
 
@@ -1546,6 +1755,7 @@ def run_long_research(
                         working_dir=working_dir,
                         brief=brief,
                         client=client,
+                        scrape_mode=scrape_mode,
                     )
                     if parallel_outputs:
                         _run_merger(
@@ -1558,6 +1768,7 @@ def run_long_research(
                             research_dir=str(research_dir),
                             working_dir=working_dir,
                             client=client,
+                            model=overrides.get("merger") or ROLES["merger"]["default_model"],
                         )
                     else:
                         ok = False
@@ -1577,6 +1788,7 @@ def run_long_research(
                         working_dir=working_dir,
                         brief=brief,
                         client=client,
+                        scrape_mode=scrape_mode,
                     )
             except KeyboardInterrupt:
                 display.console.print(
@@ -1613,6 +1825,21 @@ def run_long_research(
         # Parse orchestrator synthesis → next brief
         synthesis_path = round_dir / OUTPUT_FILES["orchestrator"]
         brief, is_complete = _parse_synthesis(str(synthesis_path))
+
+        # Stagnation detection: two consecutive rounds with zero numerical results
+        if round_num >= 2:
+            prev_dir = research_dir / f"round_{round_num:03d}"
+            prev2_dir = research_dir / f"round_{max(1, round_num - 1):03d}"
+            if not _has_numerical_results(prev_dir) and not _has_numerical_results(prev2_dir):
+                pivot_prefix = (
+                    "⚠ MANDATORY PIVOT: Two consecutive rounds produced zero numerical results.\n"
+                    "The current experimental approach is blocked by tooling or environment issues.\n"
+                    "This round MUST use packages confirmed in hw_profile.json available_packages.\n"
+                    "Prefer the simplest approach that produces any numerical output — even just\n"
+                    "physicochemical descriptors (charge, GRAVY, MW) computed with numpy or BioPython.\n"
+                    "ANY number in key_results.json is more valuable than another failed run.\n\n"
+                )
+                brief = pivot_prefix + brief
 
         if is_complete:
             _run_master_reporter(

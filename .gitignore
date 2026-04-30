@@ -54,8 +54,9 @@ coverage.xml
 ._*
 
 # OctoSlave runtime data
-research/          # generated research output (often large)
-~/.octoslave/      # user config — never commit API keys
+research/
+octoslave_deploy/
+# user config lives in ~/.octoslave/ — never commit API keys
 
 # Secrets / credentials (extra safety net)
 .env

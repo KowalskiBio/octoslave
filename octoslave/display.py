@@ -413,34 +413,64 @@ def print_local_research_assignment(assignment: dict[str, str]):
     )
 
 
+def print_role_models_config(backend: str, effective: dict, custom: dict):
+    """Show current per-role model assignments and which ones are customised."""
+    from rich.table import Table
+    console.print()
+    console.print(
+        f"[bold white]Research role models[/bold white]  "
+        f"[dim](backend: {backend})[/dim]"
+    )
+    table = Table(show_header=True, header_style="bold dim", box=None, padding=(0, 2))
+    table.add_column("Role", style="bold cyan", min_width=14)
+    table.add_column("Model", style="")
+    table.add_column("", style="dim")
+    for role, model in effective.items():
+        flag = "[yellow]custom[/yellow]" if role in custom else "[dim]default[/dim]"
+        table.add_row(role, model, flag)
+    console.print(table)
+    console.print(
+        "[dim]  /research-roles <role> <model>   — set a custom model for a role[/dim]\n"
+        "[dim]  /research-roles reset             — clear all custom overrides[/dim]\n"
+    )
+
+
 def print_help():
     console.print(Panel(
         "[bold white]Slash commands[/bold white]\n\n"
-        "  [cyan]/model [NAME][/cyan]         Switch model (or list if no name given)\n"
-        "  [cyan]/dir [PATH][/cyan]           Change working directory\n"
-        "  [cyan]/profile [NAME][/cyan]       Switch prompt profile (base/coder/analyst/biomedic)\n"
-        "  [cyan]/permission [MODE][/cyan]    Switch permission mode (autonomous/controlled)\n"
-        "  [cyan]/verbose[/cyan]              Toggle verbose mode (show full diffs & output live)\n"
-        "  [cyan]/clear[/cyan]                Clear screen and conversation history\n"
-        "  [cyan]/compact[/cyan]              Summarise history to save context\n"
-        "  [cyan]/long-research TOPIC[/cyan]  Launch multi-agent research pipeline\n"
-        "  [cyan]/help[/cyan]                 Show this help\n"
-        "  [cyan]/exit[/cyan]                 Quit  (also Ctrl+D)\n\n"
+        "  [cyan]/model [NAME][/cyan]           Switch model (or list if no name given)\n"
+        "  [cyan]/dir [PATH][/cyan]             Change working directory\n"
+        "  [cyan]/profile [NAME][/cyan]         Switch prompt profile (base/coder/analyst/biomedic)\n"
+        "  [cyan]/permission [MODE][/cyan]      Switch permission mode (autonomous/controlled)\n"
+        "  [cyan]/verbose[/cyan]                Toggle verbose mode (show full diffs & output live)\n"
+        "  [cyan]/clear[/cyan]                  Clear screen and conversation history\n"
+        "  [cyan]/compact[/cyan]                Summarise history to save context\n"
+        "  [cyan]/long-research TOPIC[/cyan]    Launch multi-agent research pipeline\n"
+        "  [cyan]/research-roles[/cyan]         View/set per-role models for research pipeline\n"
+        "  [cyan]/help[/cyan]                   Show this help\n"
+        "  [cyan]/exit[/cyan]                   Quit  (also Ctrl+D)\n\n"
         "[bold white]Backend switching:[/bold white]\n"
-        "  [cyan]/local [MODEL][/cyan]        Switch to local Ollama models\n"
-        "  [cyan]/einfra[/cyan]               Switch to e-INFRA CZ\n"
-        "  [cyan]/nim [MODEL][/cyan]          Switch to NVIDIA NIM\n"
-        "  [cyan]/pull MODEL[/cyan]           Pull a new Ollama model\n\n"
+        "  [cyan]/local [MODEL][/cyan]          Switch to local Ollama models\n"
+        "  [cyan]/einfra[/cyan]                 Switch to e-INFRA CZ\n"
+        "  [cyan]/nim [MODEL][/cyan]            Switch to NVIDIA NIM\n"
+        "  [cyan]/pull MODEL[/cyan]             Pull a new Ollama model\n\n"
         "[bold white]Permission modes:[/bold white]\n"
         "  [cyan]autonomous[/cyan]  — work without asking (default)\n"
         "  [cyan]controlled[/cyan]  — ask before file edits or commands\n"
         "  [cyan]supervised[/cyan]  — ask before file edits, auto-allow commands\n\n"
         "[bold white]/long-research flags:[/bold white]\n"
-        "  [cyan]--rounds N[/cyan]            Number of research rounds (default 5)\n"
-        "  [cyan]--overseer MODEL[/cyan]      Model for orchestrator (default mistral-small-4)\n"
-        "  [cyan]--all MODEL[/cyan]           Use one model for all agents\n"
-        "  [cyan]--resume[/cyan]              Resume an interrupted run\n"
+        "  [cyan]--rounds N[/cyan]              Number of research rounds (default 5)\n"
+        "  [cyan]--parallel N[/cyan]            Run N parallel copies of researcher/hypothesis/evaluator\n"
+        "  [cyan]--overseer MODEL[/cyan]        Model for orchestrator\n"
+        "  [cyan]--all MODEL[/cyan]             Use one model for all agents\n"
+        "  [cyan]--role ROLE MODEL[/cyan]       Override model for a specific role\n"
+        "  [cyan]--resume[/cyan]                Resume an interrupted run\n"
+        "  [cyan]--scrape[/cyan]                Scrape mode: crawl website tree\n"
         "  [dim](local mode: up to 3 pulled models auto-assigned across roles)[/dim]\n\n"
+        "[bold white]/research-roles usage:[/bold white]\n"
+        "  [cyan]/research-roles[/cyan]                   Show current role assignments\n"
+        "  [cyan]/research-roles coder qwen3-coder[/cyan]  Set model for a specific role\n"
+        "  [cyan]/research-roles reset[/cyan]              Reset to backend defaults\n\n"
         "[dim]Output per round: plots → 03_code/results/, HTML report → 07_report.html[/dim]\n"
         "[dim]Final master report: research/final_report.html  (open in browser)[/dim]\n\n"
         "[dim]Ctrl+C  pause current agent (progress saved)[/dim]",
