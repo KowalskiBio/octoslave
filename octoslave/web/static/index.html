@@ -76,6 +76,7 @@
     </button>
     <div class="sidebar-status">
       <div class="status-dot" id="conn-dot" title="Disconnected"></div>
+      <span class="backend-pill" id="backend-pill" data-backend="einfra">einfra</span>
       <span class="model-tag" id="model-badge">—</span>
     </div>
   </div>
@@ -90,6 +91,12 @@
   <!-- ── TAB: CHAT ──────────────────────────────────────────── -->
   <div class="tab-pane active" id="tab-chat">
     <div class="chat-config-bar">
+      <select id="backend-select" class="backend-select" title="Provider / Backend" data-backend="einfra">
+        <option value="einfra">e-INFRA CZ</option>
+        <option value="ollama">Local (Ollama)</option>
+        <option value="nim">NVIDIA NIM</option>
+      </select>
+      <div class="config-divider"></div>
       <select id="chat-model-select" title="Model">
         <option value="">Loading models…</option>
       </select>
@@ -321,12 +328,20 @@
       </div>
 
       <div class="settings-field">
-        <label>API Key</label>
+        <label>Active Backend</label>
+        <input type="text" id="settings-backend" placeholder="—" readonly>
+      </div>
+      <div class="settings-field">
+        <label>e-INFRA CZ API Key</label>
         <input type="password" id="settings-api-key" placeholder="not set" readonly>
       </div>
       <div class="settings-field">
-        <label>Base URL</label>
+        <label>e-INFRA CZ Base URL</label>
         <input type="text" id="settings-base-url" placeholder="—" readonly>
+      </div>
+      <div class="settings-field">
+        <label>NVIDIA NIM API Key</label>
+        <input type="password" id="settings-nim-api-key" placeholder="not set" readonly>
       </div>
       <div class="settings-field">
         <label>Default Model</label>
@@ -343,7 +358,7 @@
 
 </main>
 
-<script type="module" src="/static/js/app.js?v=20260427b"></script>
+<script type="module" src="/static/js/app.js?v=20260429"></script>
 
 </body>
 </html>

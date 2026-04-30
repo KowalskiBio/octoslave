@@ -2,8 +2,8 @@
  * OctoSlave Web UI - Slash Command Handling
  */
 
-import { sendMsg } from './websocket.js?v=20260427';
-import { scrollToBottom } from './utils.js?v=20260427';
+import { sendMsg } from './websocket.js?v=20260429';
+import { scrollToBottom } from './utils.js?v=20260429';
 
 /**
  * Handle slash commands - returns true if command was handled
@@ -131,11 +131,20 @@ export function handleSlashCommand(text) {
       appendChatInfo('🔄 Switching to local Ollama mode...\n' +
         '[dim]Use the UI or run `/pull <model>` first if you haven\'t pulled any models.[/dim]');
       sendMsg({ type: 'switch_backend', backend: 'ollama', model: arg || undefined });
+      { const s = document.getElementById('backend-select'); if (s) { s.value = 'ollama'; s.dataset.backend = 'ollama'; } }
       return true;
-      
+
     case '/einfra':
       appendChatInfo('🔄 Switching to e-INFRA CZ backend...');
       sendMsg({ type: 'switch_backend', backend: 'einfra' });
+      { const s = document.getElementById('backend-select'); if (s) { s.value = 'einfra'; s.dataset.backend = 'einfra'; } }
+      return true;
+
+    case '/nim':
+      appendChatInfo('🔄 Switching to NVIDIA NIM backend...');
+      sendMsg({ type: 'switch_backend', backend: 'nim', model: arg || undefined });
+      { const s = document.getElementById('backend-select'); if (s) { s.value = 'nim'; s.dataset.backend = 'nim'; } }
+      setTimeout(() => sendMsg({ type: 'list_models' }), 600);
       return true;
       
     case '/pull':

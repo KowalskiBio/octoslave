@@ -16,8 +16,10 @@ from .agent import make_client, run_agent, continue_agent
 from .research import run_long_research, ROLES as RESEARCH_ROLES
 from .config import (
     KNOWN_MODELS, DEFAULT_MODEL, BASE_URL, OLLAMA_BASE_URL,
+    NIM_BASE_URL, NIM_DEFAULT_MODEL, NIM_KNOWN_MODELS,
     load_config, save_config,
     ollama_is_running, ollama_list_models, ollama_pull_model,
+    nim_list_models,
     assign_local_models,
 )
 
@@ -122,7 +124,7 @@ def run(task, model, working_dir, api_key, base_url, local, prompt_profile, inte
         saved_cfg = load_config()
         cfg["permission_mode"] = saved_cfg.get("permission_mode", "autonomous")
     
-    display.print_header(cfg["model"], cfg["working_dir"], local=cfg["backend"] == "ollama")
+    display.print_header(cfg["model"], cfg["working_dir"], backend=cfg["backend"])
     
     # Show permission mode in header
     if cfg["permission_mode"] == "autonomous":
@@ -152,58 +154,68 @@ def run(task, model, working_dir, api_key, base_url, local, prompt_profile, inte
 
 @cli.command()
 @click.option("--api-key", default=None)
+@click.option("--nim-api-key", default=None, help="NVIDIA NIM API key")
 @click.option("--model", default=None)
 @click.option("--base-url", default=None)
 @click.option("--ollama-url", default=None, help="Ollama base URL (default: http://localhost:11434/v1)")
-@click.option("--permission-mode", default=None, 
+@click.option("--nim-url", default=None, help="NVIDIA NIM base URL (default: https://integrate.api.nvidia.com/v1)")
+@click.option("--permission-mode", default=None,
               type=click.Choice(["autonomous", "controlled", "supervised"]),
               help="Permission mode: autonomous (default), controlled (ask before all edits), or supervised (ask before file edits only)")
 @click.option("--show", is_flag=True, help="Show current config")
-def config(api_key, model, base_url, ollama_url, permission_mode, show):
-    """Configure API key, default model, base URL, Ollama settings, and permission mode."""
+def config(api_key, nim_api_key, model, base_url, ollama_url, nim_url, permission_mode, show):
+    """Configure API key, default model, base URL, Ollama/NIM settings, and permission mode."""
     current = load_config()
 
     if show:
         key = current.get("api_key", "")
         masked = (key[:8] + "…" + key[-4:]) if len(key) > 12 else ("set" if key else "not set")
+        nim_key = current.get("nim_api_key", "")
+        nim_masked = (nim_key[:8] + "…" + nim_key[-4:]) if len(nim_key) > 12 else ("set" if nim_key else "not set")
         backend = current.get("backend", "einfra")
         perm_mode = current.get("permission_mode", "autonomous")
-        display.console.print(f"[bold]backend[/bold]      : {backend}")
-        display.console.print(f"[bold]api_key[/bold]      : {masked}")
-        display.console.print(f"[bold]base_url[/bold]     : {current.get('base_url')}")
-        display.console.print(f"[bold]default_model[/bold]: {current.get('default_model')}")
-        display.console.print(f"[bold]ollama_url[/bold]   : {current.get('ollama_url', OLLAMA_BASE_URL)}")
+        display.console.print(f"[bold]backend[/bold]        : {backend}")
+        display.console.print(f"[bold]api_key[/bold]        : {masked}")
+        display.console.print(f"[bold]base_url[/bold]       : {current.get('base_url')}")
+        display.console.print(f"[bold]default_model[/bold]  : {current.get('default_model')}")
+        display.console.print(f"[bold]ollama_url[/bold]     : {current.get('ollama_url', OLLAMA_BASE_URL)}")
+        display.console.print(f"[bold]nim_api_key[/bold]    : {nim_masked}")
+        display.console.print(f"[bold]nim_url[/bold]        : {current.get('nim_url', NIM_BASE_URL)}")
         display.console.print(f"[bold]permission_mode[/bold]: {perm_mode}")
         if backend == "ollama":
             running = ollama_is_running(current.get("ollama_url", OLLAMA_BASE_URL))
             pulled = ollama_list_models(current.get("ollama_url", OLLAMA_BASE_URL))
             status = "[bold green]running[/bold green]" if running else "[bold red]not running[/bold red]"
-            display.console.print(f"[bold]ollama status[/bold]: {status}")
+            display.console.print(f"[bold]ollama status[/bold] : {status}")
             if pulled:
-                display.console.print("[bold]pulled models[/bold]:")
+                display.console.print("[bold]pulled models[/bold] :")
                 for m in pulled:
                     display.console.print(f"  {m}")
         return
 
     new_key = api_key or current.get("api_key", "")
+    new_nim_key = nim_api_key or current.get("nim_api_key", "")
     new_url = base_url or current.get("base_url", BASE_URL)
     new_model = model or current.get("default_model", DEFAULT_MODEL)
     new_ollama = ollama_url or current.get("ollama_url", OLLAMA_BASE_URL)
+    new_nim_url = nim_url or current.get("nim_url", NIM_BASE_URL)
     new_backend = current.get("backend", "einfra")
     new_perm_mode = permission_mode or current.get("permission_mode", "autonomous")
 
-    if not any([api_key, model, base_url, ollama_url, permission_mode]):
+    if not any([api_key, nim_api_key, model, base_url, ollama_url, nim_url, permission_mode]):
         display.console.print("[bold]OctoSlave — setup[/bold]\n")
         display.console.print(
             "  [bold]einfra[/bold]  — e-INFRA CZ cloud API  "
             "(requires an API key; best model quality; recommended)\n"
             "  [bold]ollama[/bold]  — local models via Ollama "
             "(no API key; fully private; GPU strongly recommended)\n"
+            "  [bold]nim[/bold]     — NVIDIA NIM cloud API    "
+            "(requires an API key; access to NVIDIA-optimised models)\n"
         )
         new_backend = click.prompt(
             "Backend",
             default=new_backend,
-            type=click.Choice(["einfra", "ollama"]),
+            type=click.Choice(["einfra", "ollama", "nim"]),
         )
 
         if new_backend == "einfra":
@@ -228,6 +240,26 @@ def config(api_key, model, base_url, ollama_url, permission_mode, show):
                 "  Run [bold]ots models[/bold] to see the full list.\n"
             )
             new_model = click.prompt("Default model", default=new_model)
+        elif new_backend == "nim":
+            display.console.print(
+                "\n  Get an API key at [link=https://build.nvidia.com]build.nvidia.com[/link].\n"
+            )
+            new_nim_key = click.prompt(
+                "API key (NVIDIA NIM)",
+                default=new_nim_key,
+                hide_input=True,
+                show_default=False,
+            )
+            new_nim_url = click.prompt("NIM Base URL (leave default unless self-hosting)", default=new_nim_url)
+            display.console.print(
+                "\n  Suggested models:\n"
+                "    [bold]meta/llama-3.3-70b-instruct[/bold]         — fast, strong all-round default\n"
+                "    [bold]meta/llama-3.1-405b-instruct[/bold]        — largest Llama; best quality\n"
+                "    [bold]nvidia/llama-3.1-nemotron-70b-instruct[/bold] — NVIDIA-tuned reasoning\n"
+                "    [bold]deepseek-ai/deepseek-r1[/bold]             — extended chain-of-thought\n"
+                "  Run [bold]ots models[/bold] to see the full list.\n"
+            )
+            new_model = click.prompt("Default model", default=current.get("default_model", NIM_DEFAULT_MODEL))
         else:
             new_ollama = click.prompt("Ollama URL", default=new_ollama)
             running = ollama_is_running(new_ollama)
@@ -267,10 +299,12 @@ def config(api_key, model, base_url, ollama_url, permission_mode, show):
         )
 
     save_config(
-        new_key, new_url, new_model, 
-        backend=new_backend, 
+        new_key, new_url, new_model,
+        backend=new_backend,
         ollama_url=new_ollama,
         permission_mode=new_perm_mode,
+        nim_api_key=new_nim_key,
+        nim_url=new_nim_url,
     )
     display.console.print("[bold green]Config saved.[/bold green]")
 
@@ -289,6 +323,22 @@ def models(local):
         _print_local_models(cfg.get("ollama_url", OLLAMA_BASE_URL))
         return
 
+    if cfg.get("backend") == "nim":
+        nim_models = nim_list_models(cfg.get("nim_url", NIM_BASE_URL), cfg.get("nim_api_key", ""))
+        if nim_models:
+            display.console.print("[bold]Available models on NVIDIA NIM[/bold] [dim](live from API)[/dim]\n")
+        else:
+            nim_models = list(NIM_KNOWN_MODELS)
+            display.console.print("[bold]Available models on NVIDIA NIM[/bold] [dim](static fallback)[/dim]\n")
+        default = cfg.get("default_model", NIM_DEFAULT_MODEL)
+        for m in nim_models:
+            marker = " [bold green]← default[/bold green]" if m == default else ""
+            display.console.print(f"  {m}{marker}")
+        display.console.print()
+        display.console.print("[dim]Switch with: /model <name>  or  -m <name>[/dim]")
+        display.console.print("[dim]Switch backend: /einfra · /local · /nim[/dim]")
+        return
+
     display.console.print("[bold]Available models on e-INFRA CZ:[/bold]\n")
     default = cfg.get("default_model", DEFAULT_MODEL)
     for m in KNOWN_MODELS:
@@ -297,6 +347,7 @@ def models(local):
     display.console.print()
     display.console.print("[dim]Switch with: /model <name>  or  -m <name>[/dim]")
     display.console.print("[dim]Use local Ollama models: /local  or  --local flag[/dim]")
+    display.console.print("[dim]Use NVIDIA NIM: /nim[/dim]")
 
 
 def _print_local_models(ollama_url: str):
@@ -345,11 +396,12 @@ def _interactive(ctx_obj: dict):
     if not is_local and not cfg["api_key"]:
         display.print_error(
             "No API key configured. Run `ots config` or set OCTOSLAVE_API_KEY.\n"
-            "For local models: `ots --local` or `/local` in session."
+            "For local models: `ots --local` or `/local` in session.\n"
+            "For NVIDIA NIM: run `ots config` and choose the nim backend."
         )
         sys.exit(1)
 
-    display.print_welcome(cfg["model"], cfg["working_dir"], local=is_local)
+    display.print_welcome(cfg["model"], cfg["working_dir"], backend=cfg["backend"])
     
     # Show permission mode
     if cfg["permission_mode"] == "autonomous":
@@ -377,13 +429,15 @@ def _repl_loop(client, cfg: dict, messages: list[dict]):
     )
 
     state = {
-        "model":       cfg["model"],
-        "working_dir": cfg["working_dir"],
-        "backend":     cfg["backend"],
-        "ollama_url":  cfg.get("ollama_url", OLLAMA_BASE_URL),
-        "api_key":     cfg.get("api_key", ""),
-        "base_url":    cfg.get("base_url", BASE_URL),
-        "prompt_profile": cfg.get("prompt_profile", "base"),
+        "model":        cfg["model"],
+        "working_dir":  cfg["working_dir"],
+        "backend":      cfg["backend"],
+        "ollama_url":   cfg.get("ollama_url", OLLAMA_BASE_URL),
+        "api_key":      cfg.get("api_key", ""),
+        "base_url":     cfg.get("base_url", BASE_URL),
+        "nim_api_key":  cfg.get("nim_api_key", ""),
+        "nim_url":      cfg.get("nim_url", NIM_BASE_URL),
+        "prompt_profile":  cfg.get("prompt_profile", "base"),
         "permission_mode": cfg.get("permission_mode", "autonomous"),
         "verbose": cfg.get("verbose", False),
     }
@@ -455,7 +509,7 @@ def _handle_slash(cmd: str, state: dict, cfg: dict, messages: list, client) -> s
     if name == "/clear":
         display.console.clear()
         display.print_welcome(state["model"], state["working_dir"],
-                               local=state["backend"] == "ollama")
+                               backend=state["backend"])
         return "clear"
 
     if name == "/verbose":
@@ -470,6 +524,14 @@ def _handle_slash(cmd: str, state: dict, cfg: dict, messages: list, client) -> s
         if not arg:
             if state["backend"] == "ollama":
                 _print_local_models(state["ollama_url"])
+            elif state["backend"] == "nim":
+                nim_models = nim_list_models(state.get("nim_url", NIM_BASE_URL), state.get("nim_api_key", ""))
+                if not nim_models:
+                    nim_models = list(NIM_KNOWN_MODELS)
+                display.console.print("[bold]Available models on NVIDIA NIM:[/bold]")
+                for m in nim_models:
+                    mark = " [green]←[/green]" if m == state["model"] else ""
+                    display.console.print(f"  {m}{mark}")
             else:
                 display.console.print("[bold]Available models:[/bold]")
                 for m in KNOWN_MODELS:
@@ -488,6 +550,9 @@ def _handle_slash(cmd: str, state: dict, cfg: dict, messages: list, client) -> s
 
     if name == "/einfra":
         return _handle_einfra_switch(state, messages)
+
+    if name == "/nim":
+        return _handle_nim_switch(arg, state, messages)
 
     if name == "/pull":
         if not arg:
@@ -685,6 +750,48 @@ def _handle_einfra_switch(state: dict, messages: list) -> str:
     return "new_client"
 
 
+def _handle_nim_switch(arg: str, state: dict, messages: list) -> str:
+    """Switch to NVIDIA NIM backend. Optionally pass model name as arg."""
+    saved = load_config()
+    nim_api_key = saved.get("nim_api_key", "")
+    if not nim_api_key:
+        display.print_error(
+            "No NVIDIA NIM API key configured.\n"
+            "Run [bold]ots config[/bold] and choose the nim backend, "
+            "or set OCTOSLAVE_NIM_API_KEY."
+        )
+        return "ok"
+
+    nim_url = saved.get("nim_url", NIM_BASE_URL)
+    chosen = arg if arg else saved.get("default_model", NIM_DEFAULT_MODEL)
+
+    state["backend"] = "nim"
+    state["model"] = chosen
+    state["api_key"] = nim_api_key
+    state["base_url"] = nim_url
+    state["nim_api_key"] = nim_api_key
+    state["nim_url"] = nim_url
+
+    save_config(
+        saved.get("api_key", ""),
+        saved.get("base_url", BASE_URL),
+        chosen,
+        backend="nim",
+        ollama_url=saved.get("ollama_url", OLLAMA_BASE_URL),
+        nim_api_key=nim_api_key,
+        nim_url=nim_url,
+    )
+
+    display.console.print(
+        f"[bold bright_cyan]● NVIDIA NIM mode[/bold bright_cyan] — using [bold]{chosen}[/bold]"
+    )
+    display.console.print(
+        "[dim]  Switch back: /einfra  or  /local[/dim]"
+    )
+    messages.clear()
+    return "new_client"
+
+
 def _do_pull(model_name: str, state: dict):
     """Pull a model via Ollama."""
     ollama_url = state.get("ollama_url", OLLAMA_BASE_URL)
@@ -790,9 +897,11 @@ def _handle_long_research(arg: str, state: dict, cfg: dict, client):
 
 def _make_prompt(state: dict):
     model_short = state["model"][:20]
-    is_local = state.get("backend") == "ollama"
-    if is_local:
+    backend = state.get("backend", "einfra")
+    if backend == "ollama":
         return HTML(f'<prompt-local>◆</prompt-local> <model-tag>[local:{model_short}]</model-tag> ')
+    if backend == "nim":
+        return HTML(f'<prompt-local>◆</prompt-local> <model-tag>[nim:{model_short}]</model-tag> ')
     return HTML(f'<prompt>◆</prompt> <model-tag>[{model_short}]</model-tag> ')
 
 
@@ -800,8 +909,13 @@ def _make_toolbar(state: dict):
     wd = state["working_dir"]
     if len(wd) > 45:
         wd = "…" + wd[-43:]
-    is_local = state.get("backend") == "ollama"
-    backend_tag = " [local]" if is_local else ""
+    backend = state.get("backend", "einfra")
+    if backend == "ollama":
+        backend_tag = " [local]"
+    elif backend == "nim":
+        backend_tag = " [nim]"
+    else:
+        backend_tag = ""
     profile = state.get("prompt_profile", "base")
     perm_mode = state.get("permission_mode", "autonomous")
     if perm_mode == "autonomous":
@@ -812,7 +926,7 @@ def _make_toolbar(state: dict):
         perm_short = "supv"
     return HTML(
         f'<bottom-toolbar>  dir: {wd}{backend_tag}  profile:{profile}  perm:{perm_short}'
-        f'   /help · /model · /profile · /permission · /local · /einfra · /clear · /exit</bottom-toolbar>'
+        f'   /help · /model · /profile · /permission · /local · /einfra · /nim · /clear · /exit</bottom-toolbar>'
     )
 
 
@@ -866,6 +980,29 @@ def _resolve_config(model, working_dir, api_key, base_url, local: bool = False) 
             "working_dir": str(Path(working_dir).resolve()) if working_dir else os.getcwd(),
             "backend":     "ollama",
             "ollama_url":  ollama_url,
+            "nim_api_key": saved.get("nim_api_key", ""),
+            "nim_url":     saved.get("nim_url", NIM_BASE_URL),
+        }
+
+    if backend == "nim":
+        nim_api_key = saved.get("nim_api_key", "")
+        if not nim_api_key:
+            display.print_error(
+                "No NVIDIA NIM API key configured.\n"
+                "Run [bold]ots config[/bold] and choose the nim backend, "
+                "or set OCTOSLAVE_NIM_API_KEY."
+            )
+            sys.exit(1)
+        nim_url = saved.get("nim_url", NIM_BASE_URL)
+        return {
+            "api_key":     nim_api_key,
+            "base_url":    nim_url,
+            "model":       model or saved.get("default_model", NIM_DEFAULT_MODEL),
+            "working_dir": str(Path(working_dir).resolve()) if working_dir else os.getcwd(),
+            "backend":     "nim",
+            "ollama_url":  ollama_url,
+            "nim_api_key": nim_api_key,
+            "nim_url":     nim_url,
         }
 
     # e-INFRA CZ backend
@@ -876,6 +1013,8 @@ def _resolve_config(model, working_dir, api_key, base_url, local: bool = False) 
         "working_dir": str(Path(working_dir).resolve()) if working_dir else os.getcwd(),
         "backend":     "einfra",
         "ollama_url":  ollama_url,
+        "nim_api_key": saved.get("nim_api_key", ""),
+        "nim_url":     saved.get("nim_url", NIM_BASE_URL),
     }
 
 

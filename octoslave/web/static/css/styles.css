@@ -408,9 +408,28 @@ button {
 
 .config-spacer { flex: 1; }
 
+#backend-select { width: 130px; font-weight: 500; }
+#backend-select[data-backend="einfra"] { border-color: rgba(204, 136, 255, 0.35); color: #cc88ff; }
+#backend-select[data-backend="ollama"] { border-color: rgba(68, 255, 170, 0.35); color: #44ffaa; }
+#backend-select[data-backend="nim"]    { border-color: rgba(0, 212, 255, 0.35);  color: #00d4ff; }
+
 #chat-model-select { width: 200px; }
 #chat-profile-select { width: 120px; }
 #chat-permission-select { width: 130px; }
+
+/* Sidebar backend pill */
+.backend-pill {
+  font-size: 10px;
+  font-weight: 600;
+  padding: 1px 5px;
+  border-radius: 3px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  flex-shrink: 0;
+}
+.backend-pill[data-backend="einfra"] { background: rgba(204, 136, 255, 0.15); color: #cc88ff; }
+.backend-pill[data-backend="ollama"] { background: rgba(68, 255, 170, 0.15);  color: #44ffaa; }
+.backend-pill[data-backend="nim"]    { background: rgba(0, 212, 255, 0.15);   color: #00d4ff; }
 
 .chat-config-bar .dir-field {
   width: 260px;

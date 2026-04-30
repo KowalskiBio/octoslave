@@ -4,8 +4,8 @@
 
 console.log('[components.js] Module loaded');
 
-import { esc, renderMarkdown, scrollToBottom, autoResizeTextarea } from './utils.js?v=20260427';
-import { sendMsg } from './websocket.js?v=20260427';
+import { esc, renderMarkdown, scrollToBottom, autoResizeTextarea } from './utils.js?v=20260429';
+import { sendMsg } from './websocket.js?v=20260429';
 
 /**
  * Application state (shared across modules)

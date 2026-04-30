@@ -150,22 +150,29 @@ def _render_mascot() -> Text:
 # Session header
 # ---------------------------------------------------------------------------
 
-def print_welcome(model: str, working_dir: str, local: bool = False):
+def print_welcome(model: str, working_dir: str, backend: str = "einfra"):
     mascot = _render_mascot()
 
     tag = Text()
     tag.append(" OCTOSLAVE ", style="bold bright_white on #1A6B5C")
-    if local:
+    if backend == "ollama":
         tag.append(" LOCAL ", style="bold bright_white on #004a20")
+    elif backend == "nim":
+        tag.append(" NIM ", style="bold bright_white on #004a5c")
 
     wd = working_dir if len(working_dir) <= 40 else "…" + working_dir[-38:]
 
     info = Text()
-    if local:
+    if backend == "ollama":
         info.append("backend ", style="dim")
         info.append("ollama (local)", style="bold bright_green")
         info.append("   model ", style="dim")
         info.append(model, style="bold bright_green")
+    elif backend == "nim":
+        info.append("backend ", style="dim")
+        info.append("NVIDIA NIM", style="bold bright_cyan")
+        info.append("   model ", style="dim")
+        info.append(model, style="bold bright_cyan")
     else:
         info.append("model ", style="dim")
         info.append(model, style="bold bright_magenta")
@@ -173,8 +180,10 @@ def print_welcome(model: str, working_dir: str, local: bool = False):
     info.append(wd, style="dim white")
 
     hint = Text("  /help for commands", style="dim")
-    if local:
+    if backend == "ollama":
         hint = Text("  /help · /pull <model> · /einfra to switch back", style="dim")
+    elif backend == "nim":
+        hint = Text("  /help · /model · /einfra to switch back", style="dim")
 
     body = Text()
     body.append_text(mascot)
@@ -186,7 +195,12 @@ def print_welcome(model: str, working_dir: str, local: bool = False):
     body.append_text(hint)
     body.append("\n")
 
-    border = "bright_green" if local else "#2ab89a"
+    if backend == "ollama":
+        border = "bright_green"
+    elif backend == "nim":
+        border = "bright_cyan"
+    else:
+        border = "#2ab89a"
     console.print(
         Panel.fit(body, border_style=border, padding=(0, 2)),
         justify="center",
@@ -194,10 +208,17 @@ def print_welcome(model: str, working_dir: str, local: bool = False):
     console.print()
 
 
-def print_header(model: str, working_dir: str, local: bool = False):
+def print_header(model: str, working_dir: str, backend: str = "einfra"):
     """Compact header for non-interactive (one-shot) runs."""
-    backend_str = "[bold bright_green]ollama (local)[/bold bright_green]" if local else "[model]e-INFRA CZ[/model]"
-    border = "bright_green" if local else "#2ab89a"
+    if backend == "ollama":
+        backend_str = "[bold bright_green]ollama (local)[/bold bright_green]"
+        border = "bright_green"
+    elif backend == "nim":
+        backend_str = "[bold bright_cyan]NVIDIA NIM[/bold bright_cyan]"
+        border = "bright_cyan"
+    else:
+        backend_str = "[model]e-INFRA CZ[/model]"
+        border = "#2ab89a"
     console.print(
         Panel.fit(
             f"[heading]OctoSlave[/heading]  {backend_str}  [model]{model}[/model]\n"
@@ -405,9 +426,10 @@ def print_help():
         "  [cyan]/long-research TOPIC[/cyan]  Launch multi-agent research pipeline\n"
         "  [cyan]/help[/cyan]                 Show this help\n"
         "  [cyan]/exit[/cyan]                 Quit  (also Ctrl+D)\n\n"
-        "[bold white]Local Ollama backend:[/bold white]\n"
+        "[bold white]Backend switching:[/bold white]\n"
         "  [cyan]/local [MODEL][/cyan]        Switch to local Ollama models\n"
-        "  [cyan]/einfra[/cyan]               Switch back to e-INFRA CZ\n"
+        "  [cyan]/einfra[/cyan]               Switch to e-INFRA CZ\n"
+        "  [cyan]/nim [MODEL][/cyan]          Switch to NVIDIA NIM\n"
         "  [cyan]/pull MODEL[/cyan]           Pull a new Ollama model\n\n"
         "[bold white]Permission modes:[/bold white]\n"
         "  [cyan]autonomous[/cyan]  — work without asking (default)\n"
