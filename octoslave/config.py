@@ -13,7 +13,7 @@ BASE_URL = "https://llm.ai.e-infra.cz/v1"
 DEFAULT_MODEL = "deepseek-v3.2"
 OLLAMA_BASE_URL = "http://localhost:11434/v1"
 NIM_BASE_URL = "https://integrate.api.nvidia.com/v1"
-NIM_DEFAULT_MODEL = "meta/llama-3.3-70b-instruct"
+NIM_DEFAULT_MODEL = "nvidia/nemotron-3-super-120b-a12b"
 
 KNOWN_MODELS = [
     "mistral-small-4",
@@ -38,26 +38,32 @@ KNOWN_MODELS = [
 ]
 
 # Static fallback list — used when the API key is absent or the /models call fails.
-# Excludes known-EOL models (deepseek-ai/deepseek-r1 EOL 2026-01-26, etc.)
+# Only includes models confirmed accessible on a standard (free) NIM account.
+# NOTE: The live /v1/models catalog contains 100+ models; many require paid tiers
+#       or specific account permissions. This list is curated for general access.
 NIM_KNOWN_MODELS = [
-    # Llama 4 (released April 2025)
-    "meta/llama-4-scout-17b-16e-instruct",
+    # Llama 4
     "meta/llama-4-maverick-17b-128e-instruct",
-    # NVIDIA Nemotron (NVIDIA-tuned SOTA)
+    # NVIDIA Nemotron (free tier)
     "nvidia/llama-3.3-nemotron-super-49b-v1",
-    "nvidia/llama-3.1-nemotron-ultra-253b-v1",
+    "nvidia/llama-3.3-nemotron-super-49b-v1.5",
+    "nvidia/llama-3.1-nemotron-nano-8b-v1",
     # Llama 3.x
     "meta/llama-3.3-70b-instruct",
     "meta/llama-3.1-405b-instruct",
-    # Mistral
-    "mistralai/mistral-large-2-instruct",
-    # Qwen
-    "qwen/qwen2.5-72b-instruct",
-    # Phi / Gemma
-    "microsoft/phi-4",
+    "meta/llama-3.1-70b-instruct",
+    # Qwen 3
+    "qwen/qwen3.5-122b-a10b",
+    "qwen/qwen3-coder-480b-a35b-instruct",
+    # DeepSeek (correct NIM model IDs)
+    "deepseek-ai/deepseek-v3.2",
+    # Gemma / Phi
     "google/gemma-3-27b-it",
-    # DeepSeek distilled (R1 base is EOL; distilled variants may still be live)
-    "deepseek-ai/deepseek-r1-distill-llama-70b",
+    "google/gemma-4-31b-it",
+    "microsoft/phi-4-mini-instruct",
+    # Mistral (may require paid tier on some accounts)
+    "mistralai/mistral-large-2-instruct",
+    "mistralai/mistral-small-4-119b-2603",
 ]
 
 

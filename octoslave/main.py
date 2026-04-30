@@ -731,14 +731,14 @@ def _handle_einfra_switch(state: dict, messages: list) -> str:
         return "ok"
 
     state["backend"] = "einfra"
-    state["model"] = saved.get("default_model", DEFAULT_MODEL)
+    state["model"] = DEFAULT_MODEL
     state["api_key"] = api_key
     state["base_url"] = saved.get("base_url", BASE_URL)
 
     save_config(
         api_key,
         state["base_url"],
-        state["model"],
+        DEFAULT_MODEL,
         backend="einfra",
         ollama_url=state.get("ollama_url", OLLAMA_BASE_URL),
     )
@@ -763,7 +763,7 @@ def _handle_nim_switch(arg: str, state: dict, messages: list) -> str:
         return "ok"
 
     nim_url = saved.get("nim_url", NIM_BASE_URL)
-    chosen = arg if arg else saved.get("default_model", NIM_DEFAULT_MODEL)
+    chosen = arg if arg else NIM_DEFAULT_MODEL
 
     state["backend"] = "nim"
     state["model"] = chosen
