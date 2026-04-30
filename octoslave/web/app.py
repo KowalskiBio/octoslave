@@ -382,7 +382,7 @@ async def ws_endpoint(websocket: WebSocket):
                 try:
                     from ..config import (
                         save_config, ollama_is_running, ollama_list_models,
-                        NIM_BASE_URL, NIM_DEFAULT_MODEL,
+                        NIM_BASE_URL, NIM_DEFAULT_MODEL, DEFAULT_MODEL,
                     )
                     backend = msg.get("backend", "einfra")
                     requested_model = msg.get("model")
@@ -418,7 +418,7 @@ async def ws_endpoint(websocket: WebSocket):
                             await send({"type": "error", "text": "No NVIDIA NIM API key configured. Run 'ots config' first."})
                         else:
                             nim_url = cfg.get("nim_url", NIM_BASE_URL)
-                            chosen = requested_model or cfg.get("default_model", NIM_DEFAULT_MODEL)
+                            chosen = requested_model or NIM_DEFAULT_MODEL
                             save_config(
                                 cfg.get("api_key", ""),
                                 cfg.get("base_url", ""),
@@ -438,18 +438,17 @@ async def ws_endpoint(websocket: WebSocket):
                         if not api_key:
                             await send({"type": "error", "text": "No e-INFRA CZ API key configured. Run 'ots config' first."})
                         else:
-                            default_model = cfg.get("default_model", "")
                             save_config(
                                 api_key,
                                 cfg.get("base_url", ""),
-                                default_model,
+                                DEFAULT_MODEL,
                                 backend="einfra",
                                 ollama_url=cfg.get("ollama_url", ""),
                             )
                             state["backend"] = "einfra"
-                            state["model"] = default_model
-                            await send({"type": "config_updated", "backend": "einfra", "model": default_model})
-                            await send({"type": "info", "text": f"Switched to e-INFRA CZ mode with {default_model}"})
+                            state["model"] = DEFAULT_MODEL
+                            await send({"type": "config_updated", "backend": "einfra", "model": DEFAULT_MODEL})
+                            await send({"type": "info", "text": f"Switched to e-INFRA CZ mode with {DEFAULT_MODEL}"})
                 except Exception as exc:
                     await send({"type": "error", "text": f"Backend switch failed: {exc}"})
 
