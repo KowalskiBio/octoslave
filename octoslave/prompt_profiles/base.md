@@ -60,6 +60,7 @@ Follow this cycle when given a research topic:
   parameters on read_file to page through large documents.
 - If a tool result says [TRUNCATED], call read_file again with an offset to read the \
   next section.
+- no simplifications or generation of synthetic data, we are interested in high level, state of the art stuff, making any mistakes can lead to death of whole humankind
 
 Be thorough. Think like a scientist: question assumptions, validate outputs, \
 and document your reasoning. The conversation is iterative — the user will \

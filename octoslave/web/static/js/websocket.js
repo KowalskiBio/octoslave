@@ -4,7 +4,7 @@
 
 console.log('[websocket.js] Module loaded');
 
-import { esc, renderMarkdown, scrollToBottom } from './utils.js?v=20260427';
+import { esc, renderMarkdown, scrollToBottom } from './utils.js?v=20260429';
 
 // WebSocket URL
 export const WS_URL = `ws://${location.host}/ws`;
@@ -134,14 +134,32 @@ function setConnected(ok) {
 }
 
 /**
+ * Update the backend select dropdown and sidebar pill to reflect the active backend.
+ */
+function applyBackend(backend) {
+  const sel = document.getElementById('backend-select');
+  if (sel) {
+    sel.value = backend;
+    sel.dataset.backend = backend;
+  }
+  const pill = document.getElementById('backend-pill');
+  if (pill) {
+    const labels = { einfra: 'einfra', ollama: 'local', nim: 'nim' };
+    pill.textContent = labels[backend] || backend;
+    pill.dataset.backend = backend;
+  }
+}
+
+/**
  * Handle server configuration message
  */
 export function applyConfig(data) {
   const state = window.appState || {};
   state.config = data || {};
-  const model = data?.model || '';
-  const dir   = data?.working_dir || '.';
-  const url   = data?.base_url || '';
+  const model   = data?.model || '';
+  const dir     = data?.working_dir || '.';
+  const url     = data?.base_url || '';
+  const backend = data?.backend || 'einfra';
 
   document.getElementById('model-badge').textContent = model || '—';
   state.config._pendingModel = model;
@@ -149,15 +167,19 @@ export function applyConfig(data) {
   if (model && sel.querySelector(`option[value="${safeCssEscape(model)}"]`)) {
     sel.value = model;
   }
-  document.getElementById('chat-dir-input').value    = dir;
+  document.getElementById('chat-dir-input').value     = dir;
   document.getElementById('research-dir-input').value = dir;
-  document.getElementById('files-dir-input').value   = dir;
+  document.getElementById('files-dir-input').value    = dir;
 
   document.getElementById('settings-api-key').value     = data?.has_api_key ? '••••••••' : '';
+  document.getElementById('settings-nim-api-key').value = data?.has_nim_key  ? '••••••••' : '';
   document.getElementById('settings-base-url').value    = url;
   document.getElementById('settings-model').value       = model;
   document.getElementById('settings-working-dir').value = dir;
-  
+  document.getElementById('settings-backend').value     = backend;
+
+  applyBackend(backend);
+
   window.appState = state;
 }
 
@@ -214,14 +236,15 @@ export function populateModelSelects(models) {
  */
 export function onConfigUpdated(msg) {
   const modelBadge = document.getElementById('model-badge');
-  if (modelBadge) {
-    modelBadge.textContent = msg.model || '—';
-  }
-  
-  // Show notification in chat
+  if (modelBadge) modelBadge.textContent = msg.model || '—';
+
+  if (msg.backend) applyBackend(msg.backend);
+
   const infoFn = window.appendChatInfo;
   if (infoFn) {
-    if (msg.backend === 'ollama') {
+    if (msg.backend === 'nim') {
+      infoFn(`🟦 Switched to [bold]NVIDIA NIM[/bold] with ${msg.model}`);
+    } else if (msg.backend === 'ollama') {
       infoFn(`🟢 Switched to [bold]Local (Ollama)[/bold] mode with ${msg.model}`);
     } else {
       infoFn(`🟣 Switched to [bold]e-INFRA CZ[/bold] mode with ${msg.model}`);

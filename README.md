@@ -4,12 +4,13 @@
 
 <h1>OctoSlave</h1>
 
-<p><strong>Autonomous AI research &amp; coding assistant — powered by <a href="https://llm.ai.e-infra.cz">e-INFRA CZ</a> or your own local GPU</strong></p>
+<p><strong>Autonomous AI research &amp; coding assistant — powered by <a href="https://llm.ai.e-infra.cz">e-INFRA CZ</a>, <a href="https://build.nvidia.com">NVIDIA NIM</a>, or your own local GPU</strong></p>
 
 [![Python](https://img.shields.io/badge/python-3.10%2B-blue?style=flat-square&logo=python&logoColor=white)](https://www.python.org)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green?style=flat-square)](LICENSE)
 [![Platform](https://img.shields.io/badge/e--INFRA%20CZ-LLM-7B2FBE?style=flat-square)](https://llm.ai.e-infra.cz)
 [![Ollama](https://img.shields.io/badge/Ollama-local%20models-1A6B5C?style=flat-square)](https://ollama.com)
+[![NVIDIA NIM](https://img.shields.io/badge/NVIDIA%20NIM-API-76B900?style=flat-square&logo=nvidia&logoColor=white)](https://build.nvidia.com)
 
 </div>
 
@@ -36,6 +37,7 @@ It ships two modes:
 - [One-shot mode](#one-shot-mode)
 - [Long-research pipeline](#long-research-pipeline)
 - [Available models](#available-models)
+- [NVIDIA NIM](#nvidia-nim)
 - [Local models (Ollama)](#local-models-ollama)
 - [Tools reference](#tools-reference)
 - [Configuration](#configuration)
@@ -150,15 +152,18 @@ pip install -e ".[web]"
 ### Set your API key
 
 ```bash
-ots config                        # interactive setup wizard
-ots config --api-key sk-YOUR_KEY  # pass key directly
+ots config                        # interactive setup wizard (choose einfra / nim / ollama)
+ots config --api-key sk-YOUR_KEY  # set e-INFRA CZ key directly
 ots config --model qwen3-coder-30b  # set default model
 ots config --ollama-url http://remote-host:11434/v1  # remote Ollama
-ots config --show                 # print current config (key masked)
-export OCTOSLAVE_API_KEY=sk-...   # or set env var for the session
+ots config --show                 # print current config (keys masked)
+export OCTOSLAVE_API_KEY=sk-...   # e-INFRA CZ key — env var for the session
+export OCTOSLAVE_NIM_API_KEY=nvapi-...  # NVIDIA NIM key — env var for the session
 ```
 
 Config is saved at `~/.octoslave/config.json`. Environment variables always take precedence.
+
+> **NVIDIA NIM users:** run `ots config`, choose `nim` as the backend, and paste your `nvapi-` key. See the [NVIDIA NIM section](#nvidia-nim) for full setup instructions.
 
 ---
 
@@ -262,6 +267,7 @@ Running `ots` opens the full TUI:
 | `/compact` | Summarise history into a compact context block (saves tokens) |
 | `/local [model]` | Switch to local Ollama backend |
 | `/einfra` | Switch back to e-INFRA CZ backend |
+| `/nim [model]` | Switch to NVIDIA NIM backend |
 | `/pull model` | Pull a new Ollama model without leaving the session |
 | `/long-research TOPIC [flags]` | Launch the multi-agent research pipeline |
 | `/help` | Show all commands and flags |
@@ -401,6 +407,89 @@ Switch mid-session: `/model qwen3-coder-30b` or pass `-m MODEL` to any command.
 
 ---
 
+## NVIDIA NIM
+
+[NVIDIA NIM](https://build.nvidia.com) gives you cloud-hosted inference for frontier open-weight models (Llama 4, Nemotron, Mistral, Qwen, etc.) via an OpenAI-compatible API. It is a good option when you need top-tier reasoning without e-INFRA CZ access and don't have a large enough GPU to run models locally.
+
+### Get an API key
+
+1. Go to **[build.nvidia.com](https://build.nvidia.com)** and sign in (or create a free account).
+2. Open any model card (e.g. [Llama 3.3 70B](https://build.nvidia.com/meta/llama-3_3-70b-instruct)) and click **Get API Key**.
+3. Copy the generated key — it starts with `nvapi-`.
+
+Free-tier accounts receive a number of free credits. Some large models (e.g. `nvidia/llama-3.1-nemotron-ultra-253b-v1`) require a paid plan — if you try one and get a 404 "not found for account" error, switch to a smaller model from the list below.
+
+### Configure OctoSlave for NIM
+
+```bash
+ots config
+# → choose backend: nim
+# → paste your nvapi-... key when prompted
+# → choose a default model (e.g. meta/llama-3.3-70b-instruct)
+```
+
+Or pass flags directly:
+
+```bash
+ots config \
+  --backend nim \
+  --nim-api-key nvapi-YOUR_KEY \
+  --model meta/llama-3.3-70b-instruct
+```
+
+### Start OctoSlave with NIM
+
+```bash
+ots                          # starts with whichever backend is in config
+ots --nim                    # force NIM backend for this session
+ots --nim --model meta/llama-4-scout-17b-16e-instruct
+```
+
+### Switch backend at runtime
+
+```bash
+# In the TUI:
+/nim                                            # switch to NIM (keeps current model)
+/nim meta/llama-4-maverick-17b-128e-instruct    # switch to NIM with a specific model
+/model                                          # list available NIM models
+
+# In the web UI:
+# Use the Backend dropdown in the Chat config bar (top of the Chat tab)
+```
+
+### Environment variables
+
+| Variable | Description |
+|----------|-------------|
+| `OCTOSLAVE_NIM_API_KEY` | Your NVIDIA NIM API key (`nvapi-...`) |
+| `OCTOSLAVE_NIM_URL` | NIM base URL (default: `https://integrate.api.nvidia.com/v1`) |
+
+```bash
+export OCTOSLAVE_NIM_API_KEY=nvapi-...
+export OCTOSLAVE_BACKEND=nim
+ots
+```
+
+### Available NIM models
+
+Run `ots models` (with NIM configured) to get the live list from your account. Commonly available models:
+
+| Model | Strengths |
+|-------|-----------|
+| `meta/llama-4-scout-17b-16e-instruct` | Latest Llama 4, fast |
+| `meta/llama-4-maverick-17b-128e-instruct` | Latest Llama 4, balanced |
+| `meta/llama-3.3-70b-instruct` | Reliable, widely available |
+| `nvidia/llama-3.3-nemotron-super-49b-v1` | NVIDIA-tuned SOTA |
+| `nvidia/llama-3.1-nemotron-ultra-253b-v1` | Highest quality (paid tier) |
+| `mistralai/mistral-large-2-instruct` | Strong reasoning |
+| `qwen/qwen2.5-72b-instruct` | Fast, code-capable |
+| `microsoft/phi-4` | Compact, efficient |
+| `google/gemma-3-27b-it` | Google Gemma 3 |
+
+> **Tip:** if a model returns a 404 "not found for account" error, your current account tier doesn't have access to it. Use `/model` to list the models your key can actually reach.
+
+---
+
 ## Local models (Ollama)
 
 OctoSlave runs fully offline via [Ollama](https://ollama.com). All functionality — chat, one-shot tasks, and the full research pipeline — works identically with local models.
@@ -531,6 +620,11 @@ Do you have access to e-INFRA CZ? ──yes──▶ use einfra  (best model qua
          no
          │
          ▼
+Do you have an NVIDIA NIM key?   ──yes──▶ use nim      (frontier models, pay-per-token, no local GPU needed)
+         │
+         no
+         │
+         ▼
 Do you have a GPU (≥8 GB VRAM)?  ──yes──▶ use ollama  (fully local, private, no API key needed)
          │
          no
@@ -569,10 +663,12 @@ The default model is only the starting point — switch any time with `/model NA
 | Variable | Description |
 |----------|-------------|
 | `OCTOSLAVE_API_KEY` | e-INFRA CZ API key |
-| `OCTOSLAVE_BASE_URL` | API base URL (default: `https://llm.ai.e-infra.cz/v1`) |
+| `OCTOSLAVE_BASE_URL` | e-INFRA CZ base URL (default: `https://llm.ai.e-infra.cz/v1`) |
 | `OCTOSLAVE_MODEL` | Default model override |
-| `OCTOSLAVE_BACKEND` | `einfra` (default) or `ollama` |
+| `OCTOSLAVE_BACKEND` | `einfra` (default), `ollama`, or `nim` |
 | `OCTOSLAVE_OLLAMA_URL` | Ollama base URL (default: `http://localhost:11434/v1`) |
+| `OCTOSLAVE_NIM_API_KEY` | NVIDIA NIM API key (`nvapi-...`) |
+| `OCTOSLAVE_NIM_URL` | NIM base URL (default: `https://integrate.api.nvidia.com/v1`) |
 | `OCTOSLAVE_PERMISSION_MODE` | `autonomous` (default), `controlled`, or `supervised` |
 
 ```bash

@@ -325,6 +325,7 @@ async def ws_endpoint(websocket: WebSocket):
             "base_url": cfg.get("base_url", ""),
             "backend": cfg.get("backend", "einfra"),
             "has_api_key": bool(cfg.get("api_key", "")),
+            "has_nim_key": bool(cfg.get("nim_api_key", "")),
             "working_dir": ".",
         }})
     except Exception as exc:
@@ -352,6 +353,7 @@ async def ws_endpoint(websocket: WebSocket):
                         "base_url": cfg.get("base_url", ""),
                         "backend": cfg.get("backend", "einfra"),
                         "has_api_key": bool(cfg.get("api_key", "")),
+                        "has_nim_key": bool(cfg.get("nim_api_key", "")),
                         "working_dir": state["working_dir"],
                     }})
                 except Exception as exc:
@@ -376,14 +378,17 @@ async def ws_endpoint(websocket: WebSocket):
                 await send({"type": "ok", "working_dir": wd})
 
             elif mtype == "switch_backend":
-                """Handle backend switching (ollama <-> einfra)."""
+                """Handle backend switching (ollama / einfra / nim)."""
                 try:
-                    from ..config import save_config, ollama_is_running, ollama_list_models
+                    from ..config import (
+                        save_config, ollama_is_running, ollama_list_models,
+                        NIM_BASE_URL, NIM_DEFAULT_MODEL,
+                    )
                     backend = msg.get("backend", "einfra")
                     requested_model = msg.get("model")
-                    
+
                     cfg = load_config()
-                    
+
                     if backend == "ollama":
                         # Switch to Ollama
                         ollama_url = cfg.get("ollama_url", "http://localhost:11434/v1")
@@ -395,7 +400,6 @@ async def ws_endpoint(websocket: WebSocket):
                                 await send({"type": "error", "text": "No models pulled yet. Use /pull <model> first."})
                             else:
                                 chosen = requested_model if requested_model and requested_model in pulled else pulled[0]
-                                # Update config
                                 save_config(
                                     cfg.get("api_key", ""),
                                     cfg.get("base_url", ""),
@@ -407,6 +411,27 @@ async def ws_endpoint(websocket: WebSocket):
                                 state["model"] = chosen
                                 await send({"type": "config_updated", "backend": "ollama", "model": chosen})
                                 await send({"type": "info", "text": f"Switched to local mode with {chosen}"})
+                    elif backend == "nim":
+                        # Switch to NVIDIA NIM
+                        nim_api_key = cfg.get("nim_api_key", "")
+                        if not nim_api_key:
+                            await send({"type": "error", "text": "No NVIDIA NIM API key configured. Run 'ots config' first."})
+                        else:
+                            nim_url = cfg.get("nim_url", NIM_BASE_URL)
+                            chosen = requested_model or cfg.get("default_model", NIM_DEFAULT_MODEL)
+                            save_config(
+                                cfg.get("api_key", ""),
+                                cfg.get("base_url", ""),
+                                chosen,
+                                backend="nim",
+                                ollama_url=cfg.get("ollama_url", ""),
+                                nim_api_key=nim_api_key,
+                                nim_url=nim_url,
+                            )
+                            state["backend"] = "nim"
+                            state["model"] = chosen
+                            await send({"type": "config_updated", "backend": "nim", "model": chosen})
+                            await send({"type": "info", "text": f"Switched to NVIDIA NIM with {chosen}"})
                     else:
                         # Switch to e-INFRA CZ
                         api_key = cfg.get("api_key", "")
@@ -462,7 +487,7 @@ async def ws_endpoint(websocket: WebSocket):
                 message_text = msg.get("message", "").strip()
                 prompt_profile = msg.get("prompt_profile") or cfg.get("prompt_profile", "base")
                 permission_mode = msg.get("permission_mode") or cfg.get("permission_mode", "autonomous")
-                
+
                 if not message_text:
                     continue
 
@@ -470,7 +495,17 @@ async def ws_endpoint(websocket: WebSocket):
                 state["model"] = model
                 state["working_dir"] = working_dir
                 state["running"] = True
-                client = make_client(cfg.get("api_key", ""), cfg.get("base_url", ""))
+                _backend = state.get("backend") or cfg.get("backend", "einfra")
+                if _backend == "nim":
+                    _api_key = cfg.get("nim_api_key", "")
+                    _base_url = cfg.get("nim_url", "")
+                elif _backend == "ollama":
+                    _api_key = "ollama"
+                    _base_url = cfg.get("ollama_url", "")
+                else:
+                    _api_key = cfg.get("api_key", "")
+                    _base_url = cfg.get("base_url", "")
+                client = make_client(_api_key, _base_url)
 
                 def chat_fn(txt=message_text, mdl=model, wd=working_dir, new=new_conv, 
                            pp=prompt_profile, pm=permission_mode):
@@ -544,7 +579,17 @@ async def ws_endpoint(websocket: WebSocket):
                 state["running"] = True
 
                 model_overrides = {role: model_all for role in PIPELINE} if model_all else None
-                client = make_client(cfg.get("api_key", ""), cfg.get("base_url", ""))
+                _backend = state.get("backend") or cfg.get("backend", "einfra")
+                if _backend == "nim":
+                    _api_key = cfg.get("nim_api_key", "")
+                    _base_url = cfg.get("nim_url", "")
+                elif _backend == "ollama":
+                    _api_key = "ollama"
+                    _base_url = cfg.get("ollama_url", "")
+                else:
+                    _api_key = cfg.get("api_key", "")
+                    _base_url = cfg.get("base_url", "")
+                client = make_client(_api_key, _base_url)
 
                 def research_fn(t=topic, r=rounds, mo=model_overrides, wd=working_dir, res=resume):
                     display.set_event_callback(make_emit())

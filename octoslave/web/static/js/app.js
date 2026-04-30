@@ -6,13 +6,13 @@ console.log('[app.js] Module loaded');
 
 import {
   WS_URL, connectWebSocket, sendMsg, applyConfig, populateModelSelects, onConfigUpdated
-} from './websocket.js?v=20260427';
-import { handleSlashCommand } from './slash-commands.js?v=20260427';
+} from './websocket.js?v=20260429';
+import { handleSlashCommand } from './slash-commands.js?v=20260429';
 import {
   toggleHistory, browseDir, refreshHistory, refreshFileTree, viewFile,
   uploadFile, removeAttachment, clearChatMessages, appendChatInfo, appendChatError
-} from './components.js?v=20260427';
-import { scrollToBottom, autoResizeTextarea, renderMarkdown, esc } from './utils.js?v=20260427';
+} from './components.js?v=20260429';
+import { scrollToBottom, autoResizeTextarea, renderMarkdown, esc } from './utils.js?v=20260429';
 
 // Export functions to global scope for inline handlers
 window.toggleHistory = toggleHistory;
@@ -419,6 +419,16 @@ function initApp() {
     sendMsg({ type: 'chat_clear' });
     clearChatMessages();
     refreshHistory();
+  });
+
+  // Backend select change handler — send switch_backend and refresh model list
+  document.getElementById('backend-select')?.addEventListener('change', (e) => {
+    const backend = e.target.value;
+    e.target.dataset.backend = backend;
+    const backendNames = { einfra: 'e-INFRA CZ', ollama: 'Local (Ollama)', nim: 'NVIDIA NIM' };
+    appendChatInfo(`🔄 Switching to [bold]${backendNames[backend] || backend}[/bold] backend…`);
+    sendMsg({ type: 'switch_backend', backend });
+    setTimeout(() => sendMsg({ type: 'list_models' }), 600);
   });
 
   // Model select change handler - update the badge in the sidebar

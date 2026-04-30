@@ -300,6 +300,21 @@ def _agent_loop(
                 _time.sleep(wait)
                 iteration -= 1
                 continue
+            elif "410" in err_str and ("end of life" in err_str.lower() or "Gone" in err_str):
+                display.print_error(
+                    f"Model has reached end of life and is no longer available.\n"
+                    "Switch to a different model with [bold]/model <name>[/bold]  "
+                    "or run [bold]/model[/bold] to list available models."
+                )
+                break
+            elif "404" in err_str and "not found for account" in err_str.lower():
+                display.print_error(
+                    f"Model is not accessible with your NVIDIA NIM account.\n"
+                    "This model may require a paid plan or special access.\n"
+                    "Switch to a different model with [bold]/model <name>[/bold]  "
+                    "or run [bold]/model[/bold] to list models available to your account."
+                )
+                break
             display.print_error(f"Unexpected error: {e}")
             break
 
