@@ -745,6 +745,17 @@ details.tool-block summary::-webkit-details-marker { display: none; }
 .tool-detail.ok   { color: var(--success); }
 .tool-detail.fail { color: var(--error); }
 
+/* Waiting for first token (TTFT indicator) */
+.waiting-for-response {
+  min-height: 1.4em;
+}
+.waiting-for-response::after {
+  content: 'thinking\2026';  /* thinking… */
+  color: var(--text-muted);
+  font-style: italic;
+  animation: blink 1.4s step-end infinite;
+}
+
 /* Streaming cursor */
 .streaming-cursor::after {
   content: '▍';

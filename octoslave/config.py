@@ -16,20 +16,22 @@ NIM_BASE_URL = "https://integrate.api.nvidia.com/v1"
 NIM_DEFAULT_MODEL = "nvidia/nemotron-3-super-120b-a12b"
 
 KNOWN_MODELS = [
-    "mistral-small-4",
+    "deepseek-v3.2",
+    "deepseek-v3.2-thinking",
     "qwen3.5",
     "qwen3.5-122b",
     "qwen3-coder",
     "qwen3-coder-30b",
     "qwen3-coder-next",
     "gpt-oss-120b",
-    "deepseek-v3.2",
-    "deepseek-v3.2-thinking",
     "kimi-k2.5",
+    "kimi-k2.6",
+    "mistral-medium-3.5",
     "llama-4-scout-17b-16e-instruct",
     "gemma4",
     "glm-4.7",
     "glm-5",
+    "glm-5.1",
     "thinker",
     "coder",
     "agentic",
@@ -87,6 +89,31 @@ EINFRA_ROLE_MODELS: dict[str, str] = {
 }
 
 NIM_ROLE_MODELS: dict[str, str] = {role: NIM_DEFAULT_MODEL for role in PIPELINE_ROLES}
+
+
+# ---------------------------------------------------------------------------
+# e-INFRA CZ live model query
+# ---------------------------------------------------------------------------
+
+def einfra_list_models(base_url: str = BASE_URL, api_key: str = "") -> list[str]:
+    """
+    Query e-INFRA CZ's OpenAI-compatible /v1/models endpoint and return model IDs.
+    Returns an empty list on any error so callers can fall back to KNOWN_MODELS.
+    """
+    if not api_key:
+        return []
+    try:
+        import urllib.request, json as _json
+        req = urllib.request.Request(
+            f"{base_url.rstrip('/')}/models",
+            headers={"Authorization": f"Bearer {api_key}"},
+        )
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            data = _json.loads(resp.read())
+            ids = [m["id"] for m in data.get("data", []) if m.get("id")]
+            return sorted(ids) if ids else []
+    except Exception:
+        return []
 
 
 # ---------------------------------------------------------------------------
@@ -292,23 +319,28 @@ def reset_role_models(backend: str) -> None:
 
 def list_models(cfg: dict | None = None) -> list[str]:
     """
-    Return available model names.
-    - einfra: static KNOWN_MODELS (no /models endpoint)
-    - ollama: poll the local server
-    - nim: query /v1/models live; fall back to NIM_KNOWN_MODELS on failure
+    Return available model names for the active backend.
+    - einfra: query /v1/models live; fall back to KNOWN_MODELS on failure
+    - ollama: poll the local server; fall back to KNOWN_MODELS
+    - nim:    query /v1/models live; fall back to NIM_KNOWN_MODELS on failure
     """
     if cfg is None:
         cfg = {}
     if cfg.get("backend") == "ollama":
         pulled = ollama_list_models(cfg.get("ollama_url", OLLAMA_BASE_URL))
-        return pulled if pulled else KNOWN_MODELS
+        return pulled if pulled else list(KNOWN_MODELS)
     if cfg.get("backend") == "nim":
         live = nim_list_models(
             cfg.get("nim_url", NIM_BASE_URL),
             cfg.get("nim_api_key", ""),
         )
         return live if live else list(NIM_KNOWN_MODELS)
-    return list(KNOWN_MODELS)
+    # einfra
+    live = einfra_list_models(
+        cfg.get("base_url", BASE_URL),
+        cfg.get("api_key", ""),
+    )
+    return live if live else list(KNOWN_MODELS)
 
 
 def load_config() -> dict:

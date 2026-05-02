@@ -123,6 +123,8 @@ OUTPUT_FILES: dict[str, str] = {
 }
 
 FINDINGS_FILE = "findings.md"
+CASE_MEMORY_FILE = "case_memory.md"
+SKILLS_FILE = "skills.md"
 NEXT_BRIEF_MARKER = "## NEXT_ROUND_BRIEF"
 COMPLETE_MARKER = "## STATUS: COMPLETE"
 
@@ -223,6 +225,10 @@ STEPS
    local files.
 1. Round > 1: read {research_dir}/findings.md — ONLY the ## Key Findings section
    (use read_file with offset/limit). Round 1: skip this step entirely.
+1b. Round > 1: if {research_dir}/case_memory.md exists, read the last 600 chars
+   (use read_file with a high offset). It contains transferable lessons from prior
+   rounds — use it to avoid repeating blocked approaches and to favour strategies
+   already proven to work in this environment. This uses one of your read_file calls.
 2. Run 2–3 targeted web searches to fill gaps NOT covered by local files. Fetch ONE
    page per search (the most useful one). Stop the moment you can answer:
    (a) best known result / method, (b) which dataset is accessible right now.
@@ -257,6 +263,13 @@ STEPS
 1. Read ONLY the ## FOR THE EXPERIMENT DESIGNER section from
    {round_dir}/01_literature.md (use offset/limit — do not read the whole file).
 2. Round > 1: read ONLY the ## What Failed section from {research_dir}/findings.md.
+   Round 1: skip.
+2b. Round > 1: if {research_dir}/case_memory.md exists, read the last 800 chars
+   (high offset). Each case records what was tried, what worked, and transferable
+   lessons. Use this to:
+   - Select a strategy proven to work in THIS environment over one that failed before.
+   - Carry forward a successful approach from a prior round rather than reinventing.
+   - Explicitly note in ## FOR THE CODER if you are reusing a prior winning pattern.
    Round 1: skip.
 3. Think once, commit, write. No drafting, no iteration.
 3. COMPLEXITY CALIBRATION (mandatory for round > 1):
@@ -314,6 +327,10 @@ STEPS
    probed. Check `available_packages`: ONLY import packages listed there. Do NOT
    assume a package is installed if it isn't listed. Do NOT re-probe.
    If a package you planned to use is NOT listed → use the FALLBACK LADDER below.
+3b. Round > 1: if {research_dir}/skills.md exists, read the last 500 chars (high offset).
+   It records proven fallback patterns and what pivots worked in prior rounds.
+   Use this to skip trial-and-error and go directly to an approach known to work.
+   Round 1: skip.
 4. Read any existing code in {round_dir}/03_code/ if this is a continuation.
 5. Execute:
    a. Create {round_dir}/03_code/ directory.
@@ -437,6 +454,9 @@ YOUR MISSION
 Verify code correctness and result validity. Be skeptical. Total report: under 350 words.
 
 STEPS — focus ONLY on {round_dir}. Do NOT read files from other rounds.
+0. Round > 1: if {research_dir}/skills.md exists, read the last 400 chars (high offset).
+   It lists proven fallback pivots from prior rounds — use it to pick a working
+   alternative faster if you encounter the same failure. Round 1: skip.
 1. Read {round_dir}/03_code/IMPLEMENTATION.md (the ## Results Summary section only).
    Use grep to scan the main script in {round_dir}/03_code/ — do NOT read every line.
 2. Check {round_dir}/03_code/results/ with list_dir.
@@ -505,6 +525,9 @@ Format: score on the SAME line as the heading, then ONE sentence commentary.
   ## Hypothesis Quality      X/10 — <one sentence>
   ## Implementation Quality  X/10 — <one sentence>
   ## Results Validity        X/10 — <one sentence>
+  ## Transfer Quality        X/10 — <one sentence: does this round extract reusable
+     knowledge? Did the orchestrator produce a ## Transferable Lessons section with
+     principles that go beyond this single round?>
   ## Overall Score           X/10
   ## Critical Weaknesses     (bullet list, max 3 items)
   ## Recommended Next Steps  (bullet list, max 3 specific actionable items)
@@ -521,6 +544,8 @@ STAGNATION PENALTY (apply when scoring):
   Hypothesis Quality: max 4/10 (proposing the same blocked approach is poor experimental design)
 - If the implementation attempted packages NOT in hw_profile.json available_packages:
   Implementation Quality: max 5/10 (poor tool selection given known environment)
+- If 06_synthesis.md is absent OR lacks a ## Transferable Lessons section with ≥1 bullet:
+  Transfer Quality: max 3/10 (knowledge that isn't extracted cannot transfer to future rounds)
 Be harsh. Generous scoring of a stagnating pipeline encourages more stagnation.
 
 SCORING RULES
@@ -564,6 +589,12 @@ STRUCTURE — short bullets, not paragraphs:
   ## What Worked          (1–3 bullets)
   ## What Failed / Gaps   (1–3 bullets)
   ## Updated Research Direction  (1–2 sentences)
+  ## Transferable Lessons (2–3 bullets — knowledge that applies BEYOND this round.
+     Frame as reusable principles, not round-specific facts. Examples:
+     "numpy-only descriptor pipelines reliably produce numbers when MD fails";
+     "PME cutoff errors → always check unit imports before running";
+     "BioPython ProtParam is a reliable fallback when RDKit is unavailable".
+     This section is MANDATORY — it feeds the case memory for future rounds.)
 
   Then ONE of:
 
@@ -593,13 +624,17 @@ STEPS
 HTML SECTIONS (in order):
   1. Sticky nav · 2. Header (round, topic, date, score badge)
   3. Executive Summary (4–5 bullets from synthesis)
-  4. Experiment (hypothesis, success metric, data used)
-  5. Implementation (approach bullets, data source, any skipped steps)
-  6. Results & Plots (ALL PNGs base64-embedded, 2-col grid, 1-line captions)
-  7. Evaluation (scores table colour-coded ≥7 green / 4–6 amber / ≤3 red;
+  4. Interpretation (1 short paragraph — connect the KEY numbers to the research
+     question in plain language. What do the results actually mean for the topic?
+     Why do they matter? Do NOT just list metrics — explain what they imply.
+     If results are only errors, explain what that tells us about the approach.)
+  5. Experiment (hypothesis, success metric, data used)
+  6. Implementation (approach bullets, data source, any skipped steps)
+  7. Results & Plots (ALL PNGs base64-embedded, 2-col grid, 1-line captions)
+  8. Evaluation (scores table colour-coded ≥7 green / 4–6 amber / ≤3 red;
      embed 05_scores_chart.png if it exists)
-  8. Next Direction (NEXT_ROUND_BRIEF as callout box)
-  9. Footer (round, topic, timestamp)
+  9. Next Direction (NEXT_ROUND_BRIEF as callout box)
+  10. Footer (round, topic, timestamp)
 
 DESIGN: dark (#1a1a2e) header, white cards, Inter font (CDN OK), max-width
 1100px, responsive 2-col plot grid. All images base64 — no external URLs.
@@ -1253,6 +1288,123 @@ def _update_findings(
     display.print_info(f"  findings.md updated (round {round_num})")
 
 
+def _update_case_memory(
+    research_dir: str,
+    round_num: int,
+    round_dir: str,
+    topic: str,
+) -> None:
+    """
+    Update case_memory.md and skills.md after each round.
+    case_memory.md: structured case entries with transferable lessons (read by researcher + hypothesis).
+    skills.md:      operational/procedural patterns extracted from coder/debugger pivots.
+    """
+    case_memory_path = Path(research_dir) / CASE_MEMORY_FILE
+    skills_path = Path(research_dir) / SKILLS_FILE
+
+    def _read(rel: str) -> str:
+        p = Path(round_dir) / rel
+        if p.exists():
+            try:
+                return p.read_text(errors="replace").strip()
+            except OSError:
+                return ""
+        return ""
+
+    synthesis    = _read(OUTPUT_FILES["orchestrator"])
+    evaluation   = _read(OUTPUT_FILES["evaluator"])
+    experiment   = _read(OUTPUT_FILES["hypothesis"])
+    debug_report = _read(OUTPUT_FILES["debugger"])
+
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M")
+
+    # Extract score
+    score_match = re.search(
+        r"##\s*Overall Score\s+(\d+(?:\.\d+)?/\d+|\d+(?:\.\d+)?\s*/\s*\d+)",
+        evaluation,
+    )
+    if not score_match:
+        score_match = re.search(r"##\s*Overall Score[^\n]*\n+([^\n]+)", evaluation)
+    score_str = score_match.group(1).strip() if score_match else "N/A"
+
+    # Extract experiment name
+    exp_name_match = re.search(r"##\s*Experiment:\s*(.+)", experiment)
+    exp_name = exp_name_match.group(1).strip() if exp_name_match else f"Round {round_num}"
+
+    # Extract what worked / failed from synthesis
+    ww_match = re.search(r"##\s*What Worked\s*\n(.*?)(?:\n##|\Z)", synthesis, re.DOTALL)
+    wf_match = re.search(r"##\s*What Failed[^\n]*\n(.*?)(?:\n##|\Z)", synthesis, re.DOTALL)
+    what_worked = ww_match.group(1).strip() if ww_match else ""
+    what_failed = wf_match.group(1).strip() if wf_match else ""
+
+    # Extract transferable lessons (orchestrator's ## Transferable Lessons section)
+    tl_match = re.search(
+        r"##\s*Transferable Lessons\s*\n(.*?)(?:\n##|\Z)", synthesis, re.DOTALL
+    )
+    transferable = tl_match.group(1).strip() if tl_match else ""
+
+    # --- Write case_memory.md ---
+    case_entry_lines = [
+        f"\n\n---\n\n## Case {round_num}  ·  {timestamp}  ·  Score: {score_str}",
+        f"\n**Experiment:** {exp_name[:200]}",
+    ]
+    if what_worked:
+        case_entry_lines.append(f"\n**What Worked:**\n{what_worked[:400]}")
+    if what_failed:
+        case_entry_lines.append(f"\n**What Failed:**\n{what_failed[:400]}")
+    if transferable:
+        case_entry_lines.append(f"\n**Transferable Lessons:**\n{transferable[:600]}")
+
+    case_entry = "".join(case_entry_lines)
+
+    if not case_memory_path.exists():
+        header = (
+            f"# Case Memory: {topic}\n\n"
+            "_Cross-round knowledge base. Each case records what was tried, what worked, "
+            "and transferable lessons for future rounds. "
+            "Read by Researcher and Experiment Designer at the start of each round._\n"
+        )
+        case_memory_path.write_text(header + case_entry, encoding="utf-8")
+    else:
+        with open(case_memory_path, "a", encoding="utf-8") as f:
+            f.write(case_entry)
+
+    display.print_info(f"  case_memory.md updated (round {round_num})")
+
+    # --- Write skills.md — operational/procedural patterns ---
+    skills_bullets: list[str] = []
+
+    # Capture debugger pivots
+    pivot_match = re.search(r"Pivoted to:\s*(.+)", debug_report)
+    blocked_match = re.search(r"Original approach blocked:\s*(.+)", debug_report)
+    if blocked_match:
+        skills_bullets.append(f"- (blocked) {blocked_match.group(1).strip()[:200]}")
+    if pivot_match:
+        skills_bullets.append(f"- (pivot worked) {pivot_match.group(1).strip()[:200]}")
+
+    # Add transferable lessons as skill bullets
+    if transferable:
+        for line in transferable.splitlines():
+            line = line.strip()
+            if line.startswith("-") and len(line) > 5:
+                skills_bullets.append(f"  {line}")
+
+    if skills_bullets:
+        skills_entry = f"\n\n### Round {round_num}  ·  {timestamp}\n" + "\n".join(skills_bullets)
+        if not skills_path.exists():
+            header = (
+                f"# Skills & Operational Patterns: {topic}\n\n"
+                "_Procedural knowledge: what tools/approaches work, what to avoid, "
+                "proven fallback strategies. Read by Coder and Debugger._\n"
+            )
+            skills_path.write_text(header + skills_entry, encoding="utf-8")
+        else:
+            with open(skills_path, "a", encoding="utf-8") as f:
+                f.write(skills_entry)
+
+        display.print_info(f"  skills.md updated (round {round_num})")
+
+
 # ---------------------------------------------------------------------------
 # Overseer: parse synthesis for next brief and completion signal
 # ---------------------------------------------------------------------------
@@ -1319,14 +1471,19 @@ HTML SECTIONS:
   1. Sticky nav
   2. Title block (topic, date, rounds, quality badge)
   3. Abstract (1 paragraph — entire research arc)
-  4. Research Timeline table: Round | Hypothesis | Score | Status
-  5. Cumulative Findings (from findings.md, as cards)
-  6. Round Deep Dives — one <details> per round:
+  4. Research Interpretation (1 paragraph — what did the pipeline collectively learn?
+     Connect accumulated findings to the original research question. What do the
+     numbers, methods, and failures mean together? This is the "so what" section.)
+  5. Research Timeline table: Round | Hypothesis | Score | Status
+  6. Cumulative Findings (from findings.md, as cards)
+  7. Accumulated Knowledge (from case_memory.md — transferable lessons across rounds,
+     presented as a "what we learned" card deck; skip if file absent)
+  8. Round Deep Dives — one <details> per round:
        hypothesis · implementation summary · ALL result plots (2-col, base64)
-       · scores chart · what worked / failed
-  7. Score Progression chart (generate with matplotlib: round on x, score on y)
-  8. Key Visualisations Gallery (summary_figure.png from each round, full-width)
-  9. Conclusions & Next Steps (from final synthesis)
+       · scores chart · what worked / failed · transferable lessons
+  9. Score Progression chart (generate with matplotlib: round on x, score on y)
+  10. Key Visualisations Gallery (summary_figure.png from each round, full-width)
+  11. Conclusions & Next Steps (from final synthesis)
   Footer: topic · timestamp · "Generated by OctoSlave"
 
 DESIGN: dark header (#0d1117), white cards, Inter (CDN OK), max-width 1200px,
@@ -1814,8 +1971,14 @@ def run_long_research(
                         f"iterations. Next role will proceed without it.[/yellow]"
                     )
 
-        # Update findings.md from round outputs — pipeline-owned, not LLM-owned
+        # Update findings.md and case_memory.md from round outputs — pipeline-owned, not LLM-owned
         _update_findings(
+            research_dir=str(research_dir),
+            round_num=round_num,
+            round_dir=str(round_dir),
+            topic=topic,
+        )
+        _update_case_memory(
             research_dir=str(research_dir),
             round_num=round_num,
             round_dir=str(round_dir),
