@@ -2,6 +2,7 @@
 
 import json
 import sys
+import time as _time
 from rich.console import Console
 from rich.panel import Panel
 from rich.rule import Rule
@@ -245,6 +246,22 @@ def print_task(task: str):
 
 _stream_state = _threading.local()
 
+_SPINNER_FRAMES = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
+_SPINNER_CLEAR  = "\r" + " " * 32 + "\r"
+
+
+def _spinning(stop_event: _threading.Event) -> None:
+    """Background thread: animate a waiting indicator until stop_event is set."""
+    i = 0
+    while not stop_event.wait(timeout=0.1):
+        frame = _SPINNER_FRAMES[i % len(_SPINNER_FRAMES)]
+        elapsed = int(i * 0.1)
+        sys.stdout.write(f"\r  {frame} waiting for model… {elapsed}s")
+        sys.stdout.flush()
+        i += 1
+    sys.stdout.write(_SPINNER_CLEAR)
+    sys.stdout.flush()
+
 
 def _streaming_started() -> bool:
     return getattr(_stream_state, "started", False)
@@ -252,11 +269,29 @@ def _streaming_started() -> bool:
 
 def stream_start():
     _stream_state.started = False
+    _emit({"type": "stream_start"})
+    # CLI-only spinner — skip when a web event callback is active
+    if getattr(_tl, "emit", None) is not None:
+        _stream_state.stop_event = None
+        _stream_state.spinner_thread = None
+        return
+    stop = _threading.Event()
+    _stream_state.stop_event = stop
+    t = _threading.Thread(target=_spinning, args=(stop,), daemon=True)
+    _stream_state.spinner_thread = t
+    t.start()
 
 
 def stream_chunk(text: str):
     _emit({"type": "token", "text": text})
     if not _streaming_started():
+        # First token — kill the spinner and emit the response prefix
+        stop: _threading.Event = getattr(_stream_state, "stop_event", None)
+        if stop is not None:
+            stop.set()
+            t: _threading.Thread = getattr(_stream_state, "spinner_thread", None)
+            if t is not None:
+                t.join(timeout=0.3)   # wait for the clear to flush
         console.print("[bold green]●[/bold green] ", end="")
         _stream_state.started = True
     sys.stdout.write(text)
@@ -265,6 +300,13 @@ def stream_chunk(text: str):
 
 def stream_end(had_content: bool):
     _emit({"type": "stream_end"})
+    # Stop the spinner if no content ever arrived (e.g. tool-call-only response)
+    stop: _threading.Event = getattr(_stream_state, "stop_event", None)
+    if stop is not None:
+        stop.set()
+        t: _threading.Thread = getattr(_stream_state, "spinner_thread", None)
+        if t is not None:
+            t.join(timeout=0.3)
     if had_content:
         sys.stdout.write("\n")
         sys.stdout.flush()

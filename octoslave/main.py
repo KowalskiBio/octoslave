@@ -20,7 +20,7 @@ from .config import (
     PIPELINE_ROLES, EINFRA_ROLE_MODELS, NIM_ROLE_MODELS,
     load_config, save_config,
     ollama_is_running, ollama_list_models, ollama_pull_model,
-    nim_list_models,
+    nim_list_models, einfra_list_models, list_models,
     assign_local_models,
     get_role_models, save_role_model, reset_role_models,
 )
@@ -341,9 +341,14 @@ def models(local):
         display.console.print("[dim]Switch backend: /einfra · /local · /nim[/dim]")
         return
 
-    display.console.print("[bold]Available models on e-INFRA CZ:[/bold]\n")
+    einfra_models = einfra_list_models(cfg.get("base_url", BASE_URL), cfg.get("api_key", ""))
+    if einfra_models:
+        display.console.print("[bold]Available models on e-INFRA CZ[/bold] [dim](live from API)[/dim]\n")
+    else:
+        einfra_models = list(KNOWN_MODELS)
+        display.console.print("[bold]Available models on e-INFRA CZ[/bold] [dim](static fallback)[/dim]\n")
     default = cfg.get("default_model", DEFAULT_MODEL)
-    for m in KNOWN_MODELS:
+    for m in einfra_models:
         marker = " [bold green]← default[/bold green]" if m == default else ""
         display.console.print(f"  {m}{marker}")
     display.console.print()
@@ -528,15 +533,19 @@ def _handle_slash(cmd: str, state: dict, cfg: dict, messages: list, client) -> s
                 _print_local_models(state["ollama_url"])
             elif state["backend"] == "nim":
                 nim_models = nim_list_models(state.get("nim_url", NIM_BASE_URL), state.get("nim_api_key", ""))
+                source = "[dim](live)[/dim]" if nim_models else "[dim](fallback)[/dim]"
                 if not nim_models:
                     nim_models = list(NIM_KNOWN_MODELS)
-                display.console.print("[bold]Available models on NVIDIA NIM:[/bold]")
+                display.console.print(f"[bold]Available models on NVIDIA NIM:[/bold] {source}")
                 for m in nim_models:
                     mark = " [green]←[/green]" if m == state["model"] else ""
                     display.console.print(f"  {m}{mark}")
             else:
-                display.console.print("[bold]Available models:[/bold]")
-                for m in KNOWN_MODELS:
+                live = einfra_list_models(state.get("base_url", BASE_URL), state.get("api_key", ""))
+                source = "[dim](live)[/dim]" if live else "[dim](fallback)[/dim]"
+                models_to_show = live if live else list(KNOWN_MODELS)
+                display.console.print(f"[bold]Available models on e-INFRA CZ:[/bold] {source}")
+                for m in models_to_show:
                     mark = " [green]←[/green]" if m == state["model"] else ""
                     display.console.print(f"  {m}{mark}")
         else:

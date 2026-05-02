@@ -33,6 +33,7 @@ function handleServerMessage(msg) {
     case 'config':        applyConfig(msg.data); break;
     case 'config_updated': onConfigUpdated(msg); break;
     case 'models':        populateModelSelects(msg.list || []); break;
+    case 'stream_start':  onStreamStart(); break;
     case 'token':         onToken(msg.text); break;
     case 'stream_end':    onStreamEnd(); break;
     case 'tool_call':     onToolCall(msg.name, msg.summary); break;
@@ -143,7 +144,20 @@ function ensureAssistantBubble() {
   scrollToBottom(container);
 }
 
+function onStreamStart() {
+  ensureAssistantBubble();
+  if (currentAssistantBubble) {
+    currentAssistantBubble.classList.remove('streaming-cursor');
+    currentAssistantBubble.classList.add('waiting-for-response');
+  }
+}
+
 function onToken(text) {
+  // Transition from waiting indicator to live streaming on first token
+  if (currentAssistantBubble && currentAssistantBubble.classList.contains('waiting-for-response')) {
+    currentAssistantBubble.classList.remove('waiting-for-response');
+    currentAssistantBubble.classList.add('streaming-cursor');
+  }
   ensureAssistantBubble();
   streamBuffer += text;
   currentAssistantBubble.textContent = streamBuffer;
@@ -153,6 +167,7 @@ function onToken(text) {
 function onStreamEnd() {
   if (currentAssistantBubble) {
     currentAssistantBubble.classList.remove('streaming-cursor');
+    currentAssistantBubble.classList.remove('waiting-for-response');
     currentAssistantBubble.innerHTML = renderMarkdown(streamBuffer);
   }
   currentAssistantBubble = null;
