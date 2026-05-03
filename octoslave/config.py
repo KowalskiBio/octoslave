@@ -46,7 +46,8 @@ KNOWN_MODELS = [
 NIM_KNOWN_MODELS = [
     # Llama 4
     "meta/llama-4-maverick-17b-128e-instruct",
-    # NVIDIA Nemotron (free tier)
+    # NVIDIA Nemotron (free tier — confirmed working)
+    "nvidia/nemotron-3-super-120b-a12b",
     "nvidia/llama-3.3-nemotron-super-49b-v1",
     "nvidia/llama-3.3-nemotron-super-49b-v1.5",
     "nvidia/llama-3.1-nemotron-nano-8b-v1",
@@ -88,7 +89,18 @@ EINFRA_ROLE_MODELS: dict[str, str] = {
     "merger":       "deepseek-v3.2",
 }
 
-NIM_ROLE_MODELS: dict[str, str] = {role: NIM_DEFAULT_MODEL for role in PIPELINE_ROLES}
+NIM_ROLE_MODELS: dict[str, str] = {
+    # Heavy reasoning roles — largest confirmed-stable NVIDIA model
+    "researcher":   "nvidia/nemotron-3-super-120b-a12b",
+    "hypothesis":   "nvidia/nemotron-3-super-120b-a12b",
+    "coder":        "nvidia/nemotron-3-super-120b-a12b",
+    "debugger":     "nvidia/nemotron-3-super-120b-a12b",
+    "evaluator":    "nvidia/nemotron-3-super-120b-a12b",
+    # Lighter synthesis/writing roles — 49B, confirmed stable
+    "orchestrator": "nvidia/llama-3.3-nemotron-super-49b-v1.5",
+    "reporter":     "nvidia/llama-3.3-nemotron-super-49b-v1.5",
+    "merger":       "nvidia/llama-3.3-nemotron-super-49b-v1.5",
+}
 
 
 # ---------------------------------------------------------------------------

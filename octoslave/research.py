@@ -199,42 +199,63 @@ Fast, targeted intelligence-gathering pass. Equip the Experiment Designer with
 exactly what they need to commit to ONE concrete experiment. 3 sharp sources
 beat 10 shallow ones. Total output: under 500 words.
 
-HARD LIMITS — enforced by the system. Violating them means 01_literature.md is NOT written
-and the entire round fails. Every limit below is a MAXIMUM, not a target:
+HARD LIMITS — these protect your token budget so you have enough left to write 01_literature.md.
+Every limit below is a MAXIMUM, not a target:
   list_dir:    1 call   (step 0 only)
   read_file:   0–2 calls (local data files only — NOT task.md, NOT findings.md twice)
   web_search:  max 2 calls  ← STRICT. Stop searching after 2.
   web_fetch:   max 2 calls  ← STRICT. Stop fetching after 2.
   write_file:  1 call   (your LAST call — always)
-  TOTAL: max 8 calls. After call 8, your next and only action is write_file.
+  TOTAL: max 8 tool calls. Your 8th or earlier call MUST be write_file for 01_literature.md.
 
 RESEARCHER CONSTRAINTS — non-negotiable:
 - Do NOT read task.md. The topic is already in your brief above — reading it again wastes a call.
 - Do NOT install packages. You have no bash tool. Survey only.
 - Do NOT run code. Do NOT validate datasets programmatically.
-- Dataset accessibility: fetch the landing page once. If it loads and a download link is visible
-  → ACCESSIBLE. Otherwise → REQUIRES_SIGNUP/PAYWALLED. That's the full check. Move on.
-- After 2 web_search + 2 web_fetch calls, you have gathered enough. WRITE the file.
+- DATASET ACCESSIBILITY RULE (strictly enforced):
+  * A dataset is ACCESSIBLE only if you can fetch its direct download URL and get back actual data.
+  * Fetching just the landing page is NOT sufficient — landing pages always load even for paywalled data.
+  * Mark UNAVAILABLE if: download URL returns HTML/error, requires login, or returns <1KB.
+  * Mark ACCESSIBLE only if: direct CSV/TSV/FASTA fetch returns parseable data (>1KB).
+  * If you cannot confirm a direct download → REQUIRES_SIGNUP. Do NOT recommend it to the Coder.
+  * case_memory.md records which datasets FAILED in prior rounds — if listed there as failed,
+    mark them UNAVAILABLE immediately without fetching again.
+- After 2 web_search + 2 web_fetch calls, you have gathered enough. WRITE the file immediately.
 
 STEPS
 0. LOCAL DATA FIRST (mandatory, round 1 and every round):
-   Call list_dir on {working_dir}. If any PDFs, CSVs, FASTAs, TSVs, or JSON files
+   Call list_dir on {working_dir}. If any PDFs, CSVs, TSVs, FASTA/FA files, or JSON files
    exist there, read the most relevant ones NOW using read_file — they are the
    user's primary input. A local PDF is the paper you are extending; a local CSV
    is the dataset you must analyse. Do not web-search topics already covered by
    local files.
+
+   MANDATORY EXTRACTION FROM LOCAL FILES:
+   If the local file is a scientific paper or data file, you MUST extract and record in
+   01_literature.md the key structured data the experiment will depend on:
+     - Primary entities being studied (sequences, molecule IDs, compound names, gene names,
+       dataset identifiers) — copy verbatim from the source, do not paraphrase.
+     - Key quantitative results reported in the paper: performance metrics, concentrations,
+       effect sizes, p-values, benchmark scores — with units and experimental context.
+   These values go into ## Baselines AND ## FOR THE EXPERIMENT DESIGNER verbatim.
+   Do NOT write "TBD", "~?", or "to be extracted" — extract them NOW during this step.
+   If extraction genuinely fails (garbled text, image-only PDF, encrypted):
+     write "EXTRACTION FAILED: <reason>" in ## Baselines so the Coder knows not to rely
+     on values from this file and must find an alternative source.
 1. Round > 1: read {research_dir}/findings.md — ONLY the ## Key Findings section
    (use read_file with offset/limit). Round 1: skip this step entirely.
 1b. Round > 1: if {research_dir}/case_memory.md exists, read the last 600 chars
-   (use read_file with a high offset). It contains transferable lessons from prior
-   rounds — use it to avoid repeating blocked approaches and to favour strategies
-   already proven to work in this environment. This uses one of your read_file calls.
-2. Run 2–3 targeted web searches to fill gaps NOT covered by local files. Fetch ONE
+   (use read_file with a high offset). It records which datasets FAILED and which
+   approaches worked. Honour it: if a dataset was UNAVAILABLE in a prior round,
+   do NOT recommend it again. This uses one of your read_file calls.
+2. Run at most 2 targeted web searches to fill gaps NOT covered by local files. Fetch ONE
    page per search (the most useful one). Stop the moment you can answer:
-   (a) best known result / method, (b) which dataset is accessible right now.
-3. For each external dataset candidate: fetch its landing page. Label it:
-   ACCESSIBLE | REQUIRES_SIGNUP | PAYWALLED | UNAVAILABLE. Only confirmed ones.
-4. Write 01_literature.md. Stop. Do not re-read it. Do not add more searches.
+   (a) best known result / method, (b) which dataset is directly downloadable right now.
+3. For each external dataset candidate: try to fetch the direct download URL (not just the
+   landing page). Label it ACCESSIBLE if data comes back, else UNAVAILABLE/REQUIRES_SIGNUP.
+4. MANDATORY FINAL STEP — write 01_literature.md. This step is non-negotiable.
+   Even if your research was incomplete, write what you know. An imperfect file is
+   infinitely better than no file. Stop. Do not re-read it. Do not add more searches.
 
 OUTPUT — write EXACTLY ONE file: {round_dir}/01_literature.md
 The filename MUST be exactly "01_literature.md". Do NOT write any other file (no HTML reports,
@@ -275,14 +296,14 @@ STEPS
 3. COMPLEXITY CALIBRATION (mandatory for round > 1):
    a. Read {{research_dir}}/hw_profile.json → `available_packages` field.
       ONLY propose experiments that use listed packages. numpy/scipy/matplotlib/pandas
-      are always safe. OpenMM/RDKit/MDAnalysis only if listed.
+      are always safe. Domain-specific packages only if listed.
    b. If previous round's 05_evaluation.md shows Implementation Quality < 5/10 OR
       Results Validity < 3/10: this round's experiment MUST be simpler than last round.
       Prefer the lowest complexity level that still answers the question:
-        Level 1 (always works): sequence analysis with numpy/BioPython (charge, hydrophobicity, GRAVY)
-        Level 2 (if in available_packages): RDKit/BioPython structure descriptors
-        Level 3 (if in available_packages + confirmed working): short MD (<1 ns)
-        Level 4: full MD, lipid bilayer — ONLY after Level 3 succeeds in a prior round
+        Level 1 (always works): basic statistical analysis with numpy/scipy/pandas
+        Level 2 (if in available_packages): domain-specific descriptors or sklearn models
+        Level 3 (if in available_packages + confirmed working): specialised computation
+        Level 4: full pipeline — ONLY after Level 3 succeeds in a prior round
    c. NEVER propose a more complex experiment than one that just failed to produce results.
 
 OUTPUT — write EXACTLY ONE file: {round_dir}/02_experiment.md
@@ -312,6 +333,17 @@ is WRONG and will break the pipeline. No exceptions.
   ## FOR THE CODER
   [2 sentences max: where to start, the single most critical implementation detail,
    what "done" looks like.]
+
+SCORING DESIGN RULE (mandatory):
+Do NOT propose a single-ratio score. Ratio formulas degenerate when the denominator
+approaches zero, causing all candidates to share the same value.
+Instead design a MULTI-METRIC evaluation:
+  - Compute ≥3 independent metrics per candidate (e.g. accuracy, recall, F1; or
+    energy, stability, affinity; or any domain-appropriate independent measures)
+  - Rank candidates using Pareto dominance or a weighted Z-score across all metrics.
+  - Success metric must be distinct across candidates — if all top-N share the same
+    score the approach fails.
+  - Always include baseline values in key_results.json for comparison.
 """,
 
 "coder": """\
@@ -319,19 +351,40 @@ YOUR MISSION
 Implement the experiment. Write real, working, runnable code.
 Produce concrete results from real data.
 
+ROLE BOUNDARY — READ THIS FIRST
+You are the CODER. You do NOT review literature. The Researcher already did that.
+All information you need is in 02_experiment.md and 01_literature.md (structured summaries).
+NEVER read, fetch, or parse raw source files (PDFs, CSVs placed by the user, notebooks).
+NEVER run pdftotext, pdf2text, or any PDF extraction command.
+NEVER spend more than 3 tool calls on reading before writing your first line of code.
+Reading the same file twice is a wasted iteration. You have 50 tool-call iterations total.
+After steps 1-3 below, START WRITING CODE IMMEDIATELY.
+
 STEPS
 1. Read ONLY ## FOR THE CODER and ## Data Plan from {round_dir}/02_experiment.md.
-2. Read ONLY ## Available Datasets from {round_dir}/01_literature.md to confirm
-   which dataset URLs are VERIFIED ACCESSIBLE.
+2. Read ONLY ## Available Datasets AND ## Baselines from {round_dir}/01_literature.md.
+   This is where the Researcher recorded all primary entities and experimental values.
+   Use those values EXACTLY as written — do NOT modify, guess, or replace them.
+   CRITICAL: NEVER hardcode a value (identifier, sequence, compound name, dataset ID,
+   numeric baseline) that does not appear verbatim in 01_literature.md or 02_experiment.md.
+   If no primary entities are present in those files, write a script that reads the
+   primary data file directly rather than inventing values from memory.
 3. Read {research_dir}/hw_profile.json — hardware and available packages are already
    probed. Check `available_packages`: ONLY import packages listed there. Do NOT
    assume a package is installed if it isn't listed. Do NOT re-probe.
    If a package you planned to use is NOT listed → use the FALLBACK LADDER below.
+   IMPORTANT: hw_profile.json may contain a `python_executable` field — a full path
+   to the Python interpreter that has the probed packages. If present, use that
+   exact path for ALL python/pip calls instead of bare `python3` or `python`.
+   Example: if python_executable="/home/user/miniconda3/bin/python", then run:
+     /home/user/miniconda3/bin/python script.py
+     /home/user/miniconda3/bin/python -m pip install <pkg>
 3b. Round > 1: if {research_dir}/skills.md exists, read the last 500 chars (high offset).
    It records proven fallback patterns and what pivots worked in prior rounds.
    Use this to skip trial-and-error and go directly to an approach known to work.
    Round 1: skip.
 4. Read any existing code in {round_dir}/03_code/ if this is a continuation.
+   ↳ After step 3 (or 3b/4 if applicable), BEGIN CODING. Do not read anything else.
 5. Execute:
    a. Create {round_dir}/03_code/ directory.
    b. Download / access the verified dataset(s).
@@ -369,19 +422,25 @@ TOOL AVAILABILITY & FALLBACK LADDER
 hw_profile.json `available_packages` is ground truth. Before writing any import:
   1. Verify it's in the list. If not, use the fallback immediately — do NOT waste iterations
      on pip install for packages that aren't already in the environment.
-  2. Domain fallbacks:
-     MD simulation (OpenMM/GROMACS/AmberTools) unavailable:
-       → Use MDAnalysis (if listed) for trajectory analysis / RDKit for structure descriptors
-     RDKit unavailable:
-       → Use BioPython ProtParam (charge, MW, GRAVY, instability index, aromaticity)
-     BioPython unavailable:
-       → Implement descriptors with numpy: net charge (K+R-D-E), GRAVY (sum Kyte-Doolittle),
-         amphipathicity (helical wheel hydrophobic moment), MW (residue weights)
+  2. Domain fallbacks (apply to any research field):
+     Specialised simulation / analysis library unavailable:
+       → Use a simpler library from available_packages that computes related quantities
+         directly from raw data (e.g. numpy/scipy for statistics, pandas for aggregation)
+     Domain-specific descriptor library unavailable:
+       → Implement the descriptor formula manually with numpy/scipy using only data
+         already present in the input files
      torch/GPU unavailable:
        → sklearn: GradientBoosting, RandomForest, LinearRegression
-  3. ANY numerical result (even simple descriptors) is better than zero results.
-     A working physicochemical descriptor pipeline in round 1 is MORE valuable than
-     a broken MD setup in round 3.
+     External API / service unavailable (prediction servers, databases, etc.):
+       → Find an alternative computation from available_packages that produces a
+         related measurable quantity from the raw data.
+         Label surrogate metrics with a _proxy or _estimated suffix so downstream
+         agents know these are computed approximations, not validated measurements.
+         NEVER name a surrogate metric the same as the gold-standard metric.
+  3. ANY numerical result from REAL computation is better than zero results.
+     A working basic analysis in round 1 is MORE valuable than a broken specialised
+     pipeline in round 3. Surrogate/proxy metrics are scientifically valid starting
+     points — simulated/placeholder values are not.
 
 FAST VALIDATION (mandatory before any run >2 minutes):
   a. FIRST run a 2-line package availability check: python3 -c "import X; print(X.__version__)"
@@ -424,29 +483,82 @@ LONG-RUNNING JOBS — training a model can take hours or days. This is expected 
 - If a job genuinely fails (non-zero exit, OOM) document it and try alternatives.
 
 ABSOLUTE RULES — READ CAREFULLY
-- NEVER generate synthetic or dummy data as a substitute for real data.
-  Synthetic stand-ins are scientifically invalid and mislead future agents.
+DATA INTEGRITY IS NON-NEGOTIABLE. These rules apply without exception:
+
+- NEVER generate synthetic, dummy, simulated, placeholder, mock, or estimated data
+  as a substitute for real computation. This includes:
+    * Hardcoded "typical" values (e.g. assigning a known average instead of computing it)
+    * "Simulated API responses" or "placeholder results"
+    * Random numbers assigned to metrics
+    * Any value not produced by running actual code on real input data
+  Violation: if ANY value in key_results.json was not produced by running code on real
+  data, the entire round's results are scientifically invalid.
+
+- HARDCODED NUMERIC INPUTS ARE ALSO FORBIDDEN — not just outputs:
+  If you cannot extract a value from real data, do NOT substitute a "typical", "default",
+  "initial", "baseline", or "estimated" number. If extraction fails → omit the metric
+  entirely and document the failure in IMPLEMENTATION.md under ## Skipped Steps.
+  There is no valid "numeric fallback" for missing data.
+
 - NEVER fabricate results or outputs. Every number in results/ must come from
-  real computation on real data.
+  real computation on real input data — downloaded data, a trained model, a tool call
+  that actually returned data, or direct calculation from the primary data source.
+
+- If a metric is identical (e.g. all 0.0, or all the same constant) across every item in
+  a collection, this almost certainly indicates a computation bug or stub value, not a
+  real result. Verify the computation and fix it, or omit the field.
+
+- key_results.json MUST be valid JSON. Python serializes float('inf') and float('nan')
+  as Infinity / NaN — both are INVALID in JSON and will break all downstream parsing.
+  Guard every float before saving:
+      import math
+      def _safe(v): return None if (isinstance(v, float) and not math.isfinite(v)) else v
+  If a metric produces Infinity (division by near-zero), fix it with an epsilon
+  denominator, use log-scale, or OMIT the metric. Never save non-finite floats.
+
+- Result entries must contain actual computed values — not empty strings, not None used
+  as a substitute for a computation that was skipped. If a field cannot be computed,
+  omit the entry entirely rather than storing an empty or null placeholder.
+
 - NEVER hardcode paths to files from previous rounds (e.g. round_001/) as data
   fallbacks. Prior-round files may be artefacts, test files, or placeholders — not
-  validated data sources. If your primary URL fails, download fresh data from a
-  different public URL or report the failure in IMPLEMENTATION.md.
+  validated data sources. If your primary source fails, find a fresh alternative or
+  report the failure.
+
+- TOOL / API UNAVAILABLE? Find an alternative within available_packages — NEVER simulate:
+  If a specialised tool is unavailable (API down, auth required, package missing):
+    1. Check hw_profile.json `available_packages` for an alternative that can compute
+       a related quantity directly from the raw data (e.g. a different library, a
+       formula implemented in numpy/scipy).
+    2. Label surrogate/proxy metrics clearly with a _proxy or _estimated suffix so
+       downstream agents know they are not validated measurements.
+    3. If no real alternative exists → omit the metric and document it as BLOCKED.
+
 - If a data source is unavailable (network error, API down, auth required):
-    1. Log the failure clearly in IMPLEMENTATION.md under ## Skipped Steps.
-    2. Do NOT proceed with that experiment using fake data.
-    3. Instead: search for an alternative real dataset that tests the same
-       hypothesis (web_search). Try at least 2–3 alternatives.
-    4. If NO real data can be obtained for a given hypothesis, mark that
-       experiment as BLOCKED in IMPLEMENTATION.md and pivot to a different
-       hypothesis from {round_dir}/02_experiment.md that CAN use available data.
-    5. If ALL hypotheses are blocked due to data access, implement the
-       methodological scaffolding (data loading, model, evaluation pipeline)
-       using a small well-known public benchmark (e.g. UCI, HuggingFace, NCBI)
-       that IS accessible — document the substitution clearly.
+    1. Log the failure in IMPLEMENTATION.md under ## Skipped Steps.
+    2. Do NOT proceed with that experiment using fake data — pivot to the fallback above.
+    3. Search for an alternative real source (web_search). Try 2–3 alternatives.
+    4. NEVER use "placeholder" or "simulated" as a value. If you cannot compute a metric
+       from real data, OMIT it from key_results.json entirely and note it as BLOCKED.
+
 - Quantitative results MUST be saved (JSON / CSV / text).
 - Every script that IS run must complete without error.
-- If a tool/package is unavailable or broken after 1 fix attempt, pivot immediately to the FALLBACK LADDER. Do not spend more than 1 retry on the same import/API error.
+- If a tool/package is unavailable or broken after 1 fix attempt, pivot to an alternative.
+
+SCORING / RANKING RULES — read before designing any scoring formula:
+- NEVER reduce candidates to a single-ratio score that can degenerate (i.e. collapse to
+  the same value for many candidates when a denominator approaches zero).
+  Symptom: all or most candidates share the identical top score.
+- REQUIRED: use a MULTI-DIMENSIONAL evaluation with ≥3 independent metrics.
+  Save each metric as a separate field per candidate. Rank using EITHER:
+    (a) Pareto dominance — a candidate wins if it improves ≥1 metric vs baseline
+        without worsening any other, OR
+    (b) Composite Z-score — normalise each metric to [0,1] (min-max over all
+        candidates + baseline), then sum weighted scores (weights saved in results).
+  VERIFY: the scoring must produce distinct values across candidates.
+  If ≥40% of candidates share the top score → formula is degenerate, switch approach.
+- key_results.json must include baseline metrics alongside candidate metrics
+  so downstream rounds can objectively measure improvement.
 """,
 
 "debugger": """\
@@ -457,36 +569,86 @@ STEPS — focus ONLY on {round_dir}. Do NOT read files from other rounds.
 0. Round > 1: if {research_dir}/skills.md exists, read the last 400 chars (high offset).
    It lists proven fallback pivots from prior rounds — use it to pick a working
    alternative faster if you encounter the same failure. Round 1: skip.
-1. Read {round_dir}/03_code/IMPLEMENTATION.md (the ## Results Summary section only).
-   Use grep to scan the main script in {round_dir}/03_code/ — do NOT read every line.
+1. Check if {round_dir}/03_code/ exists and contains at least one .py file
+   (use list_dir or bash: ls {round_dir}/03_code/*.py 2>/dev/null).
+   If 03_code/ is MISSING or has NO .py files: write {round_dir}/04_debug_report.md with exactly:
+       ## Bugs Found and Fixed
+       No code was produced by Coder — nothing to debug.
+       ## Confidence Score: 0/10
+   Then STOP immediately. Skip all remaining steps.
+   If .py files exist: check if IMPLEMENTATION.md also exists. If it does, read
+   the ## Results Summary section. If not, find the main script with list_dir and
+   use grep to scan it — do NOT read every line.
 2. Check {round_dir}/03_code/results/ with list_dir.
    - If results/ has key_results.json AND it contains at least one NUMERICAL value (not just
      error strings) → results exist. Proceed to step 3.
    - If key_results.json exists but ALL values are errors or null → treat as MISSING.
      Re-run or implement a fix.
    - If results/ is MISSING or EMPTY → run the main script. To run, first check how the Coder
-     ran it: read IMPLEMENTATION.md for the run command. If uv was used, run with:
+     ran it: read IMPLEMENTATION.md for the run command. Check {research_dir}/hw_profile.json
+     for the `python_executable` field — if present, use that exact path. If uv was used:
      `cd {round_dir}/03_code && uv run --with <pkgs> python <script>.py`
      or use the existing .venv: `.venv/bin/python <script>.py`
-     Never run bare `python <script>.py` — it won't have the packages.
+     Never run bare `python <script>.py` — it may not have the packages.
 3. Check — each is a potential one-line report entry:
-   - SYNTHETIC DATA: any fabricated/placeholder data instead of real → CRITICAL
+   - FAKE DATA (CRITICAL): grep the main script for any of these keywords:
+       "simulated", "placeholder", "mock", "dummy", "fake", "random()", "np.random",
+       "hardcoded", "example value", "typical value", "estimated"
+     If ANY of these appear in code that PRODUCES values saved to key_results.json →
+     those values are fabricated. Replace the fabricated computation with real analysis
+     on the actual input data (see hw_profile.json available_packages for viable options)
+     and re-run. Do NOT accept a script that generates fake numbers for any metric.
+   - HARDCODED INPUTS (CRITICAL): grep the main script for numeric literals assigned
+     to domain variables as fallbacks — e.g. `metric[item] = <number>` inside an
+     `except` or `if data_missing` branch. If data extraction fails and a literal is
+     substituted, that is FAKE DATA.
+     Fix: delete the hardcoded-input branch entirely; if data can't be extracted, omit
+     the metric from key_results.json.
+   - INFINITY/NaN IN JSON (CRITICAL): read key_results.json as raw text and grep for
+     "Infinity", "NaN", "-Infinity". These are invalid JSON and must be fixed.
+     Replace with null or remove the key. If the formula produces Infinity (near-zero
+     denominator), fix with epsilon: val / (denom + 1e-9).
+   - EMPTY ENTRIES (CRITICAL): grep key_results.json for fields with empty string values
+     (e.g. `"": ""` or `"sequence": ""`). Any item with empty primary identifier must
+     be removed from results.
+   - LABEL AUDIT: check key_results.json for any metric whose IMPLEMENTATION.md says
+     "simulated" or "placeholder" — those metrics must be removed or replaced with real
+     computed values before the round is valid.
    - GPU UNDERUSE: if hw_profile.json shows CUDA available but "Using device: cpu"
      appears in output → CRITICAL (fix: add .to(device), rerun)
    - Runtime errors, off-by-one, data leakage, wrong metrics
-   - Results implausibly good/bad (may indicate fake data)
-4. Fix CRITICAL bugs only (edit_file / bash). Re-run once to confirm.
+   - Results implausibly good/bad: extreme outlier values warrant checking whether the
+     formula has a near-zero denominator — if so, the metric is broken and must be fixed
+     (e.g. add epsilon, use log scale, clamp range).
+   - DEGENERATE SCORING (CRITICAL): if ≥40% of candidates share the identical score →
+     the formula collapses (e.g. near-zero denominator) and is uninformative.
+     Flag as CRITICAL; the coder must switch to multi-metric Pareto or Z-score ranking.
+   - CONSTANT METRIC (CRITICAL): if any numeric metric in key_results.json has the
+     identical value across ALL candidates (e.g. all 0.0, or all the same constant) →
+     the computation is almost certainly a stub or bug, not a real result. Fix by
+     tracing the computation in the script; if it cannot be fixed, remove the field.
+4. Fix CRITICAL bugs only (edit_file / bash). Re-run ONCE to confirm.
+   STRICT LIMITS ON FIXING:
+   - Fix ONLY: syntax errors, import errors, division-by-zero, fake-data substitution.
+   - Do NOT rewrite the algorithm, change the experiment design, or fix data
+     extraction logic. Those are the Researcher/Coder's responsibility. If the
+     primary entities/data are wrong → note in Outstanding Issues and STOP.
+     Do NOT attempt to patch data extraction.
+   - If your fix attempt introduces a NEW error → revert immediately (do NOT try
+     to fix the fix). Document both the original bug and your failed fix attempt
+     in Outstanding Issues, then write the report.
+   - Maximum 2 fix attempts total. After 2 attempts, write the report regardless.
    Non-critical style issues: document in Outstanding Issues, do NOT fix now.
 
 MINIMUM RESULT REQUIREMENT
 04_debug_report.md is only valid if key_results.json contains at least one numerical value.
 If after your fix attempt the results are still all errors:
   a. Do NOT just document the failure. Implement a SIMPLER ALTERNATIVE.
-  b. Use packages from hw_profile.json `available_packages` that you know work:
-     - If OpenMM fails → compute physicochemical descriptors with BioPython ProtParam
-     - If RDKit fails → use numpy to compute: GRAVY score, net charge, hydrophobic moment
-     - If everything fails → run a trivial computation (e.g., amino acid composition)
-       to confirm Python itself works and put those numbers in key_results.json
+  b. Choose the simplest approach available in hw_profile.json `available_packages`:
+     start with numpy/scipy for basic computation; escalate to domain libraries only
+     if they are confirmed available and relevant. If everything fails → run the
+     simplest possible computation on the primary data to confirm Python works
+     and put those numbers in key_results.json.
   c. Update key_results.json with the real numbers from the simpler alternative.
   d. Note in 04_debug_report.md: "Original approach blocked: [error]. Pivoted to: [alternative]."
 
@@ -544,12 +706,26 @@ STAGNATION PENALTY (apply when scoring):
   Hypothesis Quality: max 4/10 (proposing the same blocked approach is poor experimental design)
 - If the implementation attempted packages NOT in hw_profile.json available_packages:
   Implementation Quality: max 5/10 (poor tool selection given known environment)
-- If 06_synthesis.md is absent OR lacks a ## Transferable Lessons section with ≥1 bullet:
-  Transfer Quality: max 3/10 (knowledge that isn't extracted cannot transfer to future rounds)
+- Transfer Quality measures whether this round BUILT ON prior knowledge AND produced reusable insights:
+  * Do NOT check for 06_synthesis.md — the Orchestrator writes it AFTER you run; it will never
+    exist when you are scoring. Checking for it is wrong and always produces a 3/10 penalty.
+  * Instead evaluate: (a) did IMPLEMENTATION.md show evidence of using prior round's lessons?
+    (b) does key_results.json contain numerical results future rounds can build on?
+  * If round > 1 AND the same blocked approach is retried (case_memory.md shows it failed before):
+    Transfer Quality max 3/10.
+  * If key_results.json is all errors (no numbers): Transfer Quality max 4/10.
+  * If a NEW approach was tried AND produced at least one numerical result: 6+/10.
+  * If new approach + numbers + clear lessons for next round: 8+/10.
 Be harsh. Generous scoring of a stagnating pipeline encourages more stagnation.
 
 SCORING RULES
-- Synthetic/fabricated data → Results Validity capped at 1/10.
+- Synthetic/fabricated/simulated/placeholder data → Results Validity capped at 1/10.
+  This includes ANY value in key_results.json not produced by running code on real input
+  data. Look for the keywords "simulated", "placeholder", "mock" in IMPLEMENTATION.md —
+  if present for any metric, that metric is fake.
+- Implausibly extreme results (improvement > 100x, ratios that exceed physical bounds) →
+  check whether the metric formula has a near-zero denominator. If so, Results Validity
+  max 4/10. Flag this as a broken metric, not a genuine scientific finding.
 - Be harsh. A generous score on mediocre work wastes the next round's effort.
 - Missing 04_debug_report.md is NOT a reason to delay writing 05_evaluation.md —
   evaluate based on IMPLEMENTATION.md and key_results.json alone.
@@ -576,9 +752,9 @@ If THIS round is ZERO_RESULTS AND the same error appears in findings.md from las
   1. Explicitly state: "MANDATORY PIVOT: [previous approach] is blocked."
   2. Assign a simpler, DIFFERENT approach — do NOT assign "fix X" again.
   3. Specify which packages to use (from hw_profile.json available_packages).
-  4. Example pivot: "OpenMM unit errors persist. PIVOT: use BioPython ProtParam to compute
-     charge, GRAVY, MW, instability index for all peptide variants. This will produce
-     real numbers in round N+1 and establish a working baseline."
+  4. Example pivot: "Specialised library errors persist. PIVOT: use numpy/scipy/pandas
+     to compute basic statistical descriptors directly from the input data. This will
+     produce real numbers in round N+1 and establish a working baseline."
   5. Reduce scope: fewer variants, simpler metrics, shorter simulations.
 A pivot brief beats a third "please fix the unit errors" brief every time.
 
@@ -593,7 +769,7 @@ STRUCTURE — short bullets, not paragraphs:
      Frame as reusable principles, not round-specific facts. Examples:
      "numpy-only descriptor pipelines reliably produce numbers when MD fails";
      "PME cutoff errors → always check unit imports before running";
-     "BioPython ProtParam is a reliable fallback when RDKit is unavailable".
+     "numpy/scipy statistical analysis reliably produces numbers when specialised libraries fail".
      This section is MANDATORY — it feeds the case memory for future rounds.)
 
   Then ONE of:
@@ -813,9 +989,42 @@ def _run_specialist(
     iteration = 0
     _rate_limit_retries = 0
     _timeout_retries = 0
+    _budget_warned = False   # first warning at max_iter-4
+    _budget_critical = False  # hard stop at max_iter-2
+    _echo_streak = 0          # consecutive echo-only bash calls (nemotron completion spam)
 
     while iteration < max_iter:
         iteration += 1
+
+        # Budget warnings: two-stage injection when output is still missing
+        _bw_rel = OUTPUT_FILES.get(role, "")
+        if _bw_rel and iteration >= max_iter - 4:
+            _bw_abs = Path(round_dir) / _bw_rel
+            _bw_done = (_bw_abs / "IMPLEMENTATION.md").exists() if _bw_rel.endswith("/") else _bw_abs.exists()
+            if not _bw_done:
+                _bw_path = str(_bw_abs)
+                if not _budget_warned:
+                    messages.append({"role": "user", "content": (
+                        f"⚠ BUDGET WARNING: Only {max_iter - iteration + 1} iteration(s) remain. "
+                        f"Your required output file has NOT been written: {_bw_path}\n"
+                        "Finish any running fix, then write the file. "
+                        "Do not start new investigations."
+                    )})
+                    _budget_warned = True
+                    iteration -= 1
+                    continue
+                elif not _budget_critical and iteration >= max_iter - 2:
+                    messages.append({"role": "user", "content": (
+                        f"🛑 HARD STOP: {max_iter - iteration + 1} iteration(s) left. "
+                        f"File still missing: {_bw_path}\n"
+                        "STOP all other activities immediately. "
+                        "Your ONLY next action is write_file with your best current content. "
+                        "Do not search, do not fetch, do not run code. Write NOW."
+                    )})
+                    _budget_critical = True
+                    iteration -= 1
+                    continue
+
         try:
             response = _stream_completion_with_tools(client, model, messages, tools)
             _rate_limit_retries = 0
@@ -948,6 +1157,25 @@ def _run_specialist(
                 "content": result,
             })
         display.print_separator()
+
+        # Echo-loop detection: nemotron models spam `echo "Task completed"` after finishing.
+        # If all tool calls this turn were echo-only bash commands, count the streak.
+        # Three consecutive echo-only turns means the agent is done but won't stop itself.
+        if tool_calls:
+            _all_echo = all(
+                tc["function"]["name"] == "bash"
+                and json.loads(tc["function"]["arguments"] or "{}").get("command", "").strip().startswith("echo ")
+                for tc in tool_calls
+            )
+            if _all_echo:
+                _echo_streak += 1
+                if _echo_streak >= 3:
+                    display.print_info(
+                        f"  [{cfg['label']}] Echo-loop detected ({_echo_streak} consecutive echo turns) — stopping early."
+                    )
+                    break
+            else:
+                _echo_streak = 0
 
     elapsed = time.time() - t0
     display.print_agent_done(role, elapsed, iteration)
@@ -1406,6 +1634,130 @@ def _update_case_memory(
 
 
 # ---------------------------------------------------------------------------
+# Pipeline fallback stubs — ensures 01_literature.md and 02_experiment.md
+# always exist before the coder runs, even if researcher/hypothesis agents failed.
+# ---------------------------------------------------------------------------
+
+def _ensure_handoff_stubs(
+    round_dir: Path,
+    research_dir: Path,
+    working_dir: str,
+    round_num: int,
+) -> None:
+    """
+    Create minimal handoff files if researcher/hypothesis agents failed to write them.
+    Uses previous round's NEXT_ROUND_BRIEF and local files as source material.
+    """
+    _LOCAL_EXTS = {".pdf", ".csv", ".tsv", ".fasta", ".fa", ".json", ".txt", ".xlsx"}
+    local_files = [
+        p for p in Path(working_dir).iterdir()
+        if p.is_file() and p.suffix.lower() in _LOCAL_EXTS
+    ]
+    local_block = "\n".join(
+        f"  - {p.name} ({p.stat().st_size // 1024 or 1} KB) · {p} · ACCESSIBLE"
+        for p in local_files
+    ) or "  (none found)"
+
+    # Read previous synthesis for context
+    prev_brief = ""
+    prev_kf = ""
+    if round_num > 1:
+        prev_synth = research_dir / f"round_{round_num - 1:03d}" / OUTPUT_FILES["orchestrator"]
+        if prev_synth.exists():
+            txt = prev_synth.read_text(errors="replace")
+            brief_m = re.search(
+                rf"{re.escape(NEXT_BRIEF_MARKER)}\s*(.*?)(?:\n## |\Z)", txt, re.DOTALL
+            )
+            if brief_m:
+                prev_brief = brief_m.group(1).strip()[:1200]
+            kf_m = re.search(r"##\s*Key Findings\s*\n(.*?)(?:\n##|\Z)", txt, re.DOTALL)
+            if kf_m:
+                prev_kf = kf_m.group(1).strip()[:400]
+
+    # --- 01_literature.md stub ---
+    lit_path = round_dir / OUTPUT_FILES["researcher"]
+    if not lit_path.exists():
+        stub = (
+            "## SOTA Summary\n"
+            "- Stub generated by pipeline (Researcher agent failed to write output)\n"
+            f"- Prior round key findings: {prev_kf or 'see findings.md'}\n"
+            "- Basic statistical analysis (numpy/scipy/pandas) confirmed working\n\n"
+            "## Available Datasets\n"
+            f"{local_block}\n\n"
+            "## Baselines\n"
+            "- (No baselines extracted — Researcher agent failed. Use prior round findings.)\n\n"
+            "## FOR THE EXPERIMENT DESIGNER\n"
+            f"Fallback stub — proceed using the NEXT_ROUND_BRIEF from the previous synthesis:\n{prev_brief or 'Use computational methods on local data files only.'}\n"
+        )
+        lit_path.write_text(stub, encoding="utf-8")
+        display.print_info(
+            "  [yellow]⚠ Created fallback 01_literature.md stub "
+            "(Researcher agent produced no output)[/yellow]"
+        )
+
+    # --- 02_experiment.md stub ---
+    exp_path = round_dir / OUTPUT_FILES["hypothesis"]
+    if not exp_path.exists():
+        brief_block = prev_brief or (
+            "1. Use numpy/scipy/pandas to compute basic descriptors or statistics "
+            "from the local data files.\n"
+            "2. Rank candidates using multi-metric evaluation (Pareto or Z-score).\n"
+            "3. Save results to key_results.json."
+        )
+        stub = (
+            f"## Experiment: Fallback Continuation Round {round_num}\n"
+            "**Hypothesis**: Candidates can be ranked using descriptors computed "
+            "from the primary data files.\n"
+            "**Success metric**: At least one numerical result in key_results.json\n"
+            "**Failure threshold**: key_results.json empty or all errors\n\n"
+            "## Algorithm / Approach\n"
+            f"{brief_block}\n\n"
+            "## Data Plan\n"
+            f"**Primary**: Local files in {working_dir} · ACCESSIBLE\n"
+            "**Fallback**: Use any accessible dataset mentioned in prior round findings\n\n"
+            "## Expected Output Files\n"
+            '- results/key_results.json → {"metric": "primary_metric", "value": <float>, "baseline": <float>}\n'
+            "- results/main_plot.png\n"
+            "- results/summary_figure.png\n\n"
+            "## FOR THE CODER\n"
+            "Fallback spec — use the algorithm above. Minimum viable output: "
+            "key_results.json with at least one numerical value.\n"
+        )
+        exp_path.write_text(stub, encoding="utf-8")
+        display.print_info(
+            "  [yellow]⚠ Created fallback 02_experiment.md stub "
+            "(Hypothesis agent produced no output)[/yellow]"
+        )
+
+
+def _ensure_debug_stub(round_dir: Path) -> None:
+    """Write a minimal 04_debug_report.md if the debugger failed to produce one."""
+    debug_path = round_dir / OUTPUT_FILES["debugger"]
+    if debug_path.exists():
+        return
+    kr_path = round_dir / OUTPUT_FILES["coder"] / "results" / "key_results.json"
+    has_results = kr_path.exists() and kr_path.stat().st_size > 10
+    stub = (
+        "## Bugs Found and Fixed\n"
+        "Debugger agent ran but did not produce this report (budget exhausted or error).\n"
+        "Manual review recommended.\n\n"
+        "## Tests Run\n"
+        "(not run — debugger did not complete)\n\n"
+        "## Verified Results\n"
+        f"{'key_results.json exists — see results/ directory.' if has_results else 'key_results.json missing or empty.'}\n\n"
+        "## Outstanding Issues\n"
+        "Debugger failed to write report — full audit skipped this round.\n\n"
+        "## Confidence Score\n"
+        "0/10\n"
+    )
+    debug_path.write_text(stub, encoding="utf-8")
+    display.print_info(
+        "  [yellow]⚠ Created fallback 04_debug_report.md stub "
+        "(Debugger agent produced no output)[/yellow]"
+    )
+
+
+# ---------------------------------------------------------------------------
 # Overseer: parse synthesis for next brief and completion signal
 # ---------------------------------------------------------------------------
 
@@ -1719,14 +2071,54 @@ def _probe_hardware(research_dir: str) -> dict:
 
     profile: dict = {}
     try:
-        import shutil as _shutil
-        _py = _shutil.which("python3") or _shutil.which("python") or "python3"
+        import shutil as _shutil, sys as _sys, os as _os
+        # Build candidate list: prefer pythons that have the most science packages.
+        # The OctoSlave venv python often lacks numpy/sklearn/etc., so we search
+        # common conda/system locations and pick the richest environment.
+        _home = _os.path.expanduser("~")
+        _candidates = []
+        for _p in [
+            _sys.executable,
+            _shutil.which("python3"),
+            _shutil.which("python"),
+            f"{_home}/miniconda3/bin/python",
+            f"{_home}/miniconda3/bin/python3",
+            f"{_home}/anaconda3/bin/python",
+            f"{_home}/anaconda3/bin/python3",
+            f"{_home}/miniforge3/bin/python",
+            f"{_home}/miniforge3/bin/python3",
+            "/usr/local/bin/python3",
+            "/usr/bin/python3",
+        ]:
+            if _p and _os.path.isfile(_p) and _p not in _candidates:
+                _candidates.append(_p)
+
+        _best_py = _candidates[0] if _candidates else "python3"
+        _best_count = -1
+        for _py in _candidates:
+            try:
+                _r = _sp.run(
+                    [_py, "-c",
+                     "import importlib, json; "
+                     "pkgs=['numpy','scipy','matplotlib','pandas','sklearn','biopython','torch']; "
+                     "found=[p for p in pkgs if importlib.util.find_spec(p) is not None]; "
+                     "print(len(found))"],
+                    capture_output=True, text=True, timeout=5,
+                )
+                _count = int(_r.stdout.strip()) if _r.returncode == 0 and _r.stdout.strip().isdigit() else 0
+                if _count > _best_count:
+                    _best_count = _count
+                    _best_py = _py
+            except Exception:
+                continue
+
         result = _sp.run(
-            [_py, "-c", script],
+            [_best_py, "-c", script],
             capture_output=True, text=True, timeout=15,
         )
         if result.returncode == 0 and result.stdout.strip():
             profile = json.loads(result.stdout.strip())
+            profile["python_executable"] = _best_py
     except Exception:
         pass
 
@@ -1766,6 +2158,23 @@ _SCRAPE_KEYWORDS = frozenset({
     "harvest", "harvesting", "extract from website", "extract from site",
     "extract from url", "web extraction", "data extraction from",
 })
+
+
+def _sanitize_key_results(round_dir: Path) -> None:
+    """Fix non-finite floats in key_results.json (Python writes Infinity/NaN; standard JSON forbids them)."""
+    import math, re as _re
+    kr_path = round_dir / OUTPUT_FILES["coder"] / "results" / "key_results.json"
+    if not kr_path.exists():
+        return
+    raw = kr_path.read_text(errors="replace")
+    if not any(tok in raw for tok in ("Infinity", "NaN", "-Infinity")):
+        return  # already valid
+    cleaned = _re.sub(r'\b(-?Infinity|NaN)\b', 'null', raw)
+    try:
+        json.loads(cleaned)  # validate
+        kr_path.write_text(cleaned, encoding="utf-8")
+    except Exception:
+        pass  # leave as-is if still broken; debugger will catch it
 
 
 def _has_numerical_results(round_dir: Path) -> bool:
@@ -1971,6 +2380,19 @@ def run_long_research(
                         f"iterations. Next role will proceed without it.[/yellow]"
                     )
 
+            # After coder: sanitize key_results.json (Infinity/NaN → null)
+            if role == "coder":
+                _sanitize_key_results(round_dir)
+
+            # After debugger: ensure 04_debug_report.md exists (pipeline stub if agent failed)
+            if role == "debugger":
+                _ensure_debug_stub(round_dir)
+
+            # After hypothesis: ensure 01_literature.md and 02_experiment.md exist
+            # before the coder runs. Creates minimal stubs if agents failed.
+            if role == "hypothesis":
+                _ensure_handoff_stubs(round_dir, research_dir, working_dir, round_num)
+
         # Update findings.md and case_memory.md from round outputs — pipeline-owned, not LLM-owned
         _update_findings(
             research_dir=str(research_dir),
@@ -1999,7 +2421,7 @@ def run_long_research(
                     "The current experimental approach is blocked by tooling or environment issues.\n"
                     "This round MUST use packages confirmed in hw_profile.json available_packages.\n"
                     "Prefer the simplest approach that produces any numerical output — even just\n"
-                    "physicochemical descriptors (charge, GRAVY, MW) computed with numpy or BioPython.\n"
+                    "basic statistics (mean, std, counts, correlations) computed with numpy/scipy/pandas.\n"
                     "ANY number in key_results.json is more valuable than another failed run.\n\n"
                 )
                 brief = pivot_prefix + brief
