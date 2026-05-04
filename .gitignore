@@ -69,3 +69,4 @@ credentials.json
 
 debug
 uv.lock
+.claude

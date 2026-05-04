@@ -16,13 +16,13 @@
 
 ---
 
-OctoSlave is a terminal-based autonomous agent built for scientists and engineers.
+OctoSlave is a autonomous agent built for scientists and engineers.
 Give it a task or a research topic — it explores the web, writes and runs code, debugs, evaluates, and iterates until the job is done.
 
 It ships two modes:
 
-- **Interactive agent** — an always-on REPL that can do anything Claude Code can, using academic-grade LLMs
-- **Long-research pipeline** (`/long-research`) — a population of 6 specialist agents that conduct rigorous, multi-round research with real data, reproducible code, and a polished HTML deliverable
+- **Interactive agent** — an simple chatbot that can work with your files, work on entire projects or assist you with specific issues / tasks
+- **Long-research pipeline** (`/long-research`) — a population of 6 specialist agents that conduct rigorous, multi-round research with real data, reproducible code, and a polished HTML reports
 
 ---
 
@@ -67,7 +67,7 @@ It ships two modes:
 
 ## Installation
 
-**Requirements:** Python 3.10+, an [e-INFRA CZ LLM](https://llm.ai.e-infra.cz) API key *(or Ollama for local mode)*
+**Requirements:** Python 3.10+, an [e-INFRA CZ LLM](https://llm.ai.e-infra.cz) or [NVIDIA NIM](https://build.nvidia.com) API key *(or Ollama for local mode)*
 
 ### Step 1 — Install Python (skip if you already have Python 3.10+)
 
@@ -596,6 +596,8 @@ Usable for simple interactive tasks. Long-research not recommended on CPU only.
 
 ## Tools reference
 
+**General**
+
 | Tool | Description |
 |------|-------------|
 | `read_file` | Read file contents (offset/limit for large files); PDFs auto-extracted to text |
@@ -607,6 +609,24 @@ Usable for simple interactive tasks. Long-research not recommended on CPU only.
 | `list_dir` | Directory listing with sizes and modification times |
 | `web_search` | DuckDuckGo search → titles, URLs, one-line snippets |
 | `web_fetch` | Fetch URL → clean readable text (strips JS/CSS/ads/nav) |
+| `crawl_tree` | BFS-crawl a website tree (Playwright-aware) |
+
+**Biology &amp; chemistry** *(install with `pip install -e ".[bio]"`)*
+
+| Tool | Description |
+|------|-------------|
+| `bio_inspect` | Schema-aware preview for FASTA / FASTQ / VCF / GFF / GTF / PDB / mmCIF / MTX / h5ad / SMI / SDF — counts, schema, head |
+| `rdkit_describe` | SMILES → canonical SMILES, MW, logP, TPSA, HBD/HBA, rings, QED, Lipinski violations |
+| `uniprot_lookup` | UniProtKB protein record (by accession) or search (by query) — name, organism, GO, PDB cross-refs |
+| `pubchem_lookup` | PubChem compound by name / CID / SMILES — formula, MW, XLogP, TPSA, HBD/HBA |
+| `chembl_lookup` | ChEMBL bioactive molecule (by ID or name) — max phase, RO5, indications |
+| `pdb_fetch` | Download RCSB PDB / mmCIF structure by 4-char ID; returns header summary |
+| `alphafold_fetch` | Download AlphaFold DB predicted structure by UniProt accession; reports mean pLDDT |
+| `geo_search` | NCBI GEO / SRA dataset search (E-utilities) — accessions, sample counts, platforms |
+| `ena_fetch` | EBI ENA file report — FASTQ download URLs, read counts, library layout |
+| `pdf_ocr` | Render PDF pages and OCR them — recovers numbers/labels embedded in figures (axis ticks, EC50/IC50 values, heat-map legends) that `read_file` cannot reach |
+
+> The bio/chem connectors call public REST APIs directly. They are preferred over `web_fetch` for any UniProt / PubChem / ChEMBL / GEO / ENA / RCSB / AlphaFold lookup — the agent gets parsed JSON instead of HTML and avoids burning the per-round web budget.
 
 ---
 

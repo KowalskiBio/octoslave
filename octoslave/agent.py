@@ -356,12 +356,17 @@ def _agent_loop(
     _rate_limit_retries = 0
     _timeout_retries = 0
     _tool_call_counts: Counter = Counter()  # (name, args_json) → call count
-    _no_tool_nudges = 0  # how many times we've nudged the model to use tools
+    _no_tool_nudges = 0  # consecutive text-only responses (resets on tool use)
+    _text_only_total = 0  # total text-only responses across the whole run
+    _redundant_calls = 0  # total tool calls whose (name, args) had been seen before
 
     while iteration < MAX_ITERATIONS:
         iteration += 1
-        # Force a tool call on the first turn and whenever nudging a text-only reply.
-        _force = iteration == 1 or _no_tool_nudges > 0
+        # Force a tool call only on the very first turn — kick-starts models that
+        # would otherwise reply with chit-chat. After that, leave tool_choice="auto"
+        # so a model that has finished can naturally return a text-only "done"
+        # response instead of being pushed into redundant verification calls.
+        _force = iteration == 1
         try:
             response = _stream_completion(client, model, messages, force_tool=_force)
             _rate_limit_retries = 0
@@ -477,22 +482,31 @@ def _agent_loop(
         messages.append(assistant_msg)
 
         if not tool_calls:
-            # Small/local models often reply with text instead of using tools.
-            # Nudge up to 2 times before accepting the text-only answer.
-            if _no_tool_nudges < 2:
-                _no_tool_nudges += 1
-                messages.append({
-                    "role": "user",
-                    "content": (
-                        "Use a tool to complete this task — do not describe what you will do. "
-                        "Call list_dir, read_file, bash, write_file, or another tool right now."
-                    ),
-                })
-                continue
-            display.print_done(iteration)
-            break
+            _no_tool_nudges += 1
+            _text_only_total += 1
+            # If the model has declared "done" multiple times across the run
+            # (text-only response 3+ times in total, even if interleaved with
+            # redundant tool calls), accept that the task is finished and stop.
+            if _text_only_total >= 3 or _no_tool_nudges >= 2:
+                display.print_done(iteration)
+                break
+            # First text-only of a streak: invite the model to either continue
+            # with a tool or end the turn cleanly. Phrased so a genuinely-finished
+            # model can legitimately reply with another text-only message and
+            # trigger the consecutive-text-only break above on the next turn.
+            messages.append({
+                "role": "user",
+                "content": (
+                    "If the task is complete and the deliverable is in place, you may end "
+                    "here — do not re-read or re-validate files you have already produced. "
+                    "If real work remains, call a tool now (write_file, edit_file, bash, …) "
+                    "to make progress."
+                ),
+            })
+            continue
 
-        # Model used tools — reset nudge counter so it can get nudged again if needed
+        # Model used tools — reset *consecutive* text-only counter, but the global
+        # _text_only_total still counts so we can detect alternating loops.
         _no_tool_nudges = 0
 
         # Execute tool calls
@@ -532,22 +546,45 @@ def _agent_loop(
                 }
             )
 
-            # Track repeated read-only tool calls (only reads, not writes/bash)
-            if name in ("read_file", "list_dir", "glob", "grep"):
+            # Track repeated tool calls. For named read tools and read-like
+            # bash commands (cat / head / tail / ls / wc / file / stat), a
+            # repeat with the same args is treated as redundant verification.
+            tracked = name in ("read_file", "list_dir", "glob", "grep")
+            if name == "bash":
+                cmd = (args.get("command") or "").strip()
+                first_word = cmd.split()[0] if cmd else ""
+                first_word = first_word.rsplit("/", 1)[-1]  # /usr/bin/cat → cat
+                if first_word in {"cat", "head", "tail", "ls", "wc", "file", "stat", "less", "more"}:
+                    tracked = True
+            if tracked:
                 key = (name, raw_args)
+                prior = _tool_call_counts[key]
                 _tool_call_counts[key] += 1
-                if _tool_call_counts[key] >= 2:
-                    repeated_reads.append(f"{name}({args.get('file_path') or args.get('path') or args.get('pattern') or ''})")
+                if prior >= 1:
+                    _redundant_calls += 1
+                    label = args.get("file_path") or args.get("path") or args.get("pattern") or args.get("command") or ""
+                    repeated_reads.append(f"{name}({label})")
 
         # Nudge the model if it is re-reading files it has already seen
         if repeated_reads:
             nudge = (
-                "You have already read these files: "
+                "You have already read these: "
                 + ", ".join(repeated_reads)
-                + ". Stop re-reading them — you already have the content. "
-                "Proceed directly to the next step: make changes, run commands, or produce output."
+                + ". Stop re-reading — you already have the content. "
+                "If the task is complete, end the turn. Otherwise make a productive change "
+                "(write_file, edit_file, or run code that does new work)."
             )
             messages.append({"role": "user", "content": nudge})
+
+        # Hard stop if the agent is making sustained redundant calls — strong
+        # signal that the task is complete and the model is just looping.
+        if _redundant_calls >= 5:
+            display.print_info(
+                "Stopping: agent has made repeated calls without new progress "
+                "(task likely complete)."
+            )
+            display.print_done(iteration)
+            break
 
         display.print_separator()
     else:

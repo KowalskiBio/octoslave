@@ -35,7 +35,12 @@ ROLES: dict[str, dict] = {
         "default_model": "deepseek-v3.2-thinking",           # large — fast reading + search
         "max_iter": 15,                             # 15 = budget for ~5 web ops + write
         "tools": ["read_file", "write_file", "web_search", "web_fetch",
-                  "list_dir", "glob"],              # no bash — researcher surveys, never installs
+                  "list_dir", "glob",
+                  # First-class bio/chem connectors — prefer over web_fetch
+                  "bio_inspect", "uniprot_lookup", "pubchem_lookup",
+                  "chembl_lookup", "geo_search", "ena_fetch",
+                  "pdb_fetch", "alphafold_fetch",
+                  "pdf_ocr"],  # no bash — researcher surveys, never installs
     },
     "hypothesis": {
         "label": "Experiment Designer",
@@ -43,7 +48,8 @@ ROLES: dict[str, dict] = {
         "color": "bold bright_magenta",
         "default_model": "deepseek-v3.2-thinking",  # thinking — commit to the right experiment
         "max_iter": 8,
-        "tools": ["read_file", "write_file", "list_dir", "glob"],
+        "tools": ["read_file", "write_file", "list_dir", "glob",
+                  "bio_inspect", "rdkit_describe"],
     },
     "coder": {
         "label": "Coder",
@@ -52,7 +58,10 @@ ROLES: dict[str, dict] = {
         "default_model": "qwen3-coder-30b",         # large code model — fewer mistakes
         "max_iter": 50,
         "tools": ["read_file", "write_file", "edit_file", "bash",
-                  "glob", "grep", "list_dir"],
+                  "glob", "grep", "list_dir",
+                  "bio_inspect", "rdkit_describe", "pdb_fetch",
+                  "alphafold_fetch", "uniprot_lookup", "pubchem_lookup",
+                  "chembl_lookup", "ena_fetch", "pdf_ocr"],
     },
     "debugger": {
         "label": "Debugger",
@@ -61,7 +70,8 @@ ROLES: dict[str, dict] = {
         "default_model": "qwen3-coder-30b",         # same coder — knows the code
         "max_iter": 20,
         "tools": ["read_file", "write_file", "edit_file", "bash",
-                  "glob", "grep", "list_dir"],
+                  "glob", "grep", "list_dir",
+                  "bio_inspect", "rdkit_describe"],
     },
     "evaluator": {
         "label": "Evaluator",
@@ -70,7 +80,8 @@ ROLES: dict[str, dict] = {
         "default_model": "deepseek-v3.2-thinking",  # thinking — rigorous scientific judgement
         "max_iter": 15,
         "tools": ["read_file", "bash", "write_file", "list_dir",
-                  "web_search", "glob"],
+                  "web_search", "glob",
+                  "bio_inspect", "rdkit_describe"],
     },
     "orchestrator": {
         "label": "Orchestrator",
@@ -127,6 +138,23 @@ CASE_MEMORY_FILE = "case_memory.md"
 SKILLS_FILE = "skills.md"
 NEXT_BRIEF_MARKER = "## NEXT_ROUND_BRIEF"
 COMPLETE_MARKER = "## STATUS: COMPLETE"
+
+# Local input file extensions recognised across the pipeline (researcher discovery,
+# handoff stub fallback, etc.). Single source of truth — keep aligned.
+LOCAL_DATA_EXTENSIONS: frozenset[str] = frozenset({
+    # tabular / structured
+    ".csv", ".tsv", ".parquet", ".feather", ".xlsx", ".xls",
+    ".json", ".jsonl", ".yaml", ".yml", ".toml",
+    # docs
+    ".pdf", ".txt", ".md", ".rst",
+    # bio sequences / formats
+    ".fasta", ".fa", ".faa", ".fna", ".fastq", ".fq",
+    ".bed", ".vcf", ".gff", ".gff3", ".gtf",
+    # chemistry / structure
+    ".pdb", ".cif", ".mol", ".mol2", ".sdf", ".smi", ".xyz",
+    # arrays / scientific
+    ".npy", ".npz", ".h5", ".hdf5", ".nc",
+})
 
 
 # ---------------------------------------------------------------------------
@@ -203,23 +231,51 @@ HARD LIMITS — these protect your token budget so you have enough left to write
 Every limit below is a MAXIMUM, not a target:
   list_dir:    1 call   (step 0 only)
   read_file:   0–2 calls (local data files only — NOT task.md, NOT findings.md twice)
+  bio_inspect: 0–3 calls (use on local FASTA / VCF / h5ad / PDB / SDF instead of read_file)
   web_search:  max 2 calls  ← STRICT. Stop searching after 2.
   web_fetch:   max 2 calls  ← STRICT. Stop fetching after 2.
   write_file:  1 call   (your LAST call — always)
   TOTAL: max 8 tool calls. Your 8th or earlier call MUST be write_file for 01_literature.md.
 
+DOMAIN CONNECTORS — prefer these over web_search / web_fetch for biology + chemistry:
+  uniprot_lookup     proteins (UniProt accession or query) → name, organism, GO, PDB xrefs
+  pubchem_lookup     small molecules by name / CID / SMILES → properties
+  chembl_lookup      bioactive / drug-like molecules → max phase, RO5, indications
+  geo_search         NCBI GEO / SRA studies → accessions, sample counts, platforms
+  ena_fetch          ENA / SRA file report → FASTQ download URLs, read counts
+  pdb_fetch          RCSB PDB experimental structures by 4-char ID
+  alphafold_fetch    AlphaFold DB predicted structures by UniProt accession
+  pdf_ocr            recover numbers from PDF figures (axis ticks, EC50/IC50 values,
+                     heat-map legends). USE when read_file says "value reported in
+                     Figure N" or you see "EXTRACTION FAILED" — do NOT give up at that
+                     point, OCR the relevant pages first. Pass pages="N-M".
+These calls do NOT count against web_search / web_fetch budgets, but TOTAL calls
+still capped at 8. Use a connector first; fall back to web_fetch only if it fails.
+
 RESEARCHER CONSTRAINTS — non-negotiable:
 - Do NOT read task.md. The topic is already in your brief above — reading it again wastes a call.
 - Do NOT install packages. You have no bash tool. Survey only.
 - Do NOT run code. Do NOT validate datasets programmatically.
-- DATASET ACCESSIBILITY RULE (strictly enforced):
-  * A dataset is ACCESSIBLE only if you can fetch its direct download URL and get back actual data.
+- DATASET ACCESSIBILITY RULE (strictly enforced — NO EXCEPTIONS):
+  * A dataset is ACCESSIBLE only if YOU PERSONALLY fetched its direct download URL in
+    THIS session and got back actual data (>1KB, parseable CSV/TSV/FASTA/JSON).
+  * NEVER cite a URL you have not fetched. NEVER cite a URL or dataset "from memory" /
+    training data (model knowledge of canonical dataset names is unreliable; URLs go
+    stale, hosts move, and download paths change). If you did not fetch it in THIS
+    session and confirm a parseable response, it does not exist for our purposes.
   * Fetching just the landing page is NOT sufficient — landing pages always load even for paywalled data.
   * Mark UNAVAILABLE if: download URL returns HTML/error, requires login, or returns <1KB.
   * Mark ACCESSIBLE only if: direct CSV/TSV/FASTA fetch returns parseable data (>1KB).
-  * If you cannot confirm a direct download → REQUIRES_SIGNUP. Do NOT recommend it to the Coder.
+  * If you cannot confirm a direct download → DO NOT LIST THE DATASET AT ALL. Listing
+    a "REQUIRES_SIGNUP" dataset misleads the Designer/Coder into proposing experiments
+    that depend on it. Better to recommend NO external dataset than an unverified one.
   * case_memory.md records which datasets FAILED in prior rounds — if listed there as failed,
     mark them UNAVAILABLE immediately without fetching again.
+  * PREFERRED ALTERNATIVES when external datasets are unverifiable: HuggingFace
+    `datasets.load_dataset(...)` (try the name; library will tell you instantly if it
+    exists), GitHub raw CSVs from the cited paper's supplementary repo, and the bio_*
+    connector tools (uniprot/pubchem/chembl/pdb/alphafold/geo/ena). These are
+    programmatic and verifiable in one call.
 - After 2 web_search + 2 web_fetch calls, you have gathered enough. WRITE the file immediately.
 
 STEPS
@@ -321,9 +377,25 @@ is WRONG and will break the pipeline. No exceptions.
 
   ## Data Plan
   **Primary**: <name> · <absolute path or download URL> · <format>
-  **Fallback**: <alternative> · <path or URL>
+  **Fallback**: <ANOTHER REAL data source> · <path or URL>
   (Files in {working_dir} are always ACCESSIBLE — use their absolute paths.
    For external sources, only list those confirmed ACCESSIBLE in 01_literature.md.)
+
+  DATA-PLAN BAN — read carefully:
+  - The Fallback MUST be another REAL data source (alternative dataset, alternative
+    file format of the same data, alternative download URL).
+  - NEVER propose synthetic / simulated / generated / placeholder / dummy / mock /
+    "random data with same feature ranges" as a fallback. These are scientifically
+    invalid and the Coder is forbidden from running them.
+  - NEVER include phrases like "if X unreadable use placeholder", "simulate values",
+    "generate synthetic data" anywhere in the Algorithm or Data Plan.
+  - If you cannot identify a SECOND real data source: write
+    `**Fallback**: NONE — if Primary is unreadable, the round must report BLOCKED
+     and pivot in the next round.`
+    A blocked round is acceptable; a synthetic-data round is NOT.
+  - Same rule applies to algorithm steps: never write "if value missing, use a
+    typical value" / "use placeholder" / "fall back to a default". If a value
+    cannot be measured, the metric is omitted from key_results.json — period.
 
   ## Expected Output Files
   - results/key_results.json  → {{"metric": <name>, "value": <float>, "baseline": <float>}}
@@ -409,6 +481,26 @@ STEPS
    - Approach in 3–5 bullet points
    - Results summary (key numbers)
    - Any skipped steps + reason (see FAILURE PROTOCOL)
+
+   BANNED EXCUSE NARRATIVES — do NOT write any of these in IMPLEMENTATION.md:
+     ❌ "due to time constraints" / "ran out of time" / "time-limited"
+     ❌ "for simplicity" / "to keep things simple"
+     ❌ "out of scope" / "deferred to future round"
+     ❌ "computational cost too high" (without an actual measured cost)
+     ❌ "would take too long" (without an actual attempted run)
+   Research takes time — that is expected and budgeted. You have a TOOL-CALL budget
+   (typically 50 iterations); there is NO wallclock budget. If you skipped a step,
+   the reason is one of:
+     ✓ "Attempted N times, every attempt returned <specific error>" (with the
+       errors logged) — and only after exhausting the alternatives in FAILURE
+       PROTOCOL above.
+     ✓ "Required package <X> not in hw_profile.json available_packages" (with
+       the fallback used).
+     ✓ "Step requires data that <specific source> does not provide" (with the
+       attempt that confirmed it).
+   If you cannot point to a concrete technical reason, the step was NOT skippable —
+   go back and execute it. Skipping a step the task or experiment plan required, with
+   only a generic excuse for cover, WILL be flagged by the Evaluator.
 
 GPU RULES (if CUDA available per hw_profile.json — no exceptions)
 - device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -535,15 +627,67 @@ DATA INTEGRITY IS NON-NEGOTIABLE. These rules apply without exception:
     3. If no real alternative exists → omit the metric and document it as BLOCKED.
 
 - If a data source is unavailable (network error, API down, auth required):
-    1. Log the failure in IMPLEMENTATION.md under ## Skipped Steps.
+    1. Log the failure in IMPLEMENTATION.md under ## Skipped Steps with the EXACT URL
+       and HTTP status / error string — this gets written to case_memory.md so future
+       rounds avoid re-trying the same dead URL.
     2. Do NOT proceed with that experiment using fake data — pivot to the fallback above.
-    3. Search for an alternative real source (web_search). Try 2–3 alternatives.
+    3. EXHAUST ALTERNATIVES BEFORE PROXY FALLBACK. You MUST attempt ≥2 distinct alternative
+       sources before declaring a dataset unobtainable and switching to proxy/heuristic mode.
+       Generic source classes to try, in order:
+         a. HuggingFace Datasets — `datasets.load_dataset("<name>")`. Many corpora are
+            pre-packaged; one call confirms or denies availability.
+         b. GitHub raw CSVs — research data often lives at
+            github.com/<group>/<repo>/raw/<branch>/... Web-search
+            "<topic> github csv" or "<topic> supplementary data".
+         c. Bundled package data — many domain libraries ship with example datasets
+            accessible via their public API.
+         d. Domain-specific connectors that the system exposes as tools (if any apply
+            to the task domain — listed in your tool manifest).
+         e. The validation / scoring API endpoint, if the task description provides one
+            — see VALIDATION-API CALLING RECIPE below.
+       Only after 2 alternatives genuinely fail (with logged URLs + errors) may you fall
+       back to a proxy/heuristic. Document the 2 attempts in IMPLEMENTATION.md.
     4. NEVER use "placeholder" or "simulated" as a value. If you cannot compute a metric
        from real data, OMIT it from key_results.json entirely and note it as BLOCKED.
 
 - Quantitative results MUST be saved (JSON / CSV / text).
 - Every script that IS run must complete without error.
 - If a tool/package is unavailable or broken after 1 fix attempt, pivot to an alternative.
+
+VALIDATION-API CALLING RECIPE (when the task brief mentions a validation API):
+- The brief may include: URL, basic-auth credentials (`username:password`), purpose.
+  Read it carefully — credentials are usually in plain text in the task description.
+- If you get HTTP 405 Method Not Allowed on GET → endpoint expects POST with JSON.
+- If you get 401/403 → basic-auth header missing. Use `requests`:
+    import requests
+    from requests.auth import HTTPBasicAuth
+    r = requests.post("https://<host>/<endpoint>", auth=HTTPBasicAuth(user, pwd),
+                      json={{"<input_field>": "<input_value>"}}, timeout=30)
+    r.raise_for_status(); data = r.json()
+- If TLS / SSL handshake fails on a tunnel host (ngrok, cloudflared, ...) → retry with
+  `verify=True` first; if certificate is genuinely missing, set `verify=False` and
+  `urllib3.disable_warnings()`. NEVER skip the call entirely without trying both.
+- If GET / POST / OPTIONS all fail → probe the root and `/docs`, `/openapi.json`,
+  `/swagger.json` endpoints to discover the correct path before giving up.
+- One genuine call to the validation API beats ten lines of heuristic justification.
+
+CIRCULAR-EVALUATION RULE — READ BEFORE TRAINING ANY MODEL
+A model is meaningless if its TRAINING LABELS are derived from the same FEATURES it
+consumes at prediction time. Concrete violations to avoid:
+  ❌ score = f(features); label = score > median; train classifier (features) → label
+     [classifier just re-learns f; AUC ≈ 1 is an artefact, not a finding]
+  ❌ Train regressor on (X, y) where y = g(X) for any deterministic g and the same X.
+  ❌ "Pseudo-labels from a heuristic" without an INDEPENDENT held-out validation set
+     of REAL ground-truth measurements.
+Acceptable patterns:
+  ✓ Labels come from EXTERNAL ground truth (experimental measurements, literature, a
+    different feature set the model does not see, a published dataset).
+  ✓ Labels are heuristic AND clearly marked as such (`*_proxy` / `*_estimated` suffix)
+    AND the metric reported is NOT the model's own AUC/accuracy on its own pseudo-labels.
+If your only labels are heuristic-derived, do NOT train a classifier — instead report the
+raw heuristic ranking with the heuristic itself disclosed in IMPLEMENTATION.md. A circular
+classifier produces an inflated metric that the Evaluator WILL catch and penalise (Results
+Validity ≤ 2). It is better to have no model and honest numbers than a model with a fake AUC.
 
 SCORING / RANKING RULES — read before designing any scoring formula:
 - NEVER reduce candidates to a single-ratio score that can degenerate (i.e. collapse to
@@ -718,7 +862,44 @@ STAGNATION PENALTY (apply when scoring):
   * If new approach + numbers + clear lessons for next round: 8+/10.
 Be harsh. Generous scoring of a stagnating pipeline encourages more stagnation.
 
+CIRCULAR-EVALUATION CHECK (mandatory — apply BEFORE assigning Results Validity):
+Read IMPLEMENTATION.md and the main script. Look for any of these patterns:
+  (a) A "score" / "label" / "target" computed from features f(X), then a model trained
+      on the SAME X to predict that label. Symptom phrases: "labeled as high/low based on
+      proxy score", "median split", "pseudo-labels", "self-supervised target".
+  (b) Reported AUC/accuracy/R² is suspiciously high (>0.95) on a small dataset (<500 rows)
+      with no held-out external validation set.
+  (c) Coder reports a model metric (AUC, accuracy) but never compares predictions to
+      INDEPENDENT ground-truth (literature values, validation API, separate dataset).
+If ≥1 of these holds → Results Validity max 2/10. State the violation explicitly in
+## Critical Weaknesses: "Circular evaluation: model trained on labels derived from its
+own input features; reported AUC=X is an artefact." This rule is non-negotiable.
+
+PROXY-REPETITION CHECK (mandatory for round > 1):
+If THIS round's IMPLEMENTATION.md uses the SAME proxy/heuristic family as a prior round
+— same scoring formula, same feature combination, same ranking method, only minor
+parameter changes or feature additions — the round did NOT change strategy class.
+Concretely: read prior round's IMPLEMENTATION.md (case_memory.md summarises it). If
+the core ranking/prediction function is structurally the same (only coefficients,
+weights, or feature lists differ), apply:
+  Transfer Quality: max 2/10
+  Hypothesis Quality: max 4/10
+Add to ## Critical Weaknesses: "Strategy stagnation: proxy formula re-used from round N
+without addressing why prior approach failed."
+
+VALIDATION-API NEGLECT CHECK (apply when task brief mentions a validation API):
+Read {working_dir}/task.md (if exists) — does it mention a URL or API endpoint as a
+validation tool? If yes:
+  - If IMPLEMENTATION.md does NOT contain evidence of a successful HTTP call to that API
+    (status 200, JSON response, or measurable output): Implementation Quality max 4/10.
+  - "405 / SSL error / connection refused" alone is NOT sufficient evidence of trying.
+    The Coder must demonstrate ≥2 attempts with different methods/headers/paths.
+  - Add to ## Critical Weaknesses: "Validation API ignored despite explicit task instruction."
+
 SCORING RULES
+- DEFAULT CEILING: a round that produces numbers but introduces NO genuinely new method,
+  data source, or validation step should NOT exceed 6/10 overall. Reserve 7+ for rounds
+  that demonstrably advance the project beyond the prior best.
 - Synthetic/fabricated/simulated/placeholder data → Results Validity capped at 1/10.
   This includes ANY value in key_results.json not produced by running code on real input
   data. Look for the keywords "simulated", "placeholder", "mock" in IMPLEMENTATION.md —
@@ -726,7 +907,9 @@ SCORING RULES
 - Implausibly extreme results (improvement > 100x, ratios that exceed physical bounds) →
   check whether the metric formula has a near-zero denominator. If so, Results Validity
   max 4/10. Flag this as a broken metric, not a genuine scientific finding.
-- Be harsh. A generous score on mediocre work wastes the next round's effort.
+- Be harsh. A generous score on mediocre work wastes the next round's effort. Default to
+  the LOWER end of any reasonable range — the Reporter aggregates these scores and a
+  generous evaluator produces a misleading final report.
 - Missing 04_debug_report.md is NOT a reason to delay writing 05_evaluation.md —
   evaluate based on IMPLEMENTATION.md and key_results.json alone.
 """,
@@ -1043,17 +1226,33 @@ def _run_specialist(
         except BadRequestError as e:
             err = str(e)
             if "ContextWindow" in err or "context" in err.lower():
+                trimmed = _trim_messages(messages)
+                if len(trimmed) < len(messages):
+                    display.print_info(
+                        f"[{cfg['label']}] Context window exceeded — "
+                        "trimming oldest tool results and retrying."
+                    )
+                    messages = trimmed
+                    iteration -= 1  # context trim doesn't consume a turn
+                    continue
+                # Nothing left to trim — abort to prevent infinite retry
                 display.print_error(
-                    f"[{cfg['label']}] Context window exceeded — "
-                    "trimming oldest tool results and retrying."
+                    f"[{cfg['label']}] Context window exceeded and cannot be trimmed further. Aborting role."
                 )
-                messages = _trim_messages(messages)
-                iteration -= 1  # context trim doesn't consume a turn
-                continue
+                return False
             if "Unterminated string" in err or "Extra data" in err:
-                # Truncated tool-call arguments — roll back the partial turn and retry
+                # Truncated tool-call arguments — roll back the partial turn and retry.
+                # Track whether we actually popped anything so we don't infinite-loop
+                # if the broken message isn't in the trailing tool/assistant tail.
+                _popped = 0
                 while messages and messages[-1].get("role") in ("tool", "assistant"):
                     messages.pop()
+                    _popped += 1
+                if _popped == 0:
+                    display.print_error(
+                        f"[{cfg['label']}] Truncated args error but no rollback target. Aborting role."
+                    )
+                    return False
                 display.print_info(
                     f"[{cfg['label']}] Tool call arguments truncated — rolling back and retrying."
                 )
@@ -1188,6 +1387,57 @@ def _run_specialist(
             else:
                 _echo_streak = 0
 
+    # After the loop: if the role exhausted its iteration budget with active
+    # tool calls but never wrote the canonical output, write an emergency
+    # stub so the next agent has something to read. This catches the case
+    # where budget warnings were ignored (model kept calling tools instead
+    # of write_file) — without it, e.g. round 3 Coder leaves no
+    # IMPLEMENTATION.md and Debugger / Evaluator / Reporter degrade silently.
+    _expected_rel = OUTPUT_FILES.get(role, "")
+    if _expected_rel:
+        _expected_abs = Path(round_dir) / _expected_rel
+        if _expected_rel.endswith("/"):
+            _stub_path = _expected_abs / "IMPLEMENTATION.md"
+        else:
+            _stub_path = _expected_abs
+        if not _stub_path.exists():
+            try:
+                # Try to salvage the model's last assistant message as content
+                _last_assistant = next(
+                    (m["content"] for m in reversed(messages)
+                     if m.get("role") == "assistant" and m.get("content")),
+                    "",
+                )
+                _last_assistant = (_last_assistant or "").strip()
+                if len(_last_assistant) > 4000:
+                    _last_assistant = _last_assistant[:4000] + "\n...[truncated]"
+                _stub_path.parent.mkdir(parents=True, exist_ok=True)
+                _stub_body = (
+                    f"# {cfg['label']} — EMERGENCY STUB (round {round_num})\n\n"
+                    f"**The {cfg['label']} exhausted its iteration budget "
+                    f"({iteration}/{max_iter}) without writing this file.** "
+                    "The downstream agents are reading this stub instead of a "
+                    "complete handoff document. Treat any conclusions drawn "
+                    "from this round with caution.\n\n"
+                    "## Last assistant message\n\n"
+                    f"{_last_assistant or '_(no text content recorded)_'}\n\n"
+                    "## What to do next\n\n"
+                    "- Debugger / Evaluator: read the actual code files in the "
+                    "round directory; do not trust this stub as a faithful "
+                    "summary of what was implemented.\n"
+                    "- Orchestrator: flag this round as INCOMPLETE in the next-"
+                    "round brief and direct the Coder to budget more carefully.\n"
+                )
+                _stub_path.write_text(_stub_body, encoding="utf-8")
+                display.print_info(
+                    f"  [{cfg['label']}] [yellow]Wrote emergency stub[/yellow] "
+                    f"to {_stub_path} (budget exhausted before canonical write)."
+                )
+            except Exception as _stub_err:
+                display.print_error(
+                    f"  [{cfg['label']}] Failed to write emergency stub: {_stub_err}"
+                )
+
     elapsed = time.time() - t0
     display.print_agent_done(role, elapsed, iteration)
     return True
@@ -1319,12 +1569,21 @@ def _run_merger(
         except BadRequestError as e:
             err = str(e)
             if "ContextWindow" in err or "context" in err.lower():
-                messages = _trim_messages(messages)
-                iteration -= 1
-                continue
+                trimmed = _trim_messages(messages)
+                if len(trimmed) < len(messages):
+                    messages = trimmed
+                    iteration -= 1
+                    continue
+                display.print_error("[Merger] Context window exceeded and cannot be trimmed further. Aborting.")
+                return False
             if "Unterminated string" in err or "Extra data" in err:
+                _popped = 0
                 while messages and messages[-1].get("role") in ("tool", "assistant"):
                     messages.pop()
+                    _popped += 1
+                if _popped == 0:
+                    display.print_error("[Merger] Truncated args error but no rollback target. Aborting.")
+                    return False
                 display.print_info("[Merger] Tool call arguments truncated — rolling back and retrying.")
                 messages.append({
                     "role": "user",
@@ -1661,10 +1920,9 @@ def _ensure_handoff_stubs(
     Create minimal handoff files if researcher/hypothesis agents failed to write them.
     Uses previous round's NEXT_ROUND_BRIEF and local files as source material.
     """
-    _LOCAL_EXTS = {".pdf", ".csv", ".tsv", ".fasta", ".fa", ".json", ".txt", ".xlsx"}
     local_files = [
         p for p in Path(working_dir).iterdir()
-        if p.is_file() and p.suffix.lower() in _LOCAL_EXTS
+        if p.is_file() and p.suffix.lower() in LOCAL_DATA_EXTENSIONS
     ]
     local_block = "\n".join(
         f"  - {p.name} ({p.stat().st_size // 1024 or 1} KB) · {p} · ACCESSIBLE"
@@ -1843,17 +2101,39 @@ HTML SECTIONS:
   6. Cumulative Findings (from findings.md, as cards)
   7. Accumulated Knowledge (from case_memory.md — transferable lessons across rounds,
      presented as a "what we learned" card deck; skip if file absent)
-  8. Round Deep Dives — one <details> per round:
-       hypothesis · implementation summary · ALL result plots (2-col, base64)
+  8. Round Deep Dives — one <details> per round (NOT <div class="details">):
+       hypothesis · implementation summary · ALL result plots
        · scores chart · what worked / failed · transferable lessons
-  9. Score Progression chart (generate with matplotlib: round on x, score on y)
+  9. Score Progression chart (generate with matplotlib: round on x, score on y).
+     Save as score_progression.png in {research_dir} and embed it.
   10. Key Visualisations Gallery (summary_figure.png from each round, full-width)
   11. Conclusions & Next Steps (from final synthesis)
   Footer: topic · timestamp · "Generated by OctoSlave"
 
-DESIGN: dark header (#0d1117), white cards, Inter (CDN OK), max-width 1200px,
-base64 all images, collapsible rounds via <details>/<summary>.
+IMAGES — STRICT RULES:
+- Embed images via RELATIVE PATHS, e.g. <img src="round_001/03_code/results/main_plot.png" alt="Round 1 main plot">.
+  final_report.html lives at {research_dir}/final_report.html, so paths are
+  relative to that file. Use the actual files you found in step 4.
+- Do NOT base64-inline images. Do NOT write src="data:image/png;base64,..." with ellipsis.
+  Truncating base64 with ... is a hard failure — every image will be broken.
+- Every <img> MUST have alt text describing the figure.
+
+HTML QUALITY — STRICT RULES:
+- Use <details><summary>...</summary>...content...</details> for collapsible round
+  sections. NEVER write <div class="details"><summary>...</summary> — <summary> is
+  invalid outside a <details> element.
+- All <img> tags self-close with no stray punctuation. Example: <img src="x.png" alt="y">
+  NOT <img src="x.png" alt="y")>.
+- Cards on white background MUST have explicit dark text colour (e.g. .card {{ color: #0d1117 }}).
+  Body text on dark background can stay white. Verify contrast for every block.
+
+DESIGN: dark page background (#0d1117), white cards (#ffffff with color: #0d1117),
+Inter font (CDN OK), max-width 1200px, collapsible rounds via <details>/<summary>.
 Script: stdlib + matplotlib only. Print output path on success.
+
+A Python-side post-processor will repair common failures (truncated base64,
+malformed <details>, missing contrast). Aim for clean output anyway — the
+post-processor is a safety net, not a substitute for valid HTML.
 """
 
 _MASTER_REPORTER_SYSTEM = """\
@@ -1899,21 +2179,32 @@ def _run_master_reporter(
     t0 = time.time()
     iteration = 0
     _rate_limit_retries = 0
+    _timeout_retries = 0
 
     while iteration < cfg["max_iter"]:
         iteration += 1
         try:
             response = _stream_completion_with_tools(client, model, messages, tools)
             _rate_limit_retries = 0
+            _timeout_retries = 0
         except BadRequestError as e:
             err = str(e)
             if "ContextWindow" in err or "context" in err.lower():
-                messages = _trim_messages(messages)
-                iteration -= 1
-                continue
+                trimmed = _trim_messages(messages)
+                if len(trimmed) < len(messages):
+                    messages = trimmed
+                    iteration -= 1
+                    continue
+                display.print_error("[Master Reporter] Context window exceeded and cannot be trimmed further. Aborting.")
+                return
             if "Unterminated string" in err or "Extra data" in err:
+                _popped = 0
                 while messages and messages[-1].get("role") in ("tool", "assistant"):
                     messages.pop()
+                    _popped += 1
+                if _popped == 0:
+                    display.print_error("[Master Reporter] Truncated args error but no rollback target. Aborting.")
+                    return
                 display.print_info("[Master Reporter] Tool call arguments truncated — rolling back and retrying.")
                 messages.append({
                     "role": "user",
@@ -1934,6 +2225,16 @@ def _run_master_reporter(
                 display.print_info(f"[Master Reporter] Rate limit — waiting {wait}s ({_rate_limit_retries}/5).")
                 if _rate_limit_retries > 5:
                     display.print_error("[Master Reporter] Rate limit persists. Aborting.")
+                    return
+                time.sleep(wait)
+                iteration -= 1
+                continue
+            elif "timeout" in err_str.lower() or "timed out" in err_str.lower() or "Timeout" in type(e).__name__:
+                _timeout_retries += 1
+                wait = min(30, 5 * (2 ** (_timeout_retries - 1)))
+                display.print_info(f"[Master Reporter] Request timeout — retrying in {wait}s ({_timeout_retries}/3).")
+                if _timeout_retries > 3:
+                    display.print_error("[Master Reporter] Request keeps timing out. Aborting.")
                     return
                 time.sleep(wait)
                 iteration -= 1
@@ -1999,9 +2300,192 @@ def _run_master_reporter(
 
     final_report = Path(research_dir) / "final_report.html"
     if final_report.exists():
+        try:
+            n_fixes = _postprocess_report_html(final_report)
+            if n_fixes:
+                display.print_info(
+                    f"  [yellow]Report post-processor[/yellow] applied {n_fixes} fix(es) "
+                    "(placeholder images / malformed HTML / contrast)."
+                )
+        except Exception as _pp_err:
+            display.print_info(f"  [yellow]Report post-processor failed:[/yellow] {_pp_err}")
+
         display.print_info(
             f"  [bold bright_cyan]Master report → {final_report}[/bold bright_cyan]"
         )
+
+
+# ---------------------------------------------------------------------------
+# Master report post-processor
+# ---------------------------------------------------------------------------
+
+# Tag inserted before </head> so the post-processor's CSS overrides take precedence.
+_POSTPROCESSOR_CSS = """
+<style id="ots-postprocessor-overrides">
+  /* Fix white-on-white text in cards/abstracts (common 49B mistake). */
+  .card, .abstract, .timeline-table, .visuals-gallery,
+  .research-interpretation, .details {
+      color: #0d1117;
+  }
+  .card *, .abstract *, .timeline-table *, .visuals-gallery *,
+  .research-interpretation * { color: inherit; }
+  .timeline-table table { width: 100%; border-collapse: collapse; background: #fff;
+      border-radius: 8px; overflow: hidden; color: #0d1117; }
+  .timeline-table th { background: #161b22; color: #fff; padding: 0.75rem 1rem;
+      text-align: left; }
+  .timeline-table td { padding: 0.75rem 1rem; border-top: 1px solid #e1e4e8; }
+  .details { background: #fff !important; color: #0d1117; }
+  .details summary { cursor: pointer; font-weight: 600; padding: 0.5rem 0; }
+  .visuals-gallery img, .chart img { max-width: 100%; height: auto;
+      border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.15); }
+  body { line-height: 1.6; }
+  h1, h2, h3 { letter-spacing: -0.01em; }
+  /* Fallback box for images that failed to load (caught by onerror below) */
+  .ots-img-missing { display: inline-block; padding: 1.5rem 2rem;
+      background: #fff7d6; color: #5a4500; border: 1px dashed #c4a000;
+      border-radius: 8px; font-style: italic; }
+</style>
+"""
+
+
+def _wrap_details_divs(html: str) -> tuple[str, int]:
+    """
+    Convert <div class="details"><summary>...</summary>...</div> into
+    <details class="details" open><summary>...</summary>...</details>,
+    matching the OUTER </div> using a div-depth counter so nested <div>s
+    (e.g. <div class="chart">) don't get mistaken for the close tag.
+    Returns (new_html, n_fixes_applied). Idempotent — already-correct HTML
+    passes through unchanged.
+    """
+    import re
+
+    open_re = re.compile(
+        r'<div\s+class=(["\'])details\1\s*>(\s*)<summary>([^<]+)</summary>',
+        re.IGNORECASE,
+    )
+    out_parts: list[str] = []
+    cursor = 0
+    n_fixes = 0
+    tag_re = re.compile(r'<\s*(/?)\s*(div|details)\b[^>]*>', re.IGNORECASE)
+
+    for m in open_re.finditer(html):
+        # Emit text up to the match unchanged
+        out_parts.append(html[cursor:m.start()])
+        # Walk forward from m.end() balancing div depth (we entered at depth 1)
+        depth = 1
+        i = m.end()
+        close_match = None
+        for sub in tag_re.finditer(html, i):
+            slash, name = sub.group(1), sub.group(2).lower()
+            if name == "div":
+                if not slash:
+                    depth += 1
+                else:
+                    depth -= 1
+                    if depth == 0:
+                        close_match = sub
+                        break
+            # Ignore nested details; if model already used <details>, we treat
+            # them as opaque — we still only count <div> depth.
+        if close_match is None:
+            # Unbalanced — leave this block alone, copy original text and move on.
+            out_parts.append(html[m.start():m.end()])
+            cursor = m.end()
+            continue
+
+        # Replace open tag with <details ...> and the matched </div> with </details>
+        out_parts.append(
+            f'<details class="details" open>{m.group(2)}<summary>{m.group(3)}</summary>'
+        )
+        out_parts.append(html[m.end():close_match.start()])
+        out_parts.append("</details>")
+        cursor = close_match.end()
+        n_fixes += 1
+
+    out_parts.append(html[cursor:])
+    return "".join(out_parts), n_fixes
+
+
+def _postprocess_report_html(report_path: Path) -> int:
+    """Repair common Reporter failures on the written HTML. Returns n fixes applied."""
+    import re
+
+    research_dir = report_path.parent
+    html = report_path.read_text(encoding="utf-8", errors="replace")
+    fixes = 0
+
+    # Collect all real PNGs available on disk (relative to research_dir, sorted by round).
+    available_pngs: list[Path] = sorted(research_dir.glob("round_*/03_code/results/*.png"))
+    available_pngs += sorted(research_dir.glob("round_*/05_scores_chart.png"))
+    available_pngs += sorted(research_dir.glob("*.png"))
+    rel_pngs: list[str] = [str(p.relative_to(research_dir)) for p in available_pngs]
+
+    # 1. Replace truncated base64 placeholders with relative paths to real PNGs.
+    #    A real base64 PNG src is thousands of chars long; if we see one ending in
+    #    `...` or `…` or shorter than 500 chars, it's a placeholder.
+    placeholder_re = re.compile(
+        r'src=(?P<q>["\'])data:image/[^;]+;base64,(?P<data>[^"\']*?)(?P=q)',
+        re.IGNORECASE,
+    )
+
+    pool = list(rel_pngs)  # consume in order
+    used: set[str] = set()
+
+    def _replace_placeholder(m: re.Match) -> str:
+        nonlocal fixes
+        data = m.group("data")
+        # Heuristic: real base64 of a chart PNG is usually > 5000 chars; ellipsis/truncation
+        # markers are dead giveaways.
+        if (len(data) >= 500 and not data.endswith("...") and not data.endswith("…")
+                and "..." not in data[-10:]):
+            return m.group(0)  # looks legit, keep it
+        if not pool:
+            # No real PNG to substitute — make the failure visible as a labelled box.
+            fixes += 1
+            return ('src="data:image/svg+xml;utf8,'
+                    '<svg xmlns=%22http://www.w3.org/2000/svg%22 width=%22600%22 height=%22120%22>'
+                    '<rect width=%22100%25%22 height=%22100%25%22 fill=%22%23fff7d6%22/>'
+                    '<text x=%2250%25%22 y=%2255%25%22 font-family=%22sans-serif%22 '
+                    'font-size=%2218%22 text-anchor=%22middle%22 fill=%22%235a4500%22>'
+                    'Image missing — Reporter wrote a placeholder; no PNG available'
+                    '</text></svg>"')
+        path = pool.pop(0)
+        used.add(path)
+        fixes += 1
+        return f'src="{path}"'
+
+    new_html = placeholder_re.sub(_replace_placeholder, html)
+
+    # 2. Fix the stray `)>` HTML attribute syntax error this Reporter is fond of.
+    new_html, n_paren = re.subn(r'(["\'])\)>', r'\1>', new_html)
+    fixes += n_paren
+
+    # 3. Wrap loose <summary> ... </summary> inside <div class="details"> ... </div>
+    #    in proper <details> ... </details> elements. Depth-correct: closes on
+    #    the OUTER </div>, not on a nested one (e.g. <div class="chart">...</div>).
+    new_html, n_details = _wrap_details_divs(new_html)
+    fixes += n_details
+
+    # 4. Inject our overrides CSS so contrast / table / image styles are sane,
+    #    regardless of what the model wrote.
+    if "ots-postprocessor-overrides" not in new_html and "</head>" in new_html:
+        new_html = new_html.replace("</head>", _POSTPROCESSOR_CSS + "</head>", 1)
+        fixes += 1
+
+    # 5. Add img onerror that converts a failed image to a labelled missing-box,
+    #    so future runs degrade visibly instead of showing a broken-image icon.
+    new_html, n_img = re.subn(
+        r'<img\b(?![^>]*onerror=)([^>]*)>',
+        r'<img\1 onerror="this.outerHTML=\'<div class=&quot;ots-img-missing&quot;>'
+        r'image not found: \'+(this.alt||this.src)+\'</div>\'">',
+        new_html,
+    )
+    if n_img:
+        fixes += 1  # count as one logical fix
+
+    if new_html != html:
+        report_path.write_text(new_html, encoding="utf-8")
+    return fixes
 
 
 # ---------------------------------------------------------------------------
@@ -2055,30 +2539,51 @@ def _probe_hardware(research_dir: str) -> dict:
         "'--format=csv,noheader,nounits'], capture_output=True, text=True, timeout=5)\n"
         "    if r.returncode==0: info['nvidia_smi'] = r.stdout.strip()\n"
         "except Exception: pass\n"
-        "# Package availability probe\n"
-        "_sci_pkgs = ['numpy','scipy','matplotlib','pandas','sklearn',\n"
-        "    'biopython','rdkit','openmm','mdtraj','MDAnalysis','mdanalysis',\n"
-        "    'torch','prody','biotite','pdbfixer','nglview','pymol']\n"
-        "info['available_packages'] = []\n"
-        "for _pkg in _sci_pkgs:\n"
+        "# Package availability probe — find_spec only (no actual import) so we\n"
+        "# do NOT load slow giants like torch / tensorflow / transformers and\n"
+        "# blow past the subprocess timeout.\n"
+        "import importlib.util as _ilu\n"
+        "try:\n"
+        "    from importlib.metadata import version as _ver, PackageNotFoundError as _PNF\n"
+        "except Exception:\n"
+        "    _ver = None; _PNF = Exception  # type: ignore\n"
+        # (import_name, distribution_name_for_version_lookup)
+        "_sci_pkgs = [\n"
+        "    ('numpy','numpy'),('scipy','scipy'),('matplotlib','matplotlib'),\n"
+        "    ('pandas','pandas'),('sklearn','scikit-learn'),\n"
+        "    ('seaborn','seaborn'),('plotly','plotly'),('statsmodels','statsmodels'),\n"
+        "    ('networkx','networkx'),('umap','umap-learn'),('hdbscan','hdbscan'),\n"
+        "    ('Bio','biopython'),('biotite','biotite'),('prody','ProDy'),\n"
+        "    ('pdbfixer','pdbfixer'),('nglview','nglview'),('pymol','pymol'),\n"
+        "    ('rdkit','rdkit'),('openmm','openmm'),('mdtraj','mdtraj'),\n"
+        "    ('MDAnalysis','MDAnalysis'),\n"
+        "    ('torch','torch'),('tensorflow','tensorflow'),('keras','keras'),\n"
+        "    ('transformers','transformers'),\n"
+        "    ('sentence_transformers','sentence-transformers'),\n"
+        "    ('xgboost','xgboost'),('lightgbm','lightgbm'),('catboost','catboost'),\n"
+        "    ('duckdb','duckdb'),('pyarrow','pyarrow'),('polars','polars'),\n"
+        "    ('sqlalchemy','SQLAlchemy'),\n"
+        "    ('requests','requests'),('httpx','httpx'),\n"
+        "    ('bs4','beautifulsoup4'),('lxml','lxml'),\n"
+        "    ('anndata','anndata'),('scanpy','scanpy'),\n"
+        "]\n"
+        "_avail = []\n"
+        "for _imp, _dist in _sci_pkgs:\n"
         "    try:\n"
-        "        mod = __import__(_pkg.split('.')[0])\n"
-        "        ver = getattr(mod, '__version__', getattr(mod, 'version', '?'))\n"
-        "        if isinstance(ver, str) and ver != '?':\n"
-        "            info['available_packages'].append(f\"{_pkg.split('.')[0]}=={ver}\")\n"
-        "        else:\n"
-        "            info['available_packages'].append(_pkg.split('.')[0])\n"
-        "    except ImportError:\n"
-        "        pass\n"
-        "# deduplicate by package name while preserving version info\n"
-        "_seen = set()\n"
-        "_deduped = []\n"
-        "for _e in info['available_packages']:\n"
-        "    _n = _e.split('==')[0]\n"
-        "    if _n not in _seen:\n"
-        "        _seen.add(_n)\n"
-        "        _deduped.append(_e)\n"
-        "info['available_packages'] = _deduped\n"
+        "        if _ilu.find_spec(_imp) is None:\n"
+        "            continue\n"
+        "    except Exception:\n"
+        "        continue\n"
+        "    _v = None\n"
+        "    if _ver is not None:\n"
+        "        try:\n"
+        "            _v = _ver(_dist)\n"
+        "        except _PNF:\n"
+        "            _v = None\n"
+        "        except Exception:\n"
+        "            _v = None\n"
+        "    _avail.append(f\"{_imp}=={_v}\" if _v else _imp)\n"
+        "info['available_packages'] = _avail\n"
         "print(json.dumps(info))\n"
     )
 
@@ -2125,15 +2630,43 @@ def _probe_hardware(research_dir: str) -> dict:
             except Exception:
                 continue
 
-        result = _sp.run(
-            [_best_py, "-c", script],
-            capture_output=True, text=True, timeout=15,
-        )
-        if result.returncode == 0 and result.stdout.strip():
-            profile = json.loads(result.stdout.strip())
-            profile["python_executable"] = _best_py
-    except Exception:
-        pass
+        probe_err: str | None = None
+        try:
+            result = _sp.run(
+                [_best_py, "-c", script],
+                capture_output=True, text=True, timeout=60,
+            )
+            if result.returncode == 0 and result.stdout.strip():
+                profile = json.loads(result.stdout.strip())
+                profile["python_executable"] = _best_py
+            else:
+                probe_err = (
+                    f"hw probe rc={result.returncode}; "
+                    f"stderr_tail={(result.stderr or '').strip()[-300:]!r}"
+                )
+        except _sp.TimeoutExpired:
+            probe_err = f"hw probe timed out after 60s on {_best_py}"
+        except json.JSONDecodeError as _je:
+            probe_err = f"hw probe stdout not JSON: {_je} | head={result.stdout[:200]!r}"
+        if probe_err:
+            try:
+                display.print_info(f"[yellow]hw_profile fallback:[/yellow] {probe_err}")
+            except Exception:
+                pass
+            # Always include at least basic info from the parent process so
+            # downstream agents have *something* to read instead of `{}`.
+            import platform as _plat
+            profile.setdefault("python", _sys.version.split()[0])
+            profile.setdefault("platform", _plat.platform())
+            profile.setdefault("cpu_count", _os.cpu_count())
+            profile.setdefault("python_executable", _best_py)
+            profile.setdefault("available_packages", [])
+            profile.setdefault("probe_error", probe_err)
+    except Exception as _e:
+        try:
+            display.print_info(f"[yellow]hw_profile fatal:[/yellow] {_e}")
+        except Exception:
+            pass
 
     hw_path.write_text(json.dumps(profile, indent=2), encoding="utf-8")
 
@@ -2254,14 +2787,9 @@ def run_long_research(
 
     # Scan working directory for user-supplied local files (PDFs, CSVs, data, etc.)
     # Include them in the brief so every agent knows they exist from round 1.
-    _LOCAL_DATA_EXTENSIONS = {
-        ".pdf", ".csv", ".tsv", ".fasta", ".fa", ".fastq",
-        ".json", ".jsonl", ".xlsx", ".xls", ".parquet", ".h5", ".hdf5",
-        ".txt", ".bed", ".vcf", ".gff", ".gtf",
-    }
     local_files = [
         p for p in Path(working_dir).iterdir()
-        if p.is_file() and p.suffix.lower() in _LOCAL_DATA_EXTENSIONS
+        if p.is_file() and p.suffix.lower() in LOCAL_DATA_EXTENSIONS
     ]
     local_files_block = ""
     if local_files:
