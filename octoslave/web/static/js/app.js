@@ -18,9 +18,13 @@ import { scrollToBottom, autoResizeTextarea, renderMarkdown, esc } from './utils
 window.toggleHistory = toggleHistory;
 window.browseDir = browseDir;
 window.refreshHistory = refreshHistory;
+window.refreshFileTree = refreshFileTree;
 window.viewFile = viewFile;
+window.uploadFile = uploadFile;
 window.removeAttachment = removeAttachment;
 window.appendChatInfo = appendChatInfo;
+window.appendChatError = appendChatError;
+window.clearChatMessages = clearChatMessages;
 window.loadChat = (id) => { window.loadChatImpl && window.loadChatImpl(id); };
 window.deleteChat = (id) => { window.deleteChatImpl && window.deleteChatImpl(id); };
 
