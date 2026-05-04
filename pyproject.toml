@@ -47,4 +47,5 @@ include = ["octoslave*"]
 [tool.uv.workspace]
 members = [
     "debug/new_benchmark",
+    "Converter",
 ]

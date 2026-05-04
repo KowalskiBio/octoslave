@@ -532,7 +532,24 @@ def _bash(command: str, working_dir: str, timeout: int = 300) -> tuple[str, bool
 
 
 def _glob(pattern: str, working_dir: str, path: str = None) -> tuple[str, bool]:
-    root = _resolve(path, working_dir) if path else Path(working_dir)
+    # If pattern is an absolute path, split into root + relative pattern
+    p = Path(pattern)
+    if p.is_absolute():
+        # Find the first glob character to split root from pattern
+        parts = p.parts
+        root_parts = []
+        glob_parts = []
+        in_glob = False
+        for part in parts:
+            if in_glob or any(c in part for c in ("*", "?", "[")):
+                in_glob = True
+                glob_parts.append(part)
+            else:
+                root_parts.append(part)
+        root = Path(*root_parts) if root_parts else Path("/")
+        pattern = str(Path(*glob_parts)) if glob_parts else "**/*"
+    else:
+        root = _resolve(path, working_dir) if path else Path(working_dir)
     matches = sorted(str(p) for p in root.glob(pattern))
     if not matches:
         return f"No files matching '{pattern}'", True

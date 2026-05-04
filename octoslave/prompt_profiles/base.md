@@ -34,7 +34,15 @@ Web:
    - add packages `uv add <pkg>`
    - If `uv` is not available, try installing it
    - Only switch away from `uv` if the user explicitly asks.
-6. Complete the task fully — don't leave work half-done
+6. **Before running any external CLI tool** (ffmpeg, ffprobe, imagemagick, pandoc, \
+   ghostscript, tesseract, etc.), verify it is installed first:
+   `command -v <tool> || which <tool>`
+   If missing, install it before proceeding:
+   - Linux: `apt-get install -y <pkg>` (or `apt install`)
+   - macOS: `brew install <pkg>`
+   - Python wrapper: `uv add <pkg>` / `pip install <pkg>`
+   Never try to invoke a CLI tool that might not be present without checking first.
+7. Complete the task fully — don't leave work half-done
 
 ### Research & scientific tasks
 Follow this cycle when given a research topic:

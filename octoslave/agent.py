@@ -1,6 +1,7 @@
 """Core agent loop for octoslave."""
 
 import json
+import re
 from datetime import date
 from pathlib import Path
 from openai import OpenAI, BadRequestError
@@ -8,6 +9,132 @@ from openai import OpenAI, BadRequestError
 from . import display
 from .tools import TOOL_DEFINITIONS, execute_tool
 from .config import load_config
+
+_VALID_TOOL_NAMES = {td["function"]["name"] for td in TOOL_DEFINITIONS}
+
+
+def _extract_text_tool_calls(content: str) -> tuple[list[dict], str]:
+    """
+    Fallback for models that output tool calls as JSON text instead of using
+    the API's structured function-calling protocol (e.g. qwen2.5-coder:3b).
+
+    Handles multiple formats:
+      {"name": "tool", "arguments": {...}}
+      {"name": "tool", "parameters": {...}}
+      ["tool_name", {...args...}]
+    Code fences (```json ... ```) are stripped before scanning.
+
+    Returns (tool_calls, truncated_content) where truncated_content has
+    everything from the first tool call onward removed — preventing hallucinated
+    "results" that follow the tool call from polluting the message history.
+    """
+    calls: list[dict] = []
+    call_idx = 0
+    first_call_start: int | None = None  # position in original content
+
+    # Build a mapping from positions in stripped → original content.
+    # Simple approach: track fence spans and map stripped indices back.
+    # For our purposes, we only need the start position of the first tool call
+    # in the original content so we can truncate there.
+
+    # Find all code fence spans in original content to map positions
+    fence_spans: list[tuple[int, int, str]] = []  # (orig_start, orig_end, inner_text)
+    for m in re.finditer(r"```[a-z]*\n?(.*?)```", content, re.DOTALL):
+        fence_spans.append((m.start(), m.end(), m.group(1)))
+
+    def _orig_pos_of_first_call(stripped_pos: int) -> int:
+        """Approximate original content position for a position in stripped text."""
+        # Rebuild stripped with offset tracking
+        pos_in_stripped = 0
+        pos_in_orig = 0
+        i = 0
+        while i < len(content):
+            # Check if we're at a fence start
+            fence = next((f for f in fence_spans if f[0] == i), None)
+            if fence:
+                inner = fence[2]
+                # The fence maps to inner text in stripped
+                if pos_in_stripped + len(inner) > stripped_pos:
+                    # target is inside this fence
+                    offset_in_inner = stripped_pos - pos_in_stripped
+                    return fence[0] + content[fence[0]:].index(inner) + offset_in_inner
+                pos_in_stripped += len(inner)
+                i = fence[1]
+                continue
+            # Not in a fence — direct mapping
+            if pos_in_stripped == stripped_pos:
+                return i
+            pos_in_stripped += 1
+            i += 1
+        return len(content)
+
+    stripped = re.sub(r"```[a-z]*\n?(.*?)```", r"\1", content, flags=re.DOTALL)
+
+    def _make_call(name: str, args: dict) -> dict:
+        nonlocal call_idx
+        c = {
+            "id": f"text_call_{call_idx}",
+            "type": "function",
+            "function": {"name": name, "arguments": json.dumps(args)},
+        }
+        call_idx += 1
+        return c
+
+    i = 0
+    while i < len(stripped):
+        ch = stripped[i]
+        if ch not in ("{", "["):
+            i += 1
+            continue
+
+        depth = 0
+        j = i
+        while j < len(stripped):
+            if stripped[j] in ("{", "["):
+                depth += 1
+            elif stripped[j] in ("}", "]"):
+                depth -= 1
+                if depth == 0:
+                    break
+            j += 1
+
+        blob = stripped[i : j + 1]
+        matched = False
+        try:
+            obj = json.loads(blob)
+            if isinstance(obj, dict):
+                name = obj.get("name") or obj.get("function", {}).get("name", "")
+                args = obj.get("arguments") or obj.get("parameters") or {}
+                if name in _VALID_TOOL_NAMES and isinstance(args, dict):
+                    calls.append(_make_call(name, args))
+                    matched = True
+            elif isinstance(obj, list) and len(obj) >= 2:
+                name, args = obj[0], obj[1]
+                if isinstance(name, str) and name in _VALID_TOOL_NAMES and isinstance(args, dict):
+                    calls.append(_make_call(name, args))
+                    matched = True
+        except (json.JSONDecodeError, AttributeError, TypeError):
+            pass
+
+        if matched and first_call_start is None:
+            # Record the fence or raw start in original content
+            # Walk back to find the opening ``` if any
+            orig_i = _orig_pos_of_first_call(i)
+            # If preceded by a code fence opening, include that in the truncation
+            fence_start = next(
+                (f[0] for f in fence_spans if f[0] < orig_i and f[1] > orig_i),
+                orig_i,
+            )
+            first_call_start = fence_start
+
+        i = j + 1
+
+    if first_call_start is not None:
+        truncated = content[:first_call_start].rstrip()
+    else:
+        truncated = content
+
+    return calls, truncated
 
 MAX_ITERATIONS = 100
 
@@ -112,7 +239,7 @@ def _cap_result(result: str, tool_name: str) -> str:
     )
 
 
-def _stream_completion(client: OpenAI, model: str, messages: list) -> dict:
+def _stream_completion(client: OpenAI, model: str, messages: list, force_tool: bool = False) -> dict:
     """
     Stream one completion turn. Returns:
       {"content": str, "tool_calls": list[dict], "finish_reason": str}
@@ -128,7 +255,7 @@ def _stream_completion(client: OpenAI, model: str, messages: list) -> dict:
         model=model,
         messages=messages,
         tools=TOOL_DEFINITIONS,
-        tool_choice="auto",
+        tool_choice="required" if force_tool else "auto",
         stream=True,
     ) as stream:
         for chunk in stream:
@@ -217,9 +344,9 @@ def continue_agent(
 
 
 def _agent_loop(
-    messages: list[dict], 
-    model: str, 
-    working_dir: str, 
+    messages: list[dict],
+    model: str,
+    working_dir: str,
     client: OpenAI,
     permission_mode: str = "autonomous",
 ) -> list[dict]:
@@ -229,11 +356,14 @@ def _agent_loop(
     _rate_limit_retries = 0
     _timeout_retries = 0
     _tool_call_counts: Counter = Counter()  # (name, args_json) → call count
+    _no_tool_nudges = 0  # how many times we've nudged the model to use tools
 
     while iteration < MAX_ITERATIONS:
         iteration += 1
+        # Force a tool call on the first turn and whenever nudging a text-only reply.
+        _force = iteration == 1 or _no_tool_nudges > 0
         try:
-            response = _stream_completion(client, model, messages)
+            response = _stream_completion(client, model, messages, force_tool=_force)
             _rate_limit_retries = 0
             _timeout_retries = 0
         except BadRequestError as e:
@@ -330,14 +460,40 @@ def _agent_loop(
         tool_calls = response["tool_calls"]
         finish_reason = response["finish_reason"]
 
+        # Some models (e.g. qwen2.5-coder:3b) output tool calls as JSON text instead
+        # of using the API's structured function-calling protocol.  Extract and promote
+        # them so the rest of the loop can execute them normally.
+        # content is also truncated at the first tool call to drop hallucinated results.
+        if not tool_calls and content:
+            tool_calls, content = _extract_text_tool_calls(content)
+            if tool_calls:
+                display.print_info(
+                    "Model used text-format tool calls — extracting and executing."
+                )
+
         assistant_msg: dict = {"role": "assistant", "content": content if content else ""}
         if tool_calls:
             assistant_msg["tool_calls"] = tool_calls
         messages.append(assistant_msg)
 
-        if not tool_calls or finish_reason == "stop":
+        if not tool_calls:
+            # Small/local models often reply with text instead of using tools.
+            # Nudge up to 2 times before accepting the text-only answer.
+            if _no_tool_nudges < 2:
+                _no_tool_nudges += 1
+                messages.append({
+                    "role": "user",
+                    "content": (
+                        "Use a tool to complete this task — do not describe what you will do. "
+                        "Call list_dir, read_file, bash, write_file, or another tool right now."
+                    ),
+                })
+                continue
             display.print_done(iteration)
             break
+
+        # Model used tools — reset nudge counter so it can get nudged again if needed
+        _no_tool_nudges = 0
 
         # Execute tool calls
         display.print_separator()

@@ -221,6 +221,44 @@ def ollama_pull_model(model_name: str, ollama_url: str = OLLAMA_BASE_URL) -> boo
 
 
 # ---------------------------------------------------------------------------
+# Tool-calling capability ordering for local models
+# ---------------------------------------------------------------------------
+
+# Model name prefixes ranked best→worst for OpenAI-format tool calling.
+# Models not matching any prefix are treated as lowest priority.
+_TOOL_CALL_RANK: list[str] = [
+    "qwen2.5",
+    "qwen3",
+    "llama3.1",
+    "llama3.2",
+    "llama3.3",
+    "mistral-nemo",
+    "mistral-small",
+    "granite3",
+    "phi4",
+    "phi3",
+    "llama3",
+    # Below here: known poor/no tool-calling support
+    "gemma",
+    "mistral",   # plain mistral:7b doesn't support JSON tool calls reliably
+]
+
+
+def _tool_call_score(model_name: str) -> int:
+    """Lower score = better tool calling. Unknown models get worst score."""
+    name = model_name.lower().split(":")[0]  # strip tag like :7b
+    for i, prefix in enumerate(_TOOL_CALL_RANK):
+        if name.startswith(prefix):
+            return i
+    return len(_TOOL_CALL_RANK)
+
+
+def sort_by_tool_calling(models: list[str]) -> list[str]:
+    """Return models sorted best-first for tool calling support."""
+    return sorted(models, key=_tool_call_score)
+
+
+# ---------------------------------------------------------------------------
 # Role → local model assignment for long-research
 # ---------------------------------------------------------------------------
 

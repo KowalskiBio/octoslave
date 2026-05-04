@@ -22,7 +22,7 @@ from .config import (
     load_config, save_config,
     ollama_is_running, ollama_list_models, ollama_pull_model,
     nim_list_models, einfra_list_models, list_models,
-    assign_local_models,
+    assign_local_models, sort_by_tool_calling,
     get_role_models, save_role_model, reset_role_models,
 )
 
@@ -123,7 +123,10 @@ def run(task, model, working_dir, api_key, base_url, local, prompt_profile, inte
     if verbose:
         display.set_verbose(True)
     cfg = _resolve_config(model, working_dir, api_key, base_url, local=local)
-    cfg["prompt_profile"] = prompt_profile
+    effective_profile = prompt_profile
+    if cfg["backend"] == "ollama" and prompt_profile == "base":
+        effective_profile = "local"
+    cfg["prompt_profile"] = effective_profile
 
     # Only create project dir if explicitly requested with -n
     if new_project and not working_dir:
@@ -399,7 +402,10 @@ def _interactive(ctx_obj: dict):
         ctx_obj.get("base_url"),
         local=ctx_obj.get("local", False),
     )
-    cfg["prompt_profile"] = ctx_obj.get("prompt_profile", "base")
+    explicit_profile = ctx_obj.get("prompt_profile", "base")
+    if cfg["backend"] == "ollama" and explicit_profile == "base":
+        explicit_profile = "local"
+    cfg["prompt_profile"] = explicit_profile
     cfg["verbose"] = ctx_obj.get("verbose", False)
     cfg["explicit_dir"] = bool(ctx_obj.get("working_dir"))
 
@@ -1227,16 +1233,18 @@ def _resolve_config(model, working_dir, api_key, base_url, local: bool = False) 
         if not pulled:
             display.print_error(
                 "No models pulled in Ollama.\n"
-                "Pull one with: [bold]ollama pull mistral[/bold]"
+                "Pull one with: [bold]ollama pull qwen2.5:7b[/bold]"
             )
             sys.exit(1)
-        chosen_model = model or saved.get("default_model") or pulled[0]
+        # When no model is explicitly requested, prefer models with better tool-calling support
+        ranked = sort_by_tool_calling(pulled)
+        chosen_model = model or saved.get("default_model") or ranked[0]
         if chosen_model not in pulled:
             display.console.print(
                 f"[dim]Model '{chosen_model}' not found locally, "
-                f"using '{pulled[0]}' instead.[/dim]"
+                f"using '{ranked[0]}' instead.[/dim]"
             )
-            chosen_model = pulled[0]
+            chosen_model = ranked[0]
         return {
             "api_key":     "ollama",
             "base_url":    ollama_url,
