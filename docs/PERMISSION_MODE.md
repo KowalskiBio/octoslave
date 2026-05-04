@@ -1,122 +1,93 @@
-# Permission Mode Feature
+# Permission Modes
 
-OctoSlave now supports two permission modes that control how the agent interacts with your filesystem and executes commands.
+Permission modes control whether OctoSlave asks before modifying files or running commands.
 
-## Permission Modes
+---
 
-### Autonomous Mode (Default)
-- **Behavior**: OctoSlave works without asking for permission
-- **Use case**: When you trust the agent to make changes freely
-- **Best for**: Automated tasks, trusted workflows, rapid prototyping
+## Modes
 
-### Controlled Mode
-- **Behavior**: OctoSlave asks for permission before making any changes
-- **Use case**: When you want oversight over file edits and command execution
-- **Best for**: Production code, sensitive projects, learning/exploration
+### `autonomous` (default)
 
-## Tools Requiring Permission (in Controlled Mode)
+Works without asking. Edits files, runs commands freely.
 
-The following tools will trigger a permission request in controlled mode:
-- `write_file` - Create or overwrite files
-- `edit_file` - Modify existing files
-- `bash` - Execute shell commands
+Best for: trusted workflows, automation, rapid prototyping.
 
-Read-only tools (`read_file`, `glob`, `grep`, `list_dir`, `web_search`, `web_fetch`) never require permission.
+### `controlled`
 
-## How to Use
+Asks before every file write, file edit, and bash command.
 
-### Command Line
+Best for: sensitive codebases, production systems, learning what the agent does.
 
-```bash
-# Start with controlled mode
-ots --permission-mode controlled
+### `supervised`
 
-# Run a task with controlled mode
-ots run "edit my code" --permission-mode controlled
+Asks before file edits only. Bash commands are auto-allowed.
 
-# Run with autonomous mode (default)
-ots run "build something" --permission-mode autonomous
-```
+Best for: situations where you want oversight on file changes but trust shell commands.
 
-### Interactive Mode
+---
 
-Once in the interactive session, use the `/permission` command:
+## Tools that trigger a permission prompt
 
-```
-/permission              # Show current mode
-/permission controlled   # Switch to controlled mode
-/permission autonomous   # Switch to autonomous mode
-```
+| Tool | `autonomous` | `controlled` | `supervised` |
+|------|-------------|-------------|-------------|
+| `read_file` | auto | auto | auto |
+| `glob`, `grep`, `list_dir` | auto | auto | auto |
+| `web_search`, `web_fetch` | auto | auto | auto |
+| `write_file` | auto | **asks** | **asks** |
+| `edit_file` | auto | **asks** | **asks** |
+| `bash` | auto | **asks** | auto |
 
-### Configuration
+---
 
-You can set the default permission mode permanently:
+## Usage
+
+### At startup
 
 ```bash
-# Using the config command
-ots config
-
-# Or set via environment variable
-export OCTOSLAVE_PERMISSION_MODE=controlled
+octoslave --permission-mode controlled
+octoslave run "fix the bug" --permission-mode supervised
 ```
 
-## Permission Prompt
+### Mid-session
 
-When in controlled mode, OctoSlave will display a prompt like this before executing a modifying tool:
-
-```
-┌────── Controlled Mode ──────┐
-│  ⚠ Permission Required      │
-│                             │
-│  ✏️  write_file             │
-│                             │
-│  OctoSlave wants to:        │
-│  create/overwrite file:     │
-│  src/main.py                │
-│                             │
-│  Working directory: /path   │
-└─────────────────────────────┘
-
-Allow? (y)/n 
-```
-
-Press `y` (or `yes`, `ok`, `allow`) to permit the action, or `n` (or `no`, `deny`) to block it.
-
-## Environment Variables
-
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `OCTOSLAVE_PERMISSION_MODE` | Set permission mode | `autonomous` |
-
-## Examples
-
-### Example 1: Safe Code Exploration
 ```bash
-# Start in controlled mode to safely explore unfamiliar codebase
-ots --permission-mode controlled
-
-# Agent can read files freely, but will ask before any edits
+/permission                  # show current mode
+/permission controlled       # switch to controlled
+/permission autonomous       # switch back
+/permission supervised       # supervised mode
 ```
 
-### Example 2: Automated Refactoring
+### Set as default in config
+
 ```bash
-# Use autonomous mode for trusted automated tasks
-ots run "refactor all test files to use pytest" --permission-mode autonomous
+octoslave config
+# prompts for permission mode during setup
+
+# or non-interactively:
+octoslave config --permission-mode controlled
 ```
 
-### Example 3: Mixed Workflow
-```bash
-# Start interactive session
-ots
+Config is saved to `~/.octoslave/config.json`.
 
-# Begin in autonomous mode for exploration
-# Switch to controlled when ready to make changes
-/permission controlled
+---
+
+## Permission prompt
+
+When a tool requires permission, OctoSlave displays:
+
+```
+┌──────── Controlled Mode ────────┐
+│  ⚠ Permission Required          │
+│                                 │
+│  ✏️  edit_file                  │
+│                                 │
+│  OctoSlave wants to:            │
+│  edit file: src/main.py         │
+│                                 │
+│  Working directory: /my/project │
+└─────────────────────────────────┘
+
+Allow? (y)/n
 ```
 
-## Implementation Details
-
-- Permission mode is checked at tool execution time in `tools.py`
-- The `display.request_permission()` function handles user interaction
-- Mode is stored in `~/.octoslave/config.json`
-- Environment variables override config file settings
+Enter `y` / `yes` / `ok` to allow, `n` / `no` to deny.

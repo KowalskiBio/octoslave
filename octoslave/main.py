@@ -14,6 +14,7 @@ from prompt_toolkit.key_binding import KeyBindings
 from . import display
 from .agent import make_client, run_agent, continue_agent
 from .research import run_long_research, ROLES as RESEARCH_ROLES
+from .vault import run_vault_improve
 from .config import (
     KNOWN_MODELS, DEFAULT_MODEL, BASE_URL, OLLAMA_BASE_URL,
     NIM_BASE_URL, NIM_DEFAULT_MODEL, NIM_KNOWN_MODELS,
@@ -21,7 +22,7 @@ from .config import (
     load_config, save_config,
     ollama_is_running, ollama_list_models, ollama_pull_model,
     nim_list_models, einfra_list_models, list_models,
-    assign_local_models,
+    assign_local_models, sort_by_tool_calling,
     get_role_models, save_role_model, reset_role_models,
 )
 
@@ -90,7 +91,7 @@ def cli(ctx, model, working_dir, api_key, base_url, local, prompt_profile, permi
 @cli.command()
 @click.argument("task")
 @click.option("-m", "--model", default=None)
-@click.option("-d", "--dir", "working_dir", default=None)
+@click.option("-d", "--dir", "working_dir", default=None, help="Working directory (default: current directory)")
 @click.option("--api-key", default=None, envvar="OCTOSLAVE_API_KEY")
 @click.option("--base-url", default=None, envvar="OCTOSLAVE_BASE_URL")
 @click.option("--local", is_flag=True, default=False, help="Use local Ollama models")
@@ -100,8 +101,13 @@ def cli(ctx, model, working_dir, api_key, base_url, local, prompt_profile, permi
               type=click.Choice(["autonomous", "controlled", "supervised"]),
               help="Permission mode: autonomous (default), controlled (ask before all edits), or supervised (ask before file edits only)")
 @click.option("-v", "--verbose", is_flag=True, default=False, help="Verbose mode: show full diffs, complete tool output, and bash commands live")
-def run(task, model, working_dir, api_key, base_url, local, prompt_profile, interactive, permission_mode, verbose):
+@click.option("-n", "--new-project", is_flag=True, default=False, help="Create a new project dir in ~/octoslave/projects/ for output")
+def run(task, model, working_dir, api_key, base_url, local, prompt_profile, interactive, permission_mode, verbose, new_project):
     """Run a single TASK and exit (or continue interactively with -i).
+
+    \b
+    Default working directory is where you ran octoslave (current dir).
+    Use -d to specify a directory, or -n to auto-create a project folder.
 
     \b
     Examples:
@@ -109,15 +115,23 @@ def run(task, model, working_dir, api_key, base_url, local, prompt_profile, inte
       ots run "research recent papers on RAG" --model qwen3-coder
       ots run "add unit tests" -i
       ots run "explain this codebase" --local
-      ots run "build a REST API" -p coder    # pure coding mode
-      ots run "analyze this dataset" -p analyst  # data analysis mode
-      ots run "edit files" --permission-mode controlled  # ask before each edit
-      ots run "reorganize notes" -v           # see every edit live
+      ots run "build a REST API" -p coder
+      ots run "analyze this dataset" -p analyst -d ~/data
+      ots run "write a report" -n                # auto-create project dir
+      ots run "reorganize notes" -v
     """
     if verbose:
         display.set_verbose(True)
     cfg = _resolve_config(model, working_dir, api_key, base_url, local=local)
-    cfg["prompt_profile"] = prompt_profile
+    effective_profile = prompt_profile
+    if cfg["backend"] == "ollama" and prompt_profile == "base":
+        effective_profile = "local"
+    cfg["prompt_profile"] = effective_profile
+
+    # Only create project dir if explicitly requested with -n
+    if new_project and not working_dir:
+        cfg["working_dir"] = _make_project_dir(task)
+        display.console.print(f"[dim]📁 project dir:[/dim] [bold]{cfg['working_dir']}[/bold]")
 
     # Override permission mode if specified
     if permission_mode:
@@ -388,8 +402,12 @@ def _interactive(ctx_obj: dict):
         ctx_obj.get("base_url"),
         local=ctx_obj.get("local", False),
     )
-    cfg["prompt_profile"] = ctx_obj.get("prompt_profile", "base")
+    explicit_profile = ctx_obj.get("prompt_profile", "base")
+    if cfg["backend"] == "ollama" and explicit_profile == "base":
+        explicit_profile = "local"
+    cfg["prompt_profile"] = explicit_profile
     cfg["verbose"] = ctx_obj.get("verbose", False)
+    cfg["explicit_dir"] = bool(ctx_obj.get("working_dir"))
 
     # Handle permission mode from CLI or config
     if ctx_obj.get("permission_mode"):
@@ -585,6 +603,14 @@ def _handle_slash(cmd: str, state: dict, cfg: dict, messages: list, client) -> s
                 messages.clear()
         return "ok"
 
+    if name == "/new-project":
+        task_hint = arg if arg else "project"
+        new_dir = _make_project_dir(task_hint)
+        state["working_dir"] = new_dir
+        display.console.print(f"[dim]📁 project dir:[/dim] [bold]{new_dir}[/bold]")
+        messages.clear()
+        return "ok"
+
     if name == "/profile":
         from .agent import load_system_prompt
         if not arg:
@@ -676,6 +702,10 @@ def _handle_slash(cmd: str, state: dict, cfg: dict, messages: list, client) -> s
 
     if name == "/research-roles":
         _handle_research_roles(arg, state, cfg)
+        return "ok"
+
+    if name == "/vault-improve":
+        _handle_vault_improve(arg, state, client)
         return "ok"
 
     display.print_error(f"Unknown command: {name}  (type /help)")
@@ -969,7 +999,69 @@ def _handle_long_research(arg: str, state: dict, cfg: dict, client):
         resume=resume,
         num_parallel=num_parallel,
         scrape_mode=scrape_mode,
+        prompt_profile=state.get("prompt_profile", "base"),
     )
+
+
+def _handle_vault_improve(arg: str, state: dict, client):
+    """Parse /vault-improve flags and launch the autonomous vault pipeline."""
+    import shlex
+
+    try:
+        tokens = shlex.split(arg)
+    except ValueError:
+        tokens = arg.split()
+
+    vault_path: str | None = None
+    resume = False
+    model: str | None = None
+
+    i = 0
+    while i < len(tokens):
+        t = tokens[i]
+        if t == "--resume":
+            resume = True
+            i += 1
+        elif t == "--model" and i + 1 < len(tokens):
+            model = tokens[i + 1]
+            i += 2
+        elif not t.startswith("--"):
+            vault_path = str(Path(t).expanduser().resolve())
+            i += 1
+        else:
+            display.print_error(f"Unknown flag: {t}")
+            return
+
+    if not vault_path:
+        # Default to current working dir
+        vault_path = state["working_dir"]
+
+    if not Path(vault_path).is_dir():
+        display.print_error(f"Not a directory: {vault_path}")
+        return
+
+    profile = state.get("prompt_profile", "base")
+
+    display.console.print()
+    display.console.print(
+        f"[bold bright_white]🐙 VAULT IMPROVE[/bold bright_white]\n"
+        f"[dim]vault   :[/dim] {vault_path}\n"
+        f"[dim]profile :[/dim] {profile}\n"
+        f"[dim]model   :[/dim] {model or 'role defaults'}\n"
+        f"[dim]resume  :[/dim] {resume}"
+    )
+    display.console.print()
+
+    try:
+        run_vault_improve(
+            vault_path=vault_path,
+            client=client,
+            prompt_profile=profile,
+            model=model,
+            resume=resume,
+        )
+    except KeyboardInterrupt:
+        display.console.print("\n[dim]Vault improve interrupted. Run again with --resume to continue.[/dim]")
 
 
 # ---------------------------------------------------------------------------
@@ -1022,6 +1114,103 @@ def _make_keybindings() -> KeyBindings:
 
 
 # ---------------------------------------------------------------------------
+# Project directory helper
+# ---------------------------------------------------------------------------
+
+def _make_project_dir(task: str) -> str:
+    """
+    Create ~/octoslave/projects/MMDD-word1-word2 from the task description.
+    Returns the absolute path (already created).
+    """
+    import re
+    from datetime import date as _date
+    # Common stop words in English and Czech
+    STOP_WORDS = {
+        # English
+        "i", "me", "my", "myself", "we", "our", "ours", "ourselves", "you", "your", "yours",
+        "yourself", "yourselves", "he", "him", "his", "himself", "she", "her", "hers",
+        "herself", "it", "its", "itself", "they", "them", "their", "theirs", "themselves",
+        "what", "which", "who", "whom", "this", "that", "these", "those", "am", "is", "are",
+        "was", "were", "be", "been", "being", "have", "has", "had", "having", "do", "does",
+        "did", "doing", "a", "an", "the", "and", "but", "if", "or", "because", "as", "until",
+        "while", "of", "at", "by", "for", "with", "about", "against", "between", "into",
+        "through", "during", "before", "after", "above", "below", "to", "from", "up", "down",
+        "in", "out", "on", "off", "over", "under", "again", "further", "then", "once",
+        "here", "there", "when", "where", "why", "how", "all", "any", "both", "each",
+        "few", "more", "most", "other", "some", "such", "no", "nor", "not", "only", "own",
+        "same", "so", "than", "too", "very", "s", "t", "can", "will", "just", "don",
+        "should", "now",
+        # Czech common words
+        "a", "aby", "ale", "ani", "ano", "asi", "během", "bez", "bude", "budeme", "budete",
+        "budeš", "budou", "by", "byl", "byla", "byli", "bylo", "byly", "bys", "často", "či",
+        "co", "což", "či", "článek", "článku", "články", "další", "dnes", "do", "ho", "i",
+        "já", "je", "jeden", "jedna", "jedno", "jeho", "jej", "její", "jejich", "jen", "jenž",
+        "ještě", "ji", "jiné", "již", "jsem", "jsi", "jsme", "jsou", "jste", "k", "kam",
+        "každý", "kde", "ke", "kdo", "kdy", "když", "ke", "která", "které", "který", "kteří",
+        "ku", "ma", "me", "mě", "mezi", "mi", "mne", "mně", "mno", "mou", "možná", "můj",
+        "musí", "my", "na", "nad", "nám", "námi", "naproti", "nás", "náš", "naše", "naši",
+        "ne", "nebo", "nebyl", "nebyla", "nebyli", "nebyly", "nechť", "ně", "něco", "nějak",
+        "nejsi", "někdo", "některý", "nemá", "nemají", "neměl", "není", "nestačí", "nevím",
+        "než", "nic", "nich", "ním", "nimi", "němu", "ní", "něj", "nyní", "od", "ode", "on",
+        "ona", "oni", "ono", "ony", "o", "po", "pod", "podle", "pokud", "pouze", "pro",
+        "proč", "proto", "protože", "před", "přes", "při", "roku", "s", "se", "si", "sice",
+        "skoro", "sobě", "spolu", "sta", "své", "svůj", "svých", "svým", "svými", "ta",
+        "tak", "také", "takže", "tam", "tamhle", "tamhleto", "tamto", "tě", "tebe", "tebou",
+        "ted'", "tedy", "ten", "tento", "této", "ti", "tím", "tímto", "tip", "tipy", "to",
+        "tobě", "tohle", "toho", "tohoto", "tom", "tomto", "tomu", "tomuto", "toto", "tu",
+        "tuto", "tvá", "tvé", "tvoje", "tvůj", "ty", "tý", "tyto", "u", "už", "v", "váš",
+        "vaše", "vaši", "ve", "více", "vlastně", "však", "všechen", "všechno", "všechny",
+        "všichni", "vůbec", "vy", "vám", "vámi", "vás", "z", "za", "že",
+        # Common programming/tech words that might not be informative
+        "check", "code", "build", "create", "make", "write", "edit", "fix", "update",
+        "add", "remove", "delete", "test", "run", "execute", "implement", "please",
+        "need", "want", "could", "would", "should", "maybe", "perhaps", "help",
+        "using", "via", "based", "like", "similar", "example", "etc", "eg", "ie",
+        "vs", "ok", "yes", "no", "well", "also", "too", "very", "really", "quite",
+        "actually", "basically", "literally", "seriously", "honestly", "probably",
+        # Czech verbs and common words
+        "přepiš", "přepisovat", "napiš", "udělej", "vytvoř", "zkontroluj", "oprav", "uprav",
+        "změň", "přidej", "odeber", "smaž", "spusť", "testuj", "implementuj", "prosím",
+        "potřebuji", "chci", "mohl", "by", "asi", "možná", "snad", "pomoc",
+        # Generic nouns that might not be informative
+        "notes", "note", "data", "file", "files", "folder", "directory", "project",
+        "task", "work", "job", "thing", "stuff", "items", "element", "component",
+    }
+    
+    # Clean and tokenize
+    words = re.findall(r'[\wěščřžýáíéůúďťňó]+', task.lower().strip())
+
+    # Filter stop words and short words, take 2 most meaningful
+    filtered = [w for w in words if w not in STOP_WORDS and len(w) > 2]
+    if not filtered:
+        filtered = [w for w in words if len(w) > 2]
+    selected = filtered[:2] if filtered else (words[:2] if words else ["project"])
+
+    # Truncate each word to 12 chars, join with dash
+    slug = "-".join(w[:12] for w in selected)
+
+    # Prefix with MMDD date
+    today = _date.today()
+    slug = f"{today.month:02d}{today.day:02d}-{slug}"
+
+    projects_root = Path.home() / "octoslave" / "projects"
+    project_dir = projects_root / slug
+
+    # If dir already exists (same task same day), add suffix
+    if project_dir.exists():
+        base = project_dir
+        for n in range(2, 99):
+            candidate = projects_root / f"{slug}-{n}"
+            if not candidate.exists():
+                project_dir = candidate
+                break
+            project_dir = base  # fallback: reuse existing
+
+    project_dir.mkdir(parents=True, exist_ok=True)
+    return str(project_dir)
+
+
+# ---------------------------------------------------------------------------
 # Config resolution helper
 # ---------------------------------------------------------------------------
 
@@ -1044,16 +1233,18 @@ def _resolve_config(model, working_dir, api_key, base_url, local: bool = False) 
         if not pulled:
             display.print_error(
                 "No models pulled in Ollama.\n"
-                "Pull one with: [bold]ollama pull mistral[/bold]"
+                "Pull one with: [bold]ollama pull qwen2.5:7b[/bold]"
             )
             sys.exit(1)
-        chosen_model = model or saved.get("default_model") or pulled[0]
+        # When no model is explicitly requested, prefer models with better tool-calling support
+        ranked = sort_by_tool_calling(pulled)
+        chosen_model = model or saved.get("default_model") or ranked[0]
         if chosen_model not in pulled:
             display.console.print(
                 f"[dim]Model '{chosen_model}' not found locally, "
-                f"using '{pulled[0]}' instead.[/dim]"
+                f"using '{ranked[0]}' instead.[/dim]"
             )
-            chosen_model = pulled[0]
+            chosen_model = ranked[0]
         return {
             "api_key":     "ollama",
             "base_url":    ollama_url,
@@ -1097,6 +1288,194 @@ def _resolve_config(model, working_dir, api_key, base_url, local: bool = False) 
         "nim_api_key": saved.get("nim_api_key", ""),
         "nim_url":     saved.get("nim_url", NIM_BASE_URL),
     }
+
+
+@cli.command("vault-improve")
+@click.argument("vault_path", default=None, required=False)
+@click.option("-p", "--profile", "prompt_profile", default="base",
+              help="Prompt profile (default: base, options: base, coder, analyst, biomedic)")
+@click.option("-m", "--model", default=None, help="Model override for all vault agents")
+@click.option("--resume", is_flag=True, default=False, help="Resume interrupted run")
+@click.option("--api-key", default=None, envvar="OCTOSLAVE_API_KEY")
+@click.option("--base-url", default=None, envvar="OCTOSLAVE_BASE_URL")
+def vault_improve_cmd(vault_path, prompt_profile, model, resume, api_key, base_url):
+    """Autonomously improve every note in a vault (Obsidian / markdown folder).
+
+    \b
+    Examples:
+      octoslave vault-improve ~/Brain2 --profile biomedic
+      octoslave vault-improve ~/Brain2 --profile biomedic --resume
+      octoslave vault-improve ~/Brain2 --model deepseek-v3.2-thinking
+    """
+    from .vault import run_vault_improve
+    from .agent import make_client
+
+    cfg = _resolve_config(None, vault_path, api_key, base_url)
+    vault = str(Path(vault_path).expanduser().resolve()) if vault_path else os.getcwd()
+
+    if not Path(vault).is_dir():
+        display.print_error(f"Not a directory: {vault}")
+        sys.exit(1)
+
+    client = make_client(cfg["api_key"], cfg["base_url"])
+
+    display.console.print()
+    display.console.print(
+        f"[bold bright_white]🐙 VAULT IMPROVE[/bold bright_white]\n"
+        f"[dim]vault  :[/dim] {vault}\n"
+        f"[dim]profile:[/dim] {prompt_profile}\n"
+        f"[dim]model  :[/dim] {model or 'role defaults'}\n"
+        f"[dim]resume :[/dim] {resume}"
+    )
+    display.console.print()
+
+    try:
+        run_vault_improve(
+            vault_path=vault,
+            client=client,
+            prompt_profile=prompt_profile,
+            model=model,
+            resume=resume,
+        )
+    except KeyboardInterrupt:
+        display.console.print("\n[dim]Interrupted. Run with --resume to continue.[/dim]")
+        sys.exit(0)
+
+
+@cli.command("batch")
+@click.argument("tasks_file")
+@click.option("-m", "--model", default=None, help="Model to use for all tasks")
+@click.option("-p", "--profile", "prompt_profile", default="base",
+              help="Prompt profile (default: base)")
+@click.option("--permission-mode", default=None,
+              type=click.Choice(["autonomous", "controlled", "supervised"]))
+@click.option("--resume", is_flag=True, default=False,
+              help="Skip tasks already marked done in the state file")
+@click.option("--output-dir", default=None,
+              help="Root dir for task outputs (default: ~/octoslave/projects/)")
+@click.option("--api-key", default=None, envvar="OCTOSLAVE_API_KEY")
+@click.option("--base-url", default=None, envvar="OCTOSLAVE_BASE_URL")
+def batch_cmd(tasks_file, model, prompt_profile, permission_mode, resume,
+              output_dir, api_key, base_url):
+    """Run a list of tasks from a file, one by one, with resume support.
+
+    \b
+    TASKS_FILE: plain text file, one task per line. Lines starting with #
+    are treated as comments and skipped. Empty lines are skipped.
+
+    \b
+    Examples:
+      octoslave batch tasks.txt
+      octoslave batch tasks.txt --profile biomedic --resume
+      octoslave batch tasks.txt -m deepseek-v3.2-thinking --output-dir ~/results
+    \b
+    State is saved to TASKS_FILE.state.json after every completed task.
+    Re-run with --resume to skip already completed tasks.
+    """
+    import json as _json
+    from .agent import make_client, run_agent
+
+    tasks_path = Path(tasks_file).expanduser().resolve()
+    if not tasks_path.exists():
+        display.print_error(f"Tasks file not found: {tasks_file}")
+        sys.exit(1)
+
+    # Parse tasks — skip comments and blank lines
+    raw_lines = tasks_path.read_text(encoding="utf-8").splitlines()
+    tasks = [ln.strip() for ln in raw_lines
+             if ln.strip() and not ln.strip().startswith("#")]
+
+    if not tasks:
+        display.print_error("No tasks found in file.")
+        sys.exit(1)
+
+    # State file — tracks which tasks are done
+    state_file = tasks_path.with_suffix(".state.json")
+    state: dict = {}
+    if resume and state_file.exists():
+        try:
+            state = _json.loads(state_file.read_text(encoding="utf-8"))
+        except Exception:
+            state = {}
+
+    cfg = _resolve_config(None, None, api_key, base_url)
+    if model:
+        cfg["model"] = model
+    if permission_mode:
+        cfg["permission_mode"] = permission_mode
+    else:
+        saved_cfg = load_config()
+        cfg["permission_mode"] = saved_cfg.get("permission_mode", "autonomous")
+
+    client = make_client(cfg["api_key"], cfg["base_url"])
+
+    root_dir = Path(output_dir).expanduser().resolve() if output_dir \
+        else Path.home() / "octoslave" / "projects"
+    root_dir.mkdir(parents=True, exist_ok=True)
+
+    total = len(tasks)
+    done = sum(1 for t in tasks if state.get(t) == "done")
+
+    display.console.print()
+    display.console.print(
+        f"[bold bright_white]🐙 BATCH RUN[/bold bright_white]\n"
+        f"[dim]tasks  :[/dim] {total} ({done} already done)\n"
+        f"[dim]model  :[/dim] {cfg['model']}\n"
+        f"[dim]profile:[/dim] {prompt_profile}\n"
+        f"[dim]output :[/dim] {root_dir}\n"
+        f"[dim]resume :[/dim] {resume}"
+    )
+    display.console.print()
+
+    for i, task in enumerate(tasks, 1):
+        if state.get(task) == "done":
+            display.console.print(
+                f"[dim]  [{i}/{total}] skipping (done): {task[:60]}[/dim]"
+            )
+            continue
+
+        project_dir = _make_project_dir(task)
+        display.console.print(
+            f"\n[bold bright_white]  [{i}/{total}] {task[:80]}[/bold bright_white]\n"
+            f"[dim]  → {project_dir}[/dim]\n"
+        )
+        display.print_task(task)
+
+        try:
+            run_agent(
+                task, cfg["model"], project_dir, client,
+                prompt_profile, cfg["permission_mode"]
+            )
+            state[task] = "done"
+        except KeyboardInterrupt:
+            display.console.print(
+                "\n[bold yellow]Batch paused.[/bold yellow] "
+                "Re-run with --resume to continue."
+            )
+            state_file.write_text(
+                _json.dumps(state, indent=2, ensure_ascii=False),
+                encoding="utf-8"
+            )
+            sys.exit(0)
+        except Exception as e:
+            display.print_error(f"Task failed: {e}")
+            state[task] = f"failed: {e}"
+
+        # Save state after every task
+        state_file.write_text(
+            _json.dumps(state, indent=2, ensure_ascii=False),
+            encoding="utf-8"
+        )
+
+    done_count = sum(1 for v in state.values() if v == "done")
+    failed_count = sum(1 for v in state.values() if str(v).startswith("failed"))
+    display.console.print()
+    display.console.print(
+        f"[bold bright_green]✓ Batch complete[/bold bright_green]  "
+        f"{done_count}/{total} done"
+        + (f"  [bold red]{failed_count} failed[/bold red]" if failed_count else "")
+    )
+    display.console.print(f"[dim]State saved to: {state_file}[/dim]")
 
 
 @cli.command()

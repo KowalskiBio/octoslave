@@ -313,25 +313,16 @@ def _is_binary(path: Path) -> bool:
 
 def _extract_pdf(resolved: Path, offset: int = None, limit: int = None) -> tuple[str, bool]:
     try:
-        import pypdf
+        import fitz  # pymupdf
+        doc = fitz.open(str(resolved))
+        parts = [f"--- Page {i+1} ---\n{page.get_text()}" for i, page in enumerate(doc)]
+        num_pages = len(doc)
     except ImportError:
-        return "pypdf not installed. Run: pip install pypdf", False
-
-    try:
-        reader = pypdf.PdfReader(str(resolved))
+        return "pymupdf not installed. Run: pip install pymupdf", False
     except Exception as e:
         return f"Could not open PDF: {e}", False
 
-    parts = []
-    for i, page in enumerate(reader.pages):
-        try:
-            text = page.extract_text() or ""
-        except Exception:
-            text = ""
-        if text.strip():
-            parts.append(f"--- Page {i + 1} ---\n{text.strip()}")
-
-    if not parts:
+    if not any(p.strip() for p in parts):
         return "PDF contains no extractable text (may be scanned/image-based).", False
 
     full_text = "\n\n".join(parts)
@@ -342,7 +333,92 @@ def _extract_pdf(resolved: Path, offset: int = None, limit: int = None) -> tuple
     end = (start + limit) if limit else total
     selected = lines[start:end]
 
-    header = f"PDF: {resolved.name} ({len(reader.pages)} pages, {total} lines extracted)\n\n"
+    header = f"PDF: {resolved.name} ({num_pages} pages, {total} lines extracted)\n\n"
+    return header + "\n".join(selected), True
+
+
+def _extract_excel(resolved: Path, offset: int = None, limit: int = None) -> tuple[str, bool]:
+    try:
+        import openpyxl
+    except ImportError:
+        try:
+            import subprocess, sys
+            subprocess.check_call([sys.executable, "-m", "pip", "install", "openpyxl", "-q"])
+            import openpyxl
+        except Exception:
+            return "openpyxl not installed. Run: pip install openpyxl", False
+
+    try:
+        wb = openpyxl.load_workbook(str(resolved), read_only=True, data_only=True)
+    except Exception as e:
+        return f"Could not open Excel file: {e}", False
+
+    parts = []
+    for sheet_name in wb.sheetnames:
+        ws = wb[sheet_name]
+        rows = []
+        for row in ws.iter_rows(values_only=True):
+            # Skip entirely empty rows
+            if any(cell is not None for cell in row):
+                rows.append("\t".join("" if v is None else str(v) for v in row))
+        if rows:
+            parts.append(f"=== Sheet: {sheet_name} ===\n" + "\n".join(rows))
+
+    if not parts:
+        return f"Excel file {resolved.name} appears empty.", False
+
+    full_text = "\n\n".join(parts)
+    lines = full_text.splitlines()
+    total = len(lines)
+
+    start = (offset - 1) if offset and offset > 0 else 0
+    end = (start + limit) if limit else total
+    selected = lines[start:end]
+
+    header = f"Excel: {resolved.name} ({len(wb.sheetnames)} sheet(s), {total} lines)\n\n"
+    return header + "\n".join(selected), True
+
+
+def _extract_docx(resolved: Path, offset: int = None, limit: int = None) -> tuple[str, bool]:
+    try:
+        import docx as _docx
+    except ImportError:
+        try:
+            import subprocess, sys
+            subprocess.check_call([sys.executable, "-m", "pip", "install", "python-docx", "-q"])
+            import docx as _docx
+        except Exception:
+            return "python-docx not installed. Run: pip install python-docx", False
+
+    try:
+        doc = _docx.Document(str(resolved))
+    except Exception as e:
+        return f"Could not open Word document: {e}", False
+
+    parts = []
+    for para in doc.paragraphs:
+        if para.text.strip():
+            parts.append(para.text)
+
+    # Also extract tables
+    for table in doc.tables:
+        for row in table.rows:
+            row_text = "\t".join(cell.text.strip() for cell in row.cells)
+            if row_text.strip():
+                parts.append(row_text)
+
+    if not parts:
+        return f"Word document {resolved.name} appears empty.", False
+
+    full_text = "\n".join(parts)
+    lines = full_text.splitlines()
+    total = len(lines)
+
+    start = (offset - 1) if offset and offset > 0 else 0
+    end = (start + limit) if limit else total
+    selected = lines[start:end]
+
+    header = f"Word: {resolved.name} ({total} lines extracted)\n\n"
     return header + "\n".join(selected), True
 
 
@@ -356,6 +432,14 @@ def _read_file(path: str, working_dir: str, offset: int = None, limit: int = Non
     # PDF → extract text
     if resolved.suffix.lower() == ".pdf":
         return _extract_pdf(resolved, offset, limit)
+
+    # Excel → convert to CSV-like text
+    if resolved.suffix.lower() in (".xlsx", ".xls", ".xlsm", ".ods"):
+        return _extract_excel(resolved, offset, limit)
+
+    # Word → extract text
+    if resolved.suffix.lower() in (".docx", ".doc"):
+        return _extract_docx(resolved, offset, limit)
 
     # Other binary → reject early with a clear message
     if _is_binary(resolved):
@@ -383,6 +467,14 @@ def _read_file(path: str, working_dir: str, offset: int = None, limit: int = Non
 
 def _write_file(path: str, content: str, working_dir: str) -> tuple[str, bool]:
     resolved = _resolve(path, working_dir)
+    size = len(content.encode("utf-8"))
+    if size > _MAX_DOWNLOAD_BYTES:
+        size_gb = size / (1024 ** 3)
+        return (
+            f"Refused to write {path} — content is {size_gb:.2f} GB, "
+            f"exceeds the 1 GB limit.",
+            False,
+        )
     resolved.parent.mkdir(parents=True, exist_ok=True)
     resolved.write_text(content)
     lines = content.count("\n") + 1
@@ -440,7 +532,24 @@ def _bash(command: str, working_dir: str, timeout: int = 300) -> tuple[str, bool
 
 
 def _glob(pattern: str, working_dir: str, path: str = None) -> tuple[str, bool]:
-    root = _resolve(path, working_dir) if path else Path(working_dir)
+    # If pattern is an absolute path, split into root + relative pattern
+    p = Path(pattern)
+    if p.is_absolute():
+        # Find the first glob character to split root from pattern
+        parts = p.parts
+        root_parts = []
+        glob_parts = []
+        in_glob = False
+        for part in parts:
+            if in_glob or any(c in part for c in ("*", "?", "[")):
+                in_glob = True
+                glob_parts.append(part)
+            else:
+                root_parts.append(part)
+        root = Path(*root_parts) if root_parts else Path("/")
+        pattern = str(Path(*glob_parts)) if glob_parts else "**/*"
+    else:
+        root = _resolve(path, working_dir) if path else Path(working_dir)
     matches = sorted(str(p) for p in root.glob(pattern))
     if not matches:
         return f"No files matching '{pattern}'", True
@@ -530,6 +639,9 @@ def _web_search(query: str, max_results: int = 10, region: str = "wt-wt") -> tup
     return "\n".join(lines), True
 
 
+_MAX_DOWNLOAD_BYTES = 1 * 1024 * 1024 * 1024  # 1 GB hard limit
+
+
 def _web_fetch(url: str, max_chars: int = 8000) -> tuple[str, bool]:
     if not _HAS_REQUESTS:
         return "requests package not installed. Run: pip install requests", False
@@ -542,8 +654,50 @@ def _web_fetch(url: str, max_chars: int = 8000) -> tuple[str, bool]:
         )
     }
     try:
-        resp = _requests.get(url, headers=headers, timeout=30, allow_redirects=True)
+        # HEAD request first — check Content-Length before downloading anything
+        try:
+            head = _requests.head(url, headers=headers, timeout=10,
+                                  allow_redirects=True)
+            content_length = int(head.headers.get("content-length", 0))
+            if content_length > _MAX_DOWNLOAD_BYTES:
+                size_gb = content_length / (1024 ** 3)
+                return (
+                    f"Refused to download {url} — "
+                    f"Content-Length is {size_gb:.2f} GB, exceeds the 1 GB limit.",
+                    False,
+                )
+        except Exception:
+            pass  # HEAD not supported by all servers — proceed with GET
+
+        resp = _requests.get(url, headers=headers, timeout=30,
+                             allow_redirects=True, stream=True)
         resp.raise_for_status()
+
+        # Check Content-Length from GET response headers too
+        content_length = int(resp.headers.get("content-length", 0))
+        if content_length > _MAX_DOWNLOAD_BYTES:
+            resp.close()
+            size_gb = content_length / (1024 ** 3)
+            return (
+                f"Refused to download {url} — "
+                f"Content-Length is {size_gb:.2f} GB, exceeds the 1 GB limit.",
+                False,
+            )
+
+        # Read with a rolling size guard (handles chunked/no Content-Length)
+        chunks = []
+        downloaded = 0
+        for chunk in resp.iter_content(chunk_size=1024 * 1024):  # 1 MB chunks
+            downloaded += len(chunk)
+            if downloaded > _MAX_DOWNLOAD_BYTES:
+                resp.close()
+                return (
+                    f"Aborted download of {url} — "
+                    f"exceeded 1 GB limit after {downloaded / (1024**3):.2f} GB.",
+                    False,
+                )
+            chunks.append(chunk)
+        resp._content = b"".join(chunks)
     except _requests.exceptions.HTTPError as e:
         status = getattr(e.response, "status_code", None)
         if status == 403:
@@ -561,16 +715,33 @@ def _web_fetch(url: str, max_chars: int = 8000) -> tuple[str, bool]:
 
     content_type = resp.headers.get("content-type", "")
 
-    # Reject binary / non-text content types up-front
-    _BINARY_TYPES = ("application/pdf", "application/octet-stream",
-                     "image/", "audio/", "video/", "application/zip",
-                     "application/x-", "application/vnd.")
+    # PDF — extract text with pymupdf if available, else warn
+    if "application/pdf" in content_type or url.lower().endswith(".pdf"):
+        try:
+            import fitz  # pymupdf
+            doc = fitz.open(stream=resp.content, filetype="pdf")
+            pages = []
+            for i, page in enumerate(doc):
+                pages.append(f"--- Page {i+1} ---\n{page.get_text()}")
+            text = "\n\n".join(pages)
+            if len(text) > max_chars:
+                text = text[:max_chars] + f"\n\n… [truncated, {len(text)} total chars]"
+            return f"PDF: {url}\n\n{text}", True
+        except ImportError:
+            return (
+                f"Skipped {url} — PDF detected but pymupdf is not installed. "
+                "Run: pip install pymupdf",
+                False,
+            )
+        except Exception as e:
+            return f"Failed to extract PDF text from {url}: {e}", False
+
+    # Reject other binary content types
+    _BINARY_TYPES = ("application/octet-stream", "image/", "audio/",
+                     "video/", "application/zip", "application/x-", "application/vnd.")
     if any(content_type.startswith(bt) for bt in _BINARY_TYPES):
         return (
-            f"Skipped {url} — binary content ({content_type}). "
-            "This is not a readable web page. "
-            "For PDFs try fetching the abstract/HTML page instead, "
-            "or search for a PubMed / PMC HTML version.",
+            f"Skipped {url} — binary content ({content_type}), cannot read.",
             False,
         )
 
