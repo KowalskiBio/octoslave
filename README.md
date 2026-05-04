@@ -16,13 +16,13 @@
 
 ---
 
-OctoSlave is a terminal-based autonomous agent built for scientists and engineers.
+OctoSlave is a autonomous agent built for scientists and engineers.
 Give it a task or a research topic — it explores the web, writes and runs code, debugs, evaluates, and iterates until the job is done.
 
 It ships two modes:
 
-- **Interactive agent** — an always-on REPL that can do anything Claude Code can, using academic-grade LLMs
-- **Long-research pipeline** (`/long-research`) — a population of 6 specialist agents that conduct rigorous, multi-round research with real data, reproducible code, and a polished HTML deliverable
+- **Interactive agent** — an simple chatbot that can work with your files, work on entire projects or assist you with specific issues / tasks
+- **Long-research pipeline** (`/long-research`) — a population of 6 specialist agents that conduct rigorous, multi-round research with real data, reproducible code, and a polished HTML reports
 
 ---
 
@@ -67,7 +67,7 @@ It ships two modes:
 
 ## Installation
 
-**Requirements:** Python 3.10+, an [e-INFRA CZ LLM](https://llm.ai.e-infra.cz) API key *(or Ollama for local mode)*
+**Requirements:** Python 3.10+, an [e-INFRA CZ LLM](https://llm.ai.e-infra.cz) or [NVIDIA NIM](https://build.nvidia.com) API key *(or Ollama for local mode)*
 
 ### Step 1 — Install Python (skip if you already have Python 3.10+)
 
