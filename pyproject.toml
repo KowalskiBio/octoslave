@@ -44,6 +44,9 @@ ots = "octoslave.main:cli"
 where = ["."]
 include = ["octoslave*"]
 
+[tool.setuptools.package-data]
+octoslave = ["prompt_profiles/*.md"]
+
 [tool.uv.workspace]
 members = [
     "debug/new_benchmark",
