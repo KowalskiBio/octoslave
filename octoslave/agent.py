@@ -2,7 +2,7 @@
 
 import json
 import re
-from datetime import date
+from datetime import date, date as _date_cls
 from pathlib import Path
 from openai import OpenAI, BadRequestError
 
@@ -145,6 +145,88 @@ MAX_TOOL_RESULT_CHARS = 50_000
 # Path to prompt profiles directory
 PROMPT_PROFILES_DIR = Path(__file__).parent / "prompt_profiles"
 
+# ---------------------------------------------------------------------------
+# Cross-session memory
+# ---------------------------------------------------------------------------
+
+MEMORY_FILE = Path.home() / ".octoslave" / "session_memory.md"
+_MEMORY_MAX_ENTRIES = 10
+
+
+def load_session_memory() -> str:
+    """
+    Return a formatted summary of the last 3 sessions for context injection.
+    Returns empty string if no memory exists or on any read error.
+    """
+    if not MEMORY_FILE.exists():
+        return ""
+    try:
+        text = MEMORY_FILE.read_text(encoding="utf-8")
+        # Parse --- delimited blocks
+        entries: list[dict] = []
+        for block in text.split("---"):
+            block = block.strip()
+            if not block or block.startswith("#"):
+                continue
+            parsed: dict = {}
+            for line in block.splitlines():
+                if ":" in line:
+                    k, _, v = line.partition(":")
+                    parsed[k.strip()] = v.strip()
+            if parsed.get("task"):
+                entries.append(parsed)
+
+        recent = entries[-3:] if len(entries) > 3 else entries
+        if not recent:
+            return ""
+
+        parts = ["[PRIOR SESSIONS — for context only, do not repeat completed work]"]
+        for e in reversed(recent):
+            d = e.get("date", "?")
+            task = e.get("task", "?")
+            status = e.get("status", "?")
+            note = e.get("note", "")
+            line = f"  {d}: {task} — {status}"
+            if note:
+                line += f" ({note[:100]})"
+            parts.append(line)
+        return "\n".join(parts)
+    except Exception:
+        return ""
+
+
+def save_session_memory(task: str, status: str = "completed", note: str = "") -> None:
+    """Append one session entry to the memory file, trimming to _MEMORY_MAX_ENTRIES."""
+    MEMORY_FILE.parent.mkdir(parents=True, exist_ok=True)
+    entry_lines = [
+        "---",
+        f"date: {_date_cls.today().isoformat()}",
+        f"task: {task[:200].replace(chr(10), ' ')}",
+        f"status: {status}",
+        f"note: {note[:300].replace(chr(10), ' ')}",
+        "",
+    ]
+    entry = "\n".join(entry_lines)
+
+    existing = ""
+    if MEMORY_FILE.exists():
+        try:
+            existing = MEMORY_FILE.read_text(encoding="utf-8")
+        except Exception:
+            existing = ""
+
+    # Trim to max entries
+    blocks = [b for b in existing.split("---") if b.strip() and not b.strip().startswith("#")]
+    if len(blocks) >= _MEMORY_MAX_ENTRIES:
+        blocks = blocks[-(  _MEMORY_MAX_ENTRIES - 1):]
+        existing = "# OctoSlave Session Memory\n\n" + "---".join([""] + blocks)
+
+    if not existing.strip():
+        existing = "# OctoSlave Session Memory\n"
+
+    with open(MEMORY_FILE, "a", encoding="utf-8") as f:
+        f.write("\n" + entry)
+
 
 def load_system_prompt(profile: str = "base", working_dir: str = None) -> str:
     """
@@ -188,31 +270,69 @@ def load_system_prompt(profile: str = "base", working_dir: str = None) -> str:
     return content.format(working_dir=wd, date=date.today().isoformat())
 
 
-def _trim_messages(messages: list[dict], groups: int = 3) -> list[dict]:
+def _compact_and_trim(messages: list[dict], groups: int = 3) -> list[dict]:
     """
-    Remove the oldest N complete assistant-turn groups (assistant message +
-    all its tool results) to free context space.  Always preserves the system
-    prompt and the first user message (messages[:2]).
+    Replace the oldest N complete assistant-turn groups with a compact text
+    summary instead of silently discarding them.  Preserves messages[:2]
+    (system prompt + first user message).
+
+    Falls back to pure deletion when there is nothing to compact.
     """
     system = messages[:2]
-    rest   = list(messages[2:])
+    rest = list(messages[2:])
 
+    turns_to_compact: list[dict] = []
+    remaining = list(rest)
     removed = 0
-    while removed < groups and rest:
+
+    while removed < groups and remaining:
         start = next(
-            (i for i, m in enumerate(rest)
+            (i for i, m in enumerate(remaining)
              if m.get("role") == "assistant" and m.get("tool_calls")),
             None,
         )
         if start is None:
             break
         end = start + 1
-        while end < len(rest) and rest[end].get("role") == "tool":
+        while end < len(remaining) and remaining[end].get("role") == "tool":
             end += 1
-        rest = rest[:start] + rest[end:]
+        turns_to_compact.extend(remaining[start:end])
+        remaining = remaining[:start] + remaining[end:]
         removed += 1
 
-    return system + rest
+    if not turns_to_compact:
+        return messages
+
+    # Build a compact text log of the removed turns so information isn't lost.
+    lines = [f"[COMPACTED HISTORY — {removed} earlier turn(s) summarised to save context]"]
+    for msg in turns_to_compact:
+        if msg.get("role") == "assistant":
+            txt = (msg.get("content") or "").strip()
+            if txt:
+                lines.append(f"  [note: {txt[:150]}]")
+            for tc in msg.get("tool_calls") or []:
+                name = tc["function"]["name"]
+                try:
+                    args = json.loads(tc["function"]["arguments"])
+                    label = (
+                        args.get("path") or args.get("file_path") or
+                        args.get("command") or args.get("query") or
+                        args.get("pattern") or json.dumps(args)[:50]
+                    )
+                    label = str(label)
+                    if len(label) > 70:
+                        label = label[:70] + "…"
+                    lines.append(f"  called: {name}({label})")
+                except Exception:
+                    lines.append(f"  called: {name}(...)")
+        elif msg.get("role") == "tool":
+            content = (msg.get("content") or "").strip()
+            if content:
+                first_line = content.splitlines()[0][:120]
+                lines.append(f"    → {first_line}")
+
+    summary_msg = {"role": "user", "content": "\n".join(lines)}
+    return system + [summary_msg] + remaining
 
 
 def make_client(api_key: str, base_url: str) -> OpenAI:
@@ -237,6 +357,76 @@ def _cap_result(result: str, tool_name: str) -> str:
         + f"\n\n[TRUNCATED — {omitted:,} more characters omitted. "
         f"Use read_file with offset/limit to read the next section if needed.]"
     )
+
+
+def _simple_completion(client: OpenAI, model: str, messages: list, max_tokens: int = 600) -> str:
+    """Non-streaming completion without tools — used for planning and verification."""
+    try:
+        resp = client.chat.completions.create(
+            model=model,
+            messages=messages,
+            max_tokens=max_tokens,
+            timeout=120.0,
+        )
+        return (resp.choices[0].message.content or "").strip()
+    except Exception:
+        return ""
+
+
+def _planning_step(
+    task: str,
+    system_prompt: str,
+    client: OpenAI,
+    model: str,
+    messages: list[dict],
+) -> tuple[list[dict], str]:
+    """
+    Run a planning-only pass before the main loop.
+    Appends the plan request + plan response to messages so the main loop
+    has the plan as context.  Returns (updated_messages, plan_text).
+    """
+    display.print_info("Planning…")
+    plan_request = (
+        "Before you begin, write a concise numbered plan (3–8 steps) of exactly what "
+        "you will do to complete this task. Be specific: which tools, what order, "
+        "what you will verify when done. Do NOT call any tools — reply with the plan only."
+    )
+    plan_messages = list(messages) + [{"role": "user", "content": plan_request}]
+    plan_text = _simple_completion(client, model, plan_messages, max_tokens=700)
+    if not plan_text:
+        return messages, ""
+
+    display.print_plan(plan_text)
+    # Inject into conversation so the main loop executes against the plan.
+    messages = list(messages) + [
+        {"role": "user", "content": plan_request},
+        {"role": "assistant", "content": plan_text},
+    ]
+    return messages, plan_text
+
+
+def _verify_completion(
+    messages: list[dict],
+    task: str,
+    client: OpenAI,
+    model: str,
+) -> str:
+    """
+    Run a quick verification pass after the main loop exits.
+    Returns a short grade string: DONE / PARTIAL / FAILED — reason.
+    """
+    verify_messages = list(messages) + [{
+        "role": "user",
+        "content": (
+            f"Original task: {task}\n\n"
+            "Grade your completion in one line using exactly one of these prefixes:\n"
+            "  DONE     — task fully complete, deliverable is in place\n"
+            "  PARTIAL  — real progress made but something remains unfinished\n"
+            "  FAILED   — could not complete the task\n\n"
+            "Reply format: DONE/PARTIAL/FAILED — one sentence reason."
+        ),
+    }]
+    return _simple_completion(client, model, verify_messages, max_tokens=100)
 
 
 def _stream_completion(client: OpenAI, model: str, messages: list, force_tool: bool = False) -> dict:
@@ -311,20 +501,47 @@ def run_agent(
     client: OpenAI,
     prompt_profile: str = "base",
     permission_mode: str = None,
+    enable_plan: bool = True,
+    enable_verify: bool = False,
+    enable_memory: bool = True,
+    plan_out: list | None = None,
+    verify_out: list | None = None,
 ) -> list[dict]:
     if permission_mode is None:
         cfg = load_config()
         permission_mode = cfg.get("permission_mode", "autonomous")
-    
+
     system_prompt = load_system_prompt(prompt_profile, working_dir)
+
+    # Inject session memory into system prompt when available
+    if enable_memory:
+        memory_ctx = load_session_memory()
+        if memory_ctx:
+            system_prompt = system_prompt + f"\n\n{memory_ctx}"
+
     messages: list[dict] = [
-        {
-            "role": "system",
-            "content": system_prompt,
-        },
+        {"role": "system", "content": system_prompt},
         {"role": "user", "content": task},
     ]
-    return _agent_loop(messages, model, working_dir, client, permission_mode)
+
+    # Upfront planning pass
+    if enable_plan:
+        messages, plan_text = _planning_step(task, system_prompt, client, model, messages)
+        if plan_text and plan_out is not None:
+            plan_out.append(plan_text)
+
+    messages = _agent_loop(messages, model, working_dir, client, permission_mode)
+
+    # Post-loop verification pass
+    if enable_verify:
+        display.print_info("Verifying…")
+        verdict = _verify_completion(messages, task, client, model)
+        if verdict:
+            display.print_verify(verdict)
+            if verify_out is not None:
+                verify_out.append(verdict)
+
+    return messages
 
 
 def continue_agent(
@@ -359,6 +576,7 @@ def _agent_loop(
     _no_tool_nudges = 0  # consecutive text-only responses (resets on tool use)
     _text_only_total = 0  # total text-only responses across the whole run
     _redundant_calls = 0  # total tool calls whose (name, args) had been seen before
+    _consecutive_error_turns = 0  # turns in a row where at least one tool failed
 
     while iteration < MAX_ITERATIONS:
         iteration += 1
@@ -374,17 +592,17 @@ def _agent_loop(
         except BadRequestError as e:
             err_str = str(e)
             if "ContextWindowExceeded" in err_str or "context" in err_str.lower():
-                trimmed = _trim_messages(messages)
-                if len(trimmed) < len(messages):
+                compacted = _compact_and_trim(messages)
+                if len(compacted) < len(messages):
                     display.print_info(
-                        "Context window exceeded — trimming oldest tool results and retrying."
+                        "Context window exceeded — compacting oldest turns and retrying."
                     )
-                    messages = trimmed
-                    iteration -= 1  # context trim doesn't consume a turn
+                    messages = compacted
+                    iteration -= 1  # compaction doesn't consume a turn
                     continue
-                # Nothing left to trim
+                # Nothing left to compact
                 display.print_error(
-                    "Context window exceeded and cannot be trimmed further.\n"
+                    "Context window exceeded and cannot be compacted further.\n"
                     "Use /compact to summarise history, or /clear to start fresh."
                 )
             elif "Unterminated string" in err_str or "Extra data" in err_str:
@@ -512,6 +730,7 @@ def _agent_loop(
         # Execute tool calls
         display.print_separator()
         repeated_reads: list[str] = []
+        _turn_had_error = False
         for tc in tool_calls:
             name = tc["function"]["name"]
             raw_args = tc["function"]["arguments"]
@@ -532,6 +751,9 @@ def _agent_loop(
 
             display.print_tool_call(name, args)
             result, success = execute_tool(name, args, working_dir, permission_mode)
+
+            if not success:
+                _turn_had_error = True
 
             # Cap result size BEFORE it enters the message history
             result = _cap_result(result, name)
@@ -564,6 +786,25 @@ def _agent_loop(
                     _redundant_calls += 1
                     label = args.get("file_path") or args.get("path") or args.get("pattern") or args.get("command") or ""
                     repeated_reads.append(f"{name}({label})")
+
+        # Track consecutive error turns and inject a recovery nudge when stuck.
+        if _turn_had_error:
+            _consecutive_error_turns += 1
+        else:
+            _consecutive_error_turns = 0
+
+        if _consecutive_error_turns >= 2:
+            messages.append({
+                "role": "user",
+                "content": (
+                    "You have encountered errors in multiple consecutive turns. "
+                    "Before your next action, answer these two questions:\n"
+                    "1. Diagnosis — what do you think is causing these failures?\n"
+                    "2. Strategy — what will you do differently this time?\n"
+                    "State your answers, then proceed with a concrete fix."
+                ),
+            })
+            _consecutive_error_turns = 0  # reset after nudging
 
         # Nudge the model if it is re-reading files it has already seen
         if repeated_reads:

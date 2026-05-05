@@ -12,7 +12,7 @@ from prompt_toolkit.formatted_text import HTML
 from prompt_toolkit.key_binding import KeyBindings
 
 from . import display
-from .agent import make_client, run_agent, continue_agent
+from .agent import make_client, run_agent, continue_agent, load_session_memory, save_session_memory, MEMORY_FILE
 from .research import run_long_research, ROLES as RESEARCH_ROLES
 from .vault import run_vault_improve
 from .config import (
@@ -62,8 +62,11 @@ _HISTORY_FILE = Path.home() / ".octoslave" / "history"
               type=click.Choice(["autonomous", "controlled", "supervised"]),
               help="Permission mode: autonomous (default), controlled (ask before all edits), or supervised (ask before file edits only)")
 @click.option("-v", "--verbose", is_flag=True, default=False, help="Verbose mode: show full diffs, complete tool output, and bash commands live")
+@click.option("--no-plan", "disable_plan", is_flag=True, default=False, help="Skip the upfront planning step")
+@click.option("--verify", is_flag=True, default=False, help="Run a verification pass after each task to grade completion")
+@click.option("--no-memory", "disable_memory", is_flag=True, default=False, help="Do not load or save cross-session memory")
 @click.pass_context
-def cli(ctx, model, working_dir, api_key, base_url, local, prompt_profile, permission_mode, verbose):
+def cli(ctx, model, working_dir, api_key, base_url, local, prompt_profile, permission_mode, verbose, disable_plan, verify, disable_memory):
     """OctoSlave — autonomous AI research & coding assistant.
 
     Run without arguments to enter interactive mode.
@@ -77,6 +80,9 @@ def cli(ctx, model, working_dir, api_key, base_url, local, prompt_profile, permi
     ctx.obj["prompt_profile"] = prompt_profile
     ctx.obj["permission_mode"] = permission_mode
     ctx.obj["verbose"] = verbose
+    ctx.obj["enable_plan"] = not disable_plan
+    ctx.obj["enable_verify"] = verify
+    ctx.obj["enable_memory"] = not disable_memory
     if verbose:
         display.set_verbose(True)
 
@@ -102,7 +108,10 @@ def cli(ctx, model, working_dir, api_key, base_url, local, prompt_profile, permi
               help="Permission mode: autonomous (default), controlled (ask before all edits), or supervised (ask before file edits only)")
 @click.option("-v", "--verbose", is_flag=True, default=False, help="Verbose mode: show full diffs, complete tool output, and bash commands live")
 @click.option("-n", "--new-project", is_flag=True, default=False, help="Create a new project dir in ~/octoslave/projects/ for output")
-def run(task, model, working_dir, api_key, base_url, local, prompt_profile, interactive, permission_mode, verbose, new_project):
+@click.option("--no-plan", "disable_plan", is_flag=True, default=False, help="Skip the upfront planning step")
+@click.option("--verify", is_flag=True, default=False, help="Run a verification pass after the task to grade completion")
+@click.option("--no-memory", "disable_memory", is_flag=True, default=False, help="Do not load or save cross-session memory")
+def run(task, model, working_dir, api_key, base_url, local, prompt_profile, interactive, permission_mode, verbose, new_project, disable_plan, verify, disable_memory):
     """Run a single TASK and exit (or continue interactively with -i).
 
     \b
@@ -119,6 +128,9 @@ def run(task, model, working_dir, api_key, base_url, local, prompt_profile, inte
       ots run "analyze this dataset" -p analyst -d ~/data
       ots run "write a report" -n                # auto-create project dir
       ots run "reorganize notes" -v
+      ots run "refactor auth module" --no-plan   # skip planning step
+      ots run "fix the bug" --verify             # grade completion after
+      ots run "quick task" --no-memory           # don't load/save session memory
     """
     if verbose:
         display.set_verbose(True)
@@ -127,6 +139,10 @@ def run(task, model, working_dir, api_key, base_url, local, prompt_profile, inte
     if cfg["backend"] == "ollama" and prompt_profile == "base":
         effective_profile = "local"
     cfg["prompt_profile"] = effective_profile
+
+    enable_plan = not disable_plan
+    enable_verify = verify
+    enable_memory = not disable_memory
 
     # Only create project dir if explicitly requested with -n
     if new_project and not working_dir:
@@ -139,9 +155,9 @@ def run(task, model, working_dir, api_key, base_url, local, prompt_profile, inte
     else:
         saved_cfg = load_config()
         cfg["permission_mode"] = saved_cfg.get("permission_mode", "autonomous")
-    
+
     display.print_header(cfg["model"], cfg["working_dir"], backend=cfg["backend"])
-    
+
     # Show permission mode in header
     if cfg["permission_mode"] == "autonomous":
         mode_tag = "[bold green]autonomous[/bold green]"
@@ -151,14 +167,33 @@ def run(task, model, working_dir, api_key, base_url, local, prompt_profile, inte
         mode_tag = "[bold cyan]supervised[/bold cyan]"
     display.console.print(f"[dim]permission mode: {mode_tag}[/dim]")
     display.console.print()
-    
+
     display.print_task(task)
 
     client = make_client(cfg["api_key"], cfg["base_url"])
+    verify_out: list[str] = []
     messages = run_agent(
-        task, cfg["model"], cfg["working_dir"], client, 
-        prompt_profile, cfg["permission_mode"]
+        task, cfg["model"], cfg["working_dir"], client,
+        prompt_profile, cfg["permission_mode"],
+        enable_plan=enable_plan,
+        enable_verify=enable_verify,
+        enable_memory=enable_memory,
+        verify_out=verify_out,
     )
+
+    if enable_memory:
+        status = "completed"
+        note = ""
+        if verify_out:
+            v = verify_out[0].upper()
+            if v.startswith("DONE"):
+                status = "done"
+            elif v.startswith("PARTIAL"):
+                status = "partial"
+            elif v.startswith("FAILED"):
+                status = "failed"
+            note = verify_out[0][:200]
+        save_session_memory(task, status=status, note=note)
 
     if interactive:
         _repl_loop(client, cfg, messages)
@@ -408,6 +443,9 @@ def _interactive(ctx_obj: dict):
     cfg["prompt_profile"] = explicit_profile
     cfg["verbose"] = ctx_obj.get("verbose", False)
     cfg["explicit_dir"] = bool(ctx_obj.get("working_dir"))
+    cfg["enable_plan"] = ctx_obj.get("enable_plan", True)
+    cfg["enable_verify"] = ctx_obj.get("enable_verify", False)
+    cfg["enable_memory"] = ctx_obj.get("enable_memory", True)
 
     # Handle permission mode from CLI or config
     if ctx_obj.get("permission_mode"):
@@ -465,6 +503,10 @@ def _repl_loop(client, cfg: dict, messages: list[dict]):
         "prompt_profile":  cfg.get("prompt_profile", "base"),
         "permission_mode": cfg.get("permission_mode", "autonomous"),
         "verbose": cfg.get("verbose", False),
+        "enable_plan":   cfg.get("enable_plan", True),
+        "enable_verify": cfg.get("enable_verify", False),
+        "enable_memory": cfg.get("enable_memory", True),
+        "current_plan":  "",   # last generated plan (shown by /show-plan)
     }
     if state["verbose"]:
         display.set_verbose(True)
@@ -507,12 +549,34 @@ def _repl_loop(client, cfg: dict, messages: list[dict]):
                     state["permission_mode"]
                 )
             else:
+                plan_out: list[str] = []
+                verify_out: list[str] = []
                 messages = run_agent(
                     user_input, state["model"],
                     state["working_dir"], client,
                     state["prompt_profile"],
-                    state["permission_mode"]
+                    state["permission_mode"],
+                    enable_plan=state["enable_plan"],
+                    enable_verify=state["enable_verify"],
+                    enable_memory=state["enable_memory"],
+                    plan_out=plan_out,
+                    verify_out=verify_out,
                 )
+                if plan_out:
+                    state["current_plan"] = plan_out[0]
+                if state["enable_memory"]:
+                    _status = "completed"
+                    _note = ""
+                    if verify_out:
+                        v = verify_out[0].upper()
+                        if v.startswith("DONE"):
+                            _status = "done"
+                        elif v.startswith("PARTIAL"):
+                            _status = "partial"
+                        elif v.startswith("FAILED"):
+                            _status = "failed"
+                        _note = verify_out[0][:200]
+                    save_session_memory(user_input, status=_status, note=_note)
         except KeyboardInterrupt:
             display.console.print("\n[dim]Interrupted.[/dim]")
             messages = []
@@ -667,6 +731,65 @@ def _handle_slash(cmd: str, state: dict, cfg: dict, messages: list, client) -> s
             display.console.print(
                 "[dim]Note: Mode will apply to the next tool execution.[/dim]"
             )
+        return "ok"
+
+    if name == "/show-plan":
+        plan = state.get("current_plan", "")
+        if plan:
+            display.print_plan(plan)
+        else:
+            display.print_info("No plan for the current session. Plans are generated at task start.")
+        return "ok"
+
+    if name == "/memory":
+        sub = arg.strip().lower()
+        if sub == "clear":
+            if MEMORY_FILE.exists():
+                MEMORY_FILE.unlink()
+                display.print_info("Session memory cleared.")
+            else:
+                display.print_info("No session memory file to clear.")
+        elif sub == "off":
+            state["enable_memory"] = False
+            display.print_info("Session memory disabled for this session.")
+        elif sub == "on":
+            state["enable_memory"] = True
+            display.print_info("Session memory enabled.")
+        else:
+            # Show current memory
+            mem = load_session_memory()
+            if mem:
+                display.console.print()
+                display.console.print(mem)
+                display.console.print()
+            else:
+                display.print_info("No session memory yet.")
+        return "ok"
+
+    if name == "/plan":
+        sub = arg.strip().lower()
+        if sub == "off":
+            state["enable_plan"] = False
+            display.print_info("Planning step disabled.")
+        elif sub == "on":
+            state["enable_plan"] = True
+            display.print_info("Planning step enabled.")
+        else:
+            status = "[bold green]ON[/bold green]" if state.get("enable_plan", True) else "[bold red]OFF[/bold red]"
+            display.console.print(f"[dim]Planning:[/dim] {status}  [dim]Use /plan on|off to toggle[/dim]")
+        return "ok"
+
+    if name == "/verify":
+        sub = arg.strip().lower()
+        if sub == "off":
+            state["enable_verify"] = False
+            display.print_info("Verification step disabled.")
+        elif sub == "on":
+            state["enable_verify"] = True
+            display.print_info("Verification step enabled.")
+        else:
+            status = "[bold green]ON[/bold green]" if state.get("enable_verify", False) else "[bold red]OFF[/bold red]"
+            display.console.print(f"[dim]Verify:[/dim] {status}  [dim]Use /verify on|off to toggle[/dim]")
         return "ok"
 
     if name == "/compact":
@@ -1097,9 +1220,13 @@ def _make_toolbar(state: dict):
         perm_short = "ctrl"
     else:
         perm_short = "supv"
+    plan_short = "plan:on" if state.get("enable_plan", True) else "plan:off"
+    verify_short = "verify:on" if state.get("enable_verify", False) else "verify:off"
+    mem_short = "mem:on" if state.get("enable_memory", True) else "mem:off"
     return HTML(
         f'<bottom-toolbar>  dir: {wd}{backend_tag}  profile:{profile}  perm:{perm_short}'
-        f'   /help · /model · /profile · /permission · /local · /einfra · /nim · /clear · /exit</bottom-toolbar>'
+        f'  {plan_short}  {verify_short}  {mem_short}'
+        f'   /help · /model · /plan · /verify · /memory · /clear · /exit</bottom-toolbar>'
     )
 
 

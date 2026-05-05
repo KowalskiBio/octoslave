@@ -31,6 +31,7 @@ It ships two modes:
 - [Features](#features)
 - [Installation](#installation)
 - [Quick start](#quick-start)
+- [Agentic behaviour](#agentic-behaviour)
 - [Web UI](#web-ui)
 - [Interactive TUI](#interactive-tui)
 - [Slash commands](#slash-commands)
@@ -50,7 +51,12 @@ It ships two modes:
 ## Features
 
 <table>
-<tr><td>🔁 <strong>Autonomous loop</strong></td><td>Runs up to 80 tool-call iterations end-to-end — no hand-holding required</td></tr>
+<tr><td>🔁 <strong>Autonomous loop</strong></td><td>Runs up to 100 tool-call iterations end-to-end — no hand-holding required</td></tr>
+<tr><td>🧠 <strong>Upfront planning</strong></td><td>Before touching any files, the agent writes a numbered execution plan — making intent explicit and reducing aimless iteration</td></tr>
+<tr><td>✅ <strong>Post-task verification</strong></td><td>Optional grade pass after each task: DONE / PARTIAL / FAILED with a one-sentence reason (<code>--verify</code>)</td></tr>
+<tr><td>💾 <strong>Cross-session memory</strong></td><td>Outcomes of prior sessions are persisted to <code>~/.octoslave/session_memory.md</code> and injected as context on the next run</td></tr>
+<tr><td>🩹 <strong>Error recovery nudge</strong></td><td>When the same operation fails across two consecutive turns, the agent is asked to diagnose and state an explicit new strategy</td></tr>
+<tr><td>📦 <strong>Smart context compaction</strong></td><td>On context overflow, oldest turns are summarised (tool names, args, first result line) instead of silently dropped</td></tr>
 <tr><td>🌐 <strong>Web research</strong></td><td>DuckDuckGo search + full-page text extraction from any URL or PDF</td></tr>
 <tr><td>🖥️ <strong>Shell &amp; filesystem</strong></td><td>Read, write, edit files; run arbitrary shell commands; install packages via uv / pip</td></tr>
 <tr><td>📡 <strong>Streaming output</strong></td><td>Reasoning and tool calls appear in real time with a Rich TUI</td></tr>
@@ -59,7 +65,7 @@ It ships two modes:
 <tr><td>🛡️ <strong>Data integrity</strong></td><td>Synthetic data is forbidden — the pipeline skips unavailable sources and pivots to alternatives</td></tr>
 <tr><td>⚡ <strong>GPU-aware</strong></td><td>Hardware probe at startup; CUDA utilisation enforced in all generated code</td></tr>
 <tr><td>🏠 <strong>Local mode</strong></td><td>Full functionality via Ollama — no API key needed, complete privacy</td></tr>
-<tr><td>💾 <strong>Resumable</strong></td><td>Research runs persist to disk and resume exactly where they left off</td></tr>
+<tr><td>🔄 <strong>Resumable</strong></td><td>Research runs persist to disk and resume exactly where they left off</td></tr>
 <tr><td>🔒 <strong>Permission modes</strong></td><td>Choose between <code>autonomous</code> (default), <code>controlled</code> (ask before all edits), or <code>supervised</code> (ask before file edits only)</td></tr>
 </table>
 
@@ -189,6 +195,90 @@ ots
 
 ---
 
+## Agentic behaviour
+
+OctoSlave ships five behaviours that make it more deliberate and self-aware — inspired by how experienced engineers approach complex tasks.
+
+### Upfront planning (default: on)
+
+Before calling any tool, the agent writes a numbered execution plan:
+
+```
+╭─────── ◆ Plan ──────────────────────────────────────────╮
+│ 1. Read the existing auth module to understand structure  │
+│ 2. Identify all call sites using grep                    │
+│ 3. Write the new middleware with backward-compatible API  │
+│ 4. Update imports in each call site                      │
+│ 5. Run tests and verify no regressions                   │
+╰──────────────────────────────────────────────────────────╯
+```
+
+Disable with `--no-plan` or `/plan off` in the TUI. View the last plan again with `/show-plan`.
+
+### Post-task verification (default: off)
+
+After the loop exits, the agent grades its own work:
+
+```
+  ✓ Verification: DONE — REST API created in api.py with all 4 endpoints passing tests.
+```
+
+Enable with `--verify` or `/verify on`.
+
+### Cross-session memory (default: on)
+
+At the end of each session, the outcome is appended to `~/.octoslave/session_memory.md`. The next session injects the last 3 entries as context so the agent doesn't repeat completed work:
+
+```
+[PRIOR SESSIONS]
+  2025-01-15: build a REST API — done (api.py created, tests pass)
+  2025-01-14: research RAG methods — partial (literature.md done, no code yet)
+```
+
+Commands: `/memory` (show), `/memory clear` (erase), `/memory on|off` (toggle).
+Disable for a run with `--no-memory`.
+
+### Error recovery nudge (always on)
+
+When a tool fails across two consecutive turns, the agent is interrupted with a structured prompt:
+
+```
+You have encountered errors in multiple consecutive turns.
+1. Diagnosis — what do you think is causing these failures?
+2. Strategy — what will you do differently this time?
+```
+
+This prevents silent retry loops and forces an explicit change of approach.
+
+### Smart context compaction (always on)
+
+When the context window fills, oldest turns are compacted into a human-readable summary rather than deleted silently:
+
+```
+[COMPACTED HISTORY — 3 earlier turn(s) summarised to save context]
+  called: bash(pip install numpy)
+    → Successfully installed numpy-1.26.4
+  called: write_file(train.py)
+    → # Training script for ResNet50
+  ...
+```
+
+Manual compaction: `/compact` (summarises via the model).
+
+---
+
+### Flags reference
+
+| Flag | Command | Default | Description |
+|------|---------|---------|-------------|
+| `--no-plan` | `ots`, `ots run` | plan ON | Skip the upfront planning step |
+| `--verify` | `ots`, `ots run` | verify OFF | Grade completion after the task |
+| `--no-memory` | `ots`, `ots run` | memory ON | Don't load or save session memory |
+
+TUI toggles: `/plan on\|off`, `/verify on\|off`, `/memory on\|off`, `/memory clear`, `/show-plan`
+
+---
+
 ## Web UI
 
 OctoSlave includes a browser-based GUI with the same full functionality as the terminal — ideal if you prefer not to use the CLI.
@@ -261,10 +351,17 @@ Running `ots` opens the full TUI:
 |---------|-------------|
 | `/model [name]` | Switch model; lists available if no name given |
 | `/dir [path]` | Change the active working directory |
-| `/profile [name]` | Switch prompt profile (`base` / `simple` / `strict`) |
+| `/profile [name]` | Switch prompt profile (`base` / `coder` / `analyst` / `biomedic`) |
 | `/permission [mode]` | Show or change permission mode (`autonomous` / `controlled` / `supervised`) |
+| `/plan on\|off` | Enable / disable the upfront planning step (default: on) |
+| `/verify on\|off` | Enable / disable post-task verification grade (default: off) |
+| `/show-plan` | Re-display the plan from the current task |
+| `/memory` | Show cross-session memory (prior tasks and outcomes) |
+| `/memory clear` | Erase the session memory file |
+| `/memory on\|off` | Enable / disable memory loading/saving (default: on) |
 | `/clear` | Clear screen and reset conversation history |
 | `/compact` | Summarise history into a compact context block (saves tokens) |
+| `/verbose` | Toggle verbose mode (show full diffs and output) |
 | `/local [model]` | Switch to local Ollama backend |
 | `/einfra` | Switch back to e-INFRA CZ backend |
 | `/nim [model]` | Switch to NVIDIA NIM backend |
@@ -284,6 +381,15 @@ ots run "refactor the authentication module" \
 
 # Stay interactive after the run completes
 ots run "set up a data processing pipeline for CSV files" -i
+
+# Skip planning (faster for trivial tasks)
+ots run "rename variable x to count" --no-plan
+
+# Grade completion after the task
+ots run "migrate the database schema" --verify
+
+# Don't load/save session memory for this run
+ots run "throwaway experiment" --no-memory
 
 ots run --help   # full flag reference
 ```
