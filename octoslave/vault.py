@@ -21,7 +21,7 @@ from pathlib import Path
 from openai import OpenAI, BadRequestError
 
 from . import display
-from .agent import _cap_result, _trim_messages
+from .agent import _cap_result, _compact_and_trim as _trim_messages
 from .tools import TOOL_DEFINITIONS, execute_tool
 
 # ---------------------------------------------------------------------------

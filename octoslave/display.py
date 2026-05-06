@@ -477,13 +477,45 @@ def print_role_models_config(backend: str, effective: dict, custom: dict):
     )
 
 
+def print_plan(plan_text: str):
+    """Display the upfront execution plan."""
+    from rich.markup import escape as _escape
+    console.print(
+        Panel(
+            _escape(plan_text),
+            title="[bold bright_cyan]◆ Plan[/bold bright_cyan]",
+            border_style="bright_cyan",
+            padding=(0, 2),
+        )
+    )
+    console.print()
+
+
+def print_verify(result: str):
+    """Display the post-loop verification verdict."""
+    result = result.strip()
+    upper = result.upper()
+    if upper.startswith("DONE"):
+        style = "bold bright_green"
+        label = "✓ Verification"
+    elif upper.startswith("PARTIAL"):
+        style = "bold yellow"
+        label = "⚠ Verification"
+    else:
+        style = "bold red"
+        label = "✗ Verification"
+    console.print()
+    console.print(f"  [{style}]{label}:[/{style}] [dim]{result}[/dim]")
+    console.print()
+
+
 def print_help():
     console.print(Panel(
         "[bold white]Slash commands[/bold white]\n\n"
         "  [cyan]/model [NAME][/cyan]           Switch model (or list if no name given)\n"
         "  [cyan]/dir [PATH][/cyan]             Change working directory\n"
         "  [cyan]/profile [NAME][/cyan]         Switch prompt profile (base/coder/analyst/biomedic)\n"
-        "  [cyan]/permission [MODE][/cyan]      Switch permission mode (autonomous/controlled)\n"
+        "  [cyan]/permission [MODE][/cyan]      Switch permission mode (autonomous/controlled/supervised)\n"
         "  [cyan]/verbose[/cyan]                Toggle verbose mode (show full diffs & output live)\n"
         "  [cyan]/clear[/cyan]                  Clear screen and conversation history\n"
         "  [cyan]/compact[/cyan]                Summarise history to save context\n"
@@ -492,6 +524,13 @@ def print_help():
         "  [cyan]/vault-improve [PATH][/cyan]   Autonomously improve all notes in vault\n"
         "  [cyan]/help[/cyan]                   Show this help\n"
         "  [cyan]/exit[/cyan]                   Quit  (also Ctrl+D)\n\n"
+        "[bold white]Agentic behaviour:[/bold white]\n"
+        "  [cyan]/show-plan[/cyan]              Show the plan generated at the start of the last task\n"
+        "  [cyan]/plan on|off[/cyan]            Enable/disable the upfront planning step (default: on)\n"
+        "  [cyan]/verify on|off[/cyan]          Enable/disable post-task verification grade (default: off)\n"
+        "  [cyan]/memory[/cyan]                 Show cross-session memory (prior tasks and outcomes)\n"
+        "  [cyan]/memory clear[/cyan]           Erase the session memory file\n"
+        "  [cyan]/memory on|off[/cyan]          Enable/disable memory loading/saving (default: on)\n\n"
         "[bold white]Backend switching:[/bold white]\n"
         "  [cyan]/local [MODEL][/cyan]          Switch to local Ollama models\n"
         "  [cyan]/einfra[/cyan]                 Switch to e-INFRA CZ\n"
