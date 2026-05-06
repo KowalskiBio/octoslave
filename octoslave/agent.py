@@ -8,7 +8,7 @@ from openai import OpenAI, BadRequestError
 
 from . import display
 from .tools import TOOL_DEFINITIONS, execute_tool
-from .config import load_config
+from .config import load_config, OLLAMA_BASE_URL
 
 _VALID_TOOL_NAMES = {td["function"]["name"] for td in TOOL_DEFINITIONS}
 
@@ -141,6 +141,11 @@ MAX_ITERATIONS = 100
 # Hard cap on characters in a single tool result that goes into the message history.
 # Prevents a single large file/page from blowing up the context window.
 MAX_TOOL_RESULT_CHARS = 50_000
+
+# Ollama allocates a KV cache sized to num_ctx at load time. Without this hint it
+# uses the model's full trained context length, which drains GPU memory even for
+# short conversations. 8192 is a generous interactive budget; raise if you need more.
+OLLAMA_NUM_CTX = 8192
 
 # Path to prompt profiles directory
 PROMPT_PROFILES_DIR = Path(__file__).parent / "prompt_profiles"
@@ -441,12 +446,16 @@ def _stream_completion(client: OpenAI, model: str, messages: list, force_tool: b
 
     display.stream_start()
 
+    is_ollama = OLLAMA_BASE_URL.rstrip("/") in str(client.base_url).rstrip("/")
+    extra = {"extra_body": {"options": {"num_ctx": OLLAMA_NUM_CTX}}} if is_ollama else {}
+
     with client.chat.completions.create(
         model=model,
         messages=messages,
         tools=TOOL_DEFINITIONS,
         tool_choice="required" if force_tool else "auto",
         stream=True,
+        **extra,
     ) as stream:
         for chunk in stream:
             if not chunk.choices:
