@@ -1241,8 +1241,21 @@ def _make_keybindings() -> KeyBindings:
 
 
 # ---------------------------------------------------------------------------
-# Project directory helper
+# Directory helpers
 # ---------------------------------------------------------------------------
+
+def _make_task_dir() -> str:
+    """
+    Create and return ~/octoslave/tasks/YYYYMMDD_HHMMSS/.
+    Used as the default working directory when the user does not specify one,
+    so agent output never lands in whatever directory the user happens to be in.
+    """
+    from datetime import datetime as _dt
+    timestamp = _dt.now().strftime("%Y%m%d_%H%M%S")
+    task_dir = Path.home() / "octoslave" / "tasks" / timestamp
+    task_dir.mkdir(parents=True, exist_ok=True)
+    return str(task_dir)
+
 
 def _make_project_dir(task: str) -> str:
     """
@@ -1376,7 +1389,7 @@ def _resolve_config(model, working_dir, api_key, base_url, local: bool = False) 
             "api_key":     "ollama",
             "base_url":    ollama_url,
             "model":       chosen_model,
-            "working_dir": str(Path(working_dir).resolve()) if working_dir else os.getcwd(),
+            "working_dir": str(Path(working_dir).resolve()) if working_dir else _make_task_dir(),
             "backend":     "ollama",
             "ollama_url":  ollama_url,
             "nim_api_key": saved.get("nim_api_key", ""),
@@ -1397,7 +1410,7 @@ def _resolve_config(model, working_dir, api_key, base_url, local: bool = False) 
             "api_key":     nim_api_key,
             "base_url":    nim_url,
             "model":       model or saved.get("default_model", NIM_DEFAULT_MODEL),
-            "working_dir": str(Path(working_dir).resolve()) if working_dir else os.getcwd(),
+            "working_dir": str(Path(working_dir).resolve()) if working_dir else _make_task_dir(),
             "backend":     "nim",
             "ollama_url":  ollama_url,
             "nim_api_key": nim_api_key,
@@ -1409,7 +1422,7 @@ def _resolve_config(model, working_dir, api_key, base_url, local: bool = False) 
         "api_key":     api_key or saved.get("api_key", ""),
         "base_url":    base_url or saved.get("base_url", BASE_URL),
         "model":       model or saved.get("default_model", DEFAULT_MODEL),
-        "working_dir": str(Path(working_dir).resolve()) if working_dir else os.getcwd(),
+        "working_dir": str(Path(working_dir).resolve()) if working_dir else _make_task_dir(),
         "backend":     "einfra",
         "ollama_url":  ollama_url,
         "nim_api_key": saved.get("nim_api_key", ""),
