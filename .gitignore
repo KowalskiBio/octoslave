@@ -56,6 +56,8 @@ coverage.xml
 # OctoSlave runtime data
 research/
 octoslave_deploy/
+tasks/
+*.log
 # user config lives in ~/.octoslave/ — never commit API keys
 
 # Secrets / credentials (extra safety net)
