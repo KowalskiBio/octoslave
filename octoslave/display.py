@@ -480,6 +480,7 @@ def print_role_models_config(backend: str, effective: dict, custom: dict):
 def print_plan(plan_text: str):
     """Display the upfront execution plan."""
     from rich.markup import escape as _escape
+    _emit({"type": "plan", "text": plan_text})
     console.print(
         Panel(
             _escape(plan_text),

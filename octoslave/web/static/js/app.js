@@ -42,6 +42,7 @@ function handleServerMessage(msg) {
     case 'stream_end':    onStreamEnd(); break;
     case 'tool_call':     onToolCall(msg.name, msg.summary); break;
     case 'tool_result':   onToolResult(msg.name, msg.ok, msg.preview); break;
+    case 'plan':          onPlan(msg.text); break;
     case 'done':          onDone(msg.iterations); break;
     case 'info':          appendChatInfo(msg.text); break;
     case 'error':         onServerError(msg.text); break;
@@ -211,6 +212,22 @@ function onToolResult(name, ok, preview) {
   }
   
   window.appState.pendingToolCall = null;
+}
+
+function onPlan(text) {
+  const container = document.getElementById('chat-messages');
+  const wrap = document.createElement('div');
+  wrap.className = 'msg msg-plan';
+  wrap.innerHTML = `
+    <div class="plan-card">
+      <div class="plan-header">
+        <span class="plan-icon">◆</span>
+        <span>Plan</span>
+      </div>
+      <div class="plan-body">${esc(text)}</div>
+    </div>`;
+  container.appendChild(wrap);
+  scrollToBottom(container);
 }
 
 function onDone(iterations) {
@@ -391,6 +408,35 @@ window.resolvePermission = function(btn, allow) {
 // Initialization
 // ──────────────────────────────────────────────────────────────
 
+function fetchPromptProfiles() {
+  fetch('/api/profiles')
+    .then(r => r.ok ? r.json() : Promise.reject())
+    .then(data => populatePromptProfiles(data.profiles || []))
+    .catch(() => populatePromptProfiles([]));
+}
+
+function populatePromptProfiles(profiles) {
+  const sel = document.getElementById('chat-profile-select');
+  if (!sel) return;
+  const prev = sel.value;
+  sel.innerHTML = '';
+  if (!profiles.length) {
+    sel.innerHTML = '<option value="base">base</option>';
+    return;
+  }
+  profiles.forEach(p => {
+    const o = document.createElement('option');
+    o.value = p;
+    o.textContent = p.charAt(0).toUpperCase() + p.slice(1);
+    sel.appendChild(o);
+  });
+  // Restore previous selection if still valid, otherwise fall back to config or first item
+  const pref = prev || window.appState?.config?.prompt_profile || '';
+  if (pref && profiles.includes(pref)) {
+    sel.value = pref;
+  }
+}
+
 function initApp() {
   // Tab switching
   document.querySelectorAll('.nav-btn').forEach(btn => {
@@ -458,8 +504,8 @@ function initApp() {
 
   // Profile and permission select change handlers
   document.getElementById('chat-profile-select')?.addEventListener('change', (e) => {
-    const profileNames = { base: 'Base', coder: 'Coder', analyst: 'Analyst' };
-    appendChatInfo(`📝 Profile set to [bold]${profileNames[e.target.value] || e.target.value}[/bold]. Will apply to next task.`);
+    const label = e.target.value ? (e.target.options[e.target.selectedIndex]?.textContent || e.target.value) : 'Default';
+    appendChatInfo(`📝 Profile set to [bold]${label}[/bold]. Will apply to next task.`);
   });
 
   document.getElementById('chat-permission-select')?.addEventListener('change', (e) => {
@@ -506,6 +552,9 @@ function initApp() {
   document.getElementById('comp-files-btn')?.addEventListener('click', () => {
     document.querySelector('[data-tab="files"]').click();
   });
+
+  // Fetch available prompt profiles dynamically
+  fetchPromptProfiles();
 
   // History close button
   document.getElementById('history-close')?.addEventListener('click', toggleHistory);

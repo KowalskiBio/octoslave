@@ -26,7 +26,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 
 from .. import display
 from ..display import resolve_permission
-from ..agent import continue_agent, make_client, run_agent
+from ..agent import continue_agent, make_client, run_agent, list_prompt_profiles
 from ..config import (
     load_config,
     get_role_models, save_role_model, reset_role_models,
@@ -103,6 +103,11 @@ def _safe_chat_id(chat_id: str) -> bool:
 # ---------------------------------------------------------------------------
 # Chat REST endpoints
 # ---------------------------------------------------------------------------
+
+@app.get("/api/profiles")
+async def list_profiles():
+    return {"profiles": list_prompt_profiles()}
+
 
 @app.get("/api/chats")
 async def list_chats():
@@ -331,6 +336,7 @@ async def ws_endpoint(websocket: WebSocket):
             "has_api_key": bool(cfg.get("api_key", "")),
             "has_nim_key": bool(cfg.get("nim_api_key", "")),
             "working_dir": ".",
+            "prompt_profile": cfg.get("prompt_profile", "base"),
         }})
     except Exception as exc:
         await send({"type": "error", "text": f"Config load error: {exc}"})
@@ -359,6 +365,7 @@ async def ws_endpoint(websocket: WebSocket):
                         "has_api_key": bool(cfg.get("api_key", "")),
                         "has_nim_key": bool(cfg.get("nim_api_key", "")),
                         "working_dir": state["working_dir"],
+                        "prompt_profile": cfg.get("prompt_profile", "base"),
                     }})
                 except Exception as exc:
                     await send({"type": "error", "text": str(exc)})
