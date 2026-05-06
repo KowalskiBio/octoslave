@@ -150,6 +150,13 @@ OLLAMA_NUM_CTX = 8192
 # Path to prompt profiles directory
 PROMPT_PROFILES_DIR = Path(__file__).parent / "prompt_profiles"
 
+
+def list_prompt_profiles() -> list[str]:
+    """Return names of available prompt profiles (stems of .md files)."""
+    if not PROMPT_PROFILES_DIR.exists():
+        return []
+    return sorted([f.stem for f in PROMPT_PROFILES_DIR.glob("*.md")])
+
 # ---------------------------------------------------------------------------
 # Cross-session memory
 # ---------------------------------------------------------------------------

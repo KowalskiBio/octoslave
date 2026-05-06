@@ -1027,6 +1027,7 @@ def _handle_long_research(arg: str, state: dict, cfg: dict, client):
 
     topic_parts: list[str] = []
     max_rounds = 5
+    min_rounds = 2
     all_model: str | None = None
     overseer_model: str | None = None
     role_flag_overrides: dict[str, str] = {}
@@ -1072,6 +1073,15 @@ def _handle_long_research(arg: str, state: dict, cfg: dict, client):
         elif t == "--resume":
             resume = True
             i += 1
+        elif t == "--min-rounds" and i + 1 < len(tokens):
+            try:
+                min_rounds = int(tokens[i + 1])
+                if min_rounds < 1:
+                    raise ValueError
+            except ValueError:
+                display.print_error(f"--min-rounds expects a positive integer, got: {tokens[i + 1]}")
+                return
+            i += 2
         elif t == "--scrape":
             scrape_mode = True
             i += 1
@@ -1083,7 +1093,8 @@ def _handle_long_research(arg: str, state: dict, cfg: dict, client):
     if not topic:
         display.print_error(
             "Usage: /long-research <topic> [--rounds N] [--parallel N] "
-            "[--all MODEL] [--overseer MODEL] [--role ROLE MODEL] [--resume] [--scrape]"
+            "[--min-rounds N] [--all MODEL] [--overseer MODEL] [--role ROLE MODEL] "
+            "[--resume] [--scrape]"
         )
         return
 
@@ -1123,6 +1134,7 @@ def _handle_long_research(arg: str, state: dict, cfg: dict, client):
         num_parallel=num_parallel,
         scrape_mode=scrape_mode,
         prompt_profile=state.get("prompt_profile", "base"),
+        min_rounds=min_rounds,
     )
 
 

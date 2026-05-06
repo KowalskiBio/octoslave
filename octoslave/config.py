@@ -74,13 +74,14 @@ NIM_KNOWN_MODELS = [
 # ---------------------------------------------------------------------------
 
 PIPELINE_ROLES = (
-    "researcher", "hypothesis", "coder", "debugger",
+    "researcher", "hypothesis", "skeptic", "coder", "debugger",
     "evaluator", "orchestrator", "reporter", "merger",
 )
 
 EINFRA_ROLE_MODELS: dict[str, str] = {
     "researcher":   "deepseek-v3.2-thinking",
     "hypothesis":   "deepseek-v3.2-thinking",
+    "skeptic":      "deepseek-v3.2-thinking",
     "coder":        "kimi-k2.6",
     "debugger":     "qwen3-coder-30b",
     "evaluator":    "kimi-k2.6",
@@ -93,6 +94,7 @@ NIM_ROLE_MODELS: dict[str, str] = {
     # Heavy reasoning roles — largest confirmed-stable NVIDIA model
     "researcher":   "nvidia/nemotron-3-super-120b-a12b",
     "hypothesis":   "nvidia/nemotron-3-super-120b-a12b",
+    "skeptic":      "nvidia/nemotron-3-super-120b-a12b",
     "coder":        "nvidia/nemotron-3-super-120b-a12b",
     "debugger":     "nvidia/nemotron-3-super-120b-a12b",
     "evaluator":    "nvidia/nemotron-3-super-120b-a12b",

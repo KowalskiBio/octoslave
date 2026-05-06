@@ -553,6 +553,40 @@ button {
   font-size: 13px;
 }
 
+/* Plan card */
+.msg-plan {
+  align-items: flex-start;
+  margin: 6px 0;
+}
+
+.plan-card {
+  background: rgba(0, 212, 170, 0.06);
+  border: 1px solid rgba(0, 212, 170, 0.30);
+  border-radius: var(--radius-md);
+  padding: 14px 18px;
+  max-width: 88%;
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.plan-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 600;
+  color: var(--primary);
+  margin-bottom: 10px;
+  font-size: 13px;
+}
+
+.plan-icon { font-size: 14px; }
+
+.plan-body {
+  color: var(--text);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
 /* Permission request card */
 .msg-permission {
   align-items: flex-start;
