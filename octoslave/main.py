@@ -1246,13 +1246,18 @@ def _make_keybindings() -> KeyBindings:
 
 def _make_task_dir() -> str:
     """
-    Create and return ~/octoslave/tasks/YYYYMMDD_HHMMSS/.
-    Used as the default working directory when the user does not specify one,
-    so agent output never lands in whatever directory the user happens to be in.
+    Return the default working directory when the user does not specify one.
+    If cwd is outside the octoslave repo, use cwd (so `ots` works in-place on
+    any project the user is already in).  If cwd IS the octoslave repo dir,
+    create ~/octoslave/tasks/YYYYMMDD_HHMMSS/ to avoid polluting the repo.
     """
+    cwd = Path.cwd().resolve()
+    octoslave_repo = (Path.home() / "octoslave").resolve()
+    if cwd != octoslave_repo and not str(cwd).startswith(str(octoslave_repo) + "/"):
+        return str(cwd)
     from datetime import datetime as _dt
     timestamp = _dt.now().strftime("%Y%m%d_%H%M%S")
-    task_dir = Path.home() / "octoslave" / "tasks" / timestamp
+    task_dir = octoslave_repo / "tasks" / timestamp
     task_dir.mkdir(parents=True, exist_ok=True)
     return str(task_dir)
 
