@@ -4,6 +4,8 @@ import subprocess
 import glob as glob_module
 from pathlib import Path
 
+from .tools_bio import BIO_TOOL_DEFINITIONS, BIO_TOOL_NAMES, execute_bio_tool
+
 # Optional web deps — imported lazily inside functions
 try:
     import requests as _requests
@@ -86,15 +88,18 @@ TOOL_DEFINITIONS = [
         "function": {
             "name": "edit_file",
             "description": (
-                "Make a targeted edit by replacing an exact unique string with a new string. "
-                "old_string must appear exactly once in the file."
+                "Make a targeted edit by replacing an exact string with a new string. "
+                "By default old_string must appear exactly once (uniquely). "
+                "Set replace_all=true to replace every occurrence — useful for renames "
+                "and global refactors. Preserve indentation and surrounding context exactly."
             ),
             "parameters": {
                 "type": "object",
                 "properties": {
                     "path": {"type": "string", "description": "File path to edit"},
-                    "old_string": {"type": "string", "description": "Exact string to replace (must be unique in file)"},
+                    "old_string": {"type": "string", "description": "Exact string to replace. Must be unique unless replace_all is true."},
                     "new_string": {"type": "string", "description": "Replacement string"},
+                    "replace_all": {"type": "boolean", "description": "Replace every occurrence instead of requiring uniqueness (default false)"},
                 },
                 "required": ["path", "old_string", "new_string"],
             },
@@ -234,7 +239,7 @@ TOOL_DEFINITIONS = [
             },
         },
     },
-]
+] + BIO_TOOL_DEFINITIONS
 
 
 # ---------------------------------------------------------------------------
@@ -263,6 +268,14 @@ def execute_tool(name: str, args: dict, working_dir: str, permission_mode: str =
             # Fallback if display module has issues
             pass
     
+    # Reject empty / missing required string args BEFORE dispatch — some
+    # models (notably nemotron-49b acting as Orchestrator) emit tool calls
+    # with `path=""` etc. and a generic "File not found:" reply does not
+    # help them recover. Return an actionable message instead.
+    err = _validate_required_args(name, args)
+    if err is not None:
+        return err, False
+
     try:
         if name == "read_file":
             return _read_file(working_dir=working_dir, **args)
@@ -284,12 +297,91 @@ def execute_tool(name: str, args: dict, working_dir: str, permission_mode: str =
             return _web_fetch(**args)
         elif name == "crawl_tree":
             return _crawl_tree(**args)
+        elif name in BIO_TOOL_NAMES:
+            return execute_bio_tool(name, args, working_dir)
         else:
             return f"Unknown tool: {name}", False
     except TypeError as e:
         return f"Invalid arguments for {name}: {e}", False
     except Exception as e:
         return f"Tool error: {e}", False
+
+
+# Required string args per tool — used by _validate_required_args.
+# Tools accepting `working_dir` as the only "input" (list_dir) intentionally
+# allow path="" to mean "the working dir itself".
+_REQUIRED_STR_ARGS: dict[str, tuple[str, ...]] = {
+    "read_file": ("path",),
+    "write_file": ("path", "content"),
+    "edit_file": ("path", "old_string", "new_string"),
+    "bash": ("command",),
+    "glob": ("pattern",),
+    "grep": ("pattern",),
+    "web_search": ("query",),
+    "web_fetch": ("url",),
+    "crawl_tree": ("root_url",),
+    # bio tools that need a string input
+    "bio_inspect": ("path",),
+    "rdkit_describe": ("smiles",),
+    "pdb_fetch": ("pdb_id",),
+    "alphafold_fetch": ("uniprot_id",),
+    "ena_fetch": ("accession",),
+}
+
+
+def _validate_required_args(name: str, args: dict) -> str | None:
+    """Return an actionable error string if a required string arg is missing/empty, else None."""
+    if not isinstance(args, dict):
+        return f"Tool `{name}` requires JSON object arguments, got {type(args).__name__}."
+    required = _REQUIRED_STR_ARGS.get(name)
+    if not required:
+        return None
+    missing: list[str] = []
+    empty: list[str] = []
+    for key in required:
+        # `content` for write_file may legitimately be empty (creating empty file)
+        if name == "write_file" and key == "content":
+            if key not in args:
+                missing.append(key)
+            continue
+        if key not in args:
+            missing.append(key)
+            continue
+        v = args[key]
+        if v is None or (isinstance(v, str) and v.strip() == ""):
+            empty.append(key)
+    if not missing and not empty:
+        return None
+    parts = []
+    if missing:
+        parts.append(f"missing argument(s): {', '.join(missing)}")
+    if empty:
+        parts.append(f"empty argument(s): {', '.join(empty)}")
+    hint = _ARG_HINTS.get(name, "")
+    return (
+        f"Cannot run `{name}` — {'; '.join(parts)}. "
+        f"{hint} "
+        f"Re-issue the call with the required argument filled in."
+    ).strip()
+
+
+_ARG_HINTS: dict[str, str] = {
+    "read_file": "Pass `path` as an absolute or working-dir-relative file path "
+                 "(e.g. {\"path\": \"round_001/01_literature.md\"}).",
+    "write_file": "Pass `path` and `content` (e.g. {\"path\": \"round_001/06_synthesis.md\", \"content\": \"...\"}).",
+    "edit_file": "Pass `path`, `old_string`, `new_string`. Use replace_all=true for renames.",
+    "bash": "Pass `command` as a shell string (e.g. {\"command\": \"ls\"}).",
+    "glob": "Pass `pattern` (e.g. {\"pattern\": \"**/*.py\"}).",
+    "grep": "Pass `pattern` as a regex (e.g. {\"pattern\": \"def \\\\w+\"}).",
+    "web_search": "Pass `query`.",
+    "web_fetch": "Pass `url` as a fully-qualified http(s) URL.",
+    "crawl_tree": "Pass `root_url` as a fully-qualified http(s) URL.",
+    "bio_inspect": "Pass `path` to a bio/chem data file.",
+    "rdkit_describe": "Pass `smiles` (e.g. {\"smiles\": \"CC(=O)O\"}).",
+    "pdb_fetch": "Pass `pdb_id` (4-char RCSB ID, e.g. \"1CRN\").",
+    "alphafold_fetch": "Pass `uniprot_id` (e.g. \"P12345\").",
+    "ena_fetch": "Pass `accession` (e.g. \"SRR000001\").",
+}
 
 
 def _resolve(path: str, working_dir: str) -> Path:
@@ -481,24 +573,41 @@ def _write_file(path: str, content: str, working_dir: str) -> tuple[str, bool]:
     return f"Written {lines} lines to {path}", True
 
 
-def _edit_file(path: str, old_string: str, new_string: str, working_dir: str) -> tuple[str, bool]:
+def _edit_file(
+    path: str,
+    old_string: str,
+    new_string: str,
+    working_dir: str,
+    replace_all: bool = False,
+) -> tuple[str, bool]:
     resolved = _resolve(path, working_dir)
     if not resolved.exists():
         return f"File not found: {path}", False
+    if not resolved.is_file():
+        return f"Not a file: {path}", False
+    if old_string == "":
+        return "old_string must not be empty. To create a file, use write_file.", False
+    if old_string == new_string:
+        return "old_string and new_string are identical — no change needed.", False
+    if _is_binary(resolved):
+        return f"Cannot edit binary file: {resolved.name}", False
 
     content = resolved.read_text(errors="replace")
     count = content.count(old_string)
 
     if count == 0:
         return f"String not found in {path}:\n{old_string[:200]}", False
-    if count > 1:
+    if count > 1 and not replace_all:
         return (
-            f"old_string appears {count} times in {path} — make it more specific to ensure uniqueness.",
+            f"old_string appears {count} times in {path} — "
+            f"make it more specific to ensure uniqueness, or pass replace_all=true to replace every occurrence.",
             False,
         )
 
-    new_content = content.replace(old_string, new_string, 1)
+    new_content = content.replace(old_string, new_string)
     resolved.write_text(new_content)
+    if replace_all and count > 1:
+        return f"Edited {path} ({count} occurrences replaced)", True
     return f"Edited {path}", True
 
 
@@ -516,13 +625,18 @@ def _bash(command: str, working_dir: str, timeout: int = 300) -> tuple[str, bool
             timeout=timeout,
             env=env,
         )
-        output = ""
-        if result.stdout:
-            output += result.stdout
-        if result.stderr:
-            output += result.stderr
+        stdout = result.stdout or ""
+        stderr = result.stderr or ""
+        # Label streams when both have content so the model can tell them apart.
+        # Most successful commands write only to stdout — keep that path lean.
+        if stdout and stderr:
+            output = f"--- stdout ---\n{stdout}\n--- stderr ---\n{stderr}"
+        else:
+            output = stdout or stderr
         if not output:
             output = f"(exit code {result.returncode})"
+        elif result.returncode != 0:
+            output += f"\n(exit code {result.returncode})"
         # Truncate very long outputs — keep tail-heavy since errors appear at the end
         if len(output) > 8000:
             output = output[:2000] + "\n\n... [output truncated] ...\n\n" + output[-5000:]

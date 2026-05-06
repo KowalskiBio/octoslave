@@ -81,11 +81,11 @@ PIPELINE_ROLES = (
 EINFRA_ROLE_MODELS: dict[str, str] = {
     "researcher":   "deepseek-v3.2-thinking",
     "hypothesis":   "deepseek-v3.2-thinking",
-    "coder":        "qwen3-coder-30b",
+    "coder":        "kimi-k2.6",
     "debugger":     "qwen3-coder-30b",
-    "evaluator":    "deepseek-v3.2-thinking",
-    "orchestrator": "deepseek-v3.2",
-    "reporter":     "deepseek-v3.2",
+    "evaluator":    "kimi-k2.6",
+    "orchestrator": "kimi-k2.6",
+    "reporter":     "kimi-k2.6",
     "merger":       "deepseek-v3.2",
 }
 
@@ -96,10 +96,13 @@ NIM_ROLE_MODELS: dict[str, str] = {
     "coder":        "nvidia/nemotron-3-super-120b-a12b",
     "debugger":     "nvidia/nemotron-3-super-120b-a12b",
     "evaluator":    "nvidia/nemotron-3-super-120b-a12b",
-    # Lighter synthesis/writing roles — 49B, confirmed stable
-    "orchestrator": "nvidia/llama-3.3-nemotron-super-49b-v1.5",
-    "reporter":     "nvidia/llama-3.3-nemotron-super-49b-v1.5",
-    "merger":       "nvidia/llama-3.3-nemotron-super-49b-v1.5",
+    # Synthesis / long-form writing — Llama-3.3-70b-instruct hit NIM 504 gateway
+    # timeouts (~14 min wait) on every Orchestrator + Reporter call across two
+    # consecutive runs. Switched to 120b nemotron — slower per call, but
+    # completes reliably; same family as the heavy roles.
+    "orchestrator": "nvidia/nemotron-3-super-120b-a12b",
+    "reporter":     "nvidia/nemotron-3-super-120b-a12b",
+    "merger":       "nvidia/nemotron-3-super-120b-a12b",
 }
 
 

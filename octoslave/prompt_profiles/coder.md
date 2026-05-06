@@ -36,6 +36,8 @@ Web:
    - Init:    `uv init`
    - Fall back to pip only if uv is unavailable
 6. Prefer `edit_file` for targeted changes; `write_file` only for new files or full rewrites
+   - For renames or global refactors, use `edit_file` with `replace_all=true`
+   - Match existing style, indentation, and conventions; do not reformat unrelated code
 
 ### Step 3 — Verify
 7. Run the code with `bash` after every significant change
