@@ -3,6 +3,7 @@
 <img src="assets/logo.png" alt="OctoSlave" width="220"/>
 
 <h1>OctoSlave</h1>
+<a href="https://octoslave.karamazov.website">Official Octoslave webside</a>
 
 <p><strong>Autonomous AI research &amp; coding assistant — powered by <a href="https://llm.ai.e-infra.cz">e-INFRA CZ</a>, <a href="https://build.nvidia.com">NVIDIA NIM</a>, or your own local GPU</strong></p>
 
@@ -16,13 +17,16 @@
 
 ---
 
-OctoSlave is a autonomous agent built for scientists and engineers.
+OctoSlave is an autonomous agent built for scientists and engineers.
 Give it a task or a research topic — it explores the web, writes and runs code, debugs, evaluates, and iterates until the job is done.
 
-It ships two modes:
+It ships several modes:
 
-- **Interactive agent** — an simple chatbot that can work with your files, work on entire projects or assist you with specific issues / tasks
-- **Long-research pipeline** (`/long-research`) — a population of 6 specialist agents that conduct rigorous, multi-round research with real data, reproducible code, and a polished HTML reports
+- **Interactive agent** — a chat-style assistant that can work on entire projects or assist with a single task
+- **One-shot mode** (`ots run "..."`) — run a task, then exit (or stay interactive with `-i`)
+- **Long-research pipeline** (`/long-research`) — 7 specialist agents conduct rigorous, multi-round research with real data, reproducible code, and a self-contained HTML report
+- **Vault improve** (`ots vault-improve`) — autonomous note-by-note improvement of an Obsidian / markdown vault
+- **Batch mode** (`ots batch tasks.txt`) — run a list of tasks sequentially with resume support
 
 ---
 
@@ -35,14 +39,18 @@ It ships two modes:
 - [Web UI](#web-ui)
 - [Interactive TUI](#interactive-tui)
 - [Slash commands](#slash-commands)
-- [One-shot mode](#one-shot-mode)
+- [CLI commands](#cli-commands)
 - [Long-research pipeline](#long-research-pipeline)
-- [Available models](#available-models)
-- [NVIDIA NIM](#nvidia-nim)
-- [Local models (Ollama)](#local-models-ollama)
+- [Vault improve](#vault-improve)
+- [Batch mode](#batch-mode)
+- [Backends and models](#backends-and-models)
+  - [e-INFRA CZ](#e-infra-cz)
+  - [NVIDIA NIM](#nvidia-nim)
+  - [Ollama (local)](#ollama-local)
 - [Tools reference](#tools-reference)
-- [Configuration](#configuration)
+- [Prompt profiles](#prompt-profiles)
 - [Permission modes](#permission-modes)
+- [Configuration](#configuration)
 - [Project structure](#project-structure)
 - [License](#license)
 
@@ -51,22 +59,23 @@ It ships two modes:
 ## Features
 
 <table>
-<tr><td>🔁 <strong>Autonomous loop</strong></td><td>Runs up to 100 tool-call iterations end-to-end — no hand-holding required</td></tr>
+<tr><td>🔁 <strong>Autonomous loop</strong></td><td>Runs many tool-call iterations end-to-end (per-role caps from 8 to 80) — no hand-holding required</td></tr>
 <tr><td>🧠 <strong>Upfront planning</strong></td><td>Before touching any files, the agent writes a numbered execution plan — making intent explicit and reducing aimless iteration</td></tr>
 <tr><td>✅ <strong>Post-task verification</strong></td><td>Optional grade pass after each task: DONE / PARTIAL / FAILED with a one-sentence reason (<code>--verify</code>)</td></tr>
 <tr><td>💾 <strong>Cross-session memory</strong></td><td>Outcomes of prior sessions are persisted to <code>~/.octoslave/session_memory.md</code> and injected as context on the next run</td></tr>
 <tr><td>🩹 <strong>Error recovery nudge</strong></td><td>When the same operation fails across two consecutive turns, the agent is asked to diagnose and state an explicit new strategy</td></tr>
 <tr><td>📦 <strong>Smart context compaction</strong></td><td>On context overflow, oldest turns are summarised (tool names, args, first result line) instead of silently dropped</td></tr>
-<tr><td>🌐 <strong>Web research</strong></td><td>DuckDuckGo search + full-page text extraction from any URL or PDF</td></tr>
+<tr><td>🌐 <strong>Web research</strong></td><td>DuckDuckGo search, full-page extraction from any URL or PDF, BFS website crawler</td></tr>
 <tr><td>🖥️ <strong>Shell &amp; filesystem</strong></td><td>Read, write, edit files; run arbitrary shell commands; install packages via uv / pip</td></tr>
-<tr><td>📡 <strong>Streaming output</strong></td><td>Reasoning and tool calls appear in real time with a Rich TUI</td></tr>
-<tr><td>🔬 <strong>Multi-agent research</strong></td><td>6 specialist roles collaborate across multiple rounds; findings.md updated automatically</td></tr>
-<tr><td>📊 <strong>Visual-first results</strong></td><td>Every round produces publication-quality plots; final HTML report with embedded figures</td></tr>
-<tr><td>🛡️ <strong>Data integrity</strong></td><td>Synthetic data is forbidden — the pipeline skips unavailable sources and pivots to alternatives</td></tr>
+<tr><td>📡 <strong>Streaming output</strong></td><td>Reasoning and tool calls appear in real time in a Rich TUI or web UI</td></tr>
+<tr><td>🔬 <strong>Multi-agent research</strong></td><td>7 specialist roles collaborate over multiple rounds; cumulative <code>findings.md</code> updated each round</td></tr>
+<tr><td>📊 <strong>Self-contained reports</strong></td><td>Every round produces plots; final HTML report has all images embedded as base64 — shareable as a single file</td></tr>
+<tr><td>🛡️ <strong>Data integrity</strong></td><td>Synthetic / dummy data is forbidden — the pipeline pivots to alternatives or reports BLOCKED rather than fabricating</td></tr>
 <tr><td>⚡ <strong>GPU-aware</strong></td><td>Hardware probe at startup; CUDA utilisation enforced in all generated code</td></tr>
 <tr><td>🏠 <strong>Local mode</strong></td><td>Full functionality via Ollama — no API key needed, complete privacy</td></tr>
-<tr><td>🔄 <strong>Resumable</strong></td><td>Research runs persist to disk and resume exactly where they left off</td></tr>
-<tr><td>🔒 <strong>Permission modes</strong></td><td>Choose between <code>autonomous</code> (default), <code>controlled</code> (ask before all edits), or <code>supervised</code> (ask before file edits only)</td></tr>
+<tr><td>🔄 <strong>Resumable</strong></td><td>Research, vault, and batch runs persist to disk and resume exactly where they left off</td></tr>
+<tr><td>🔒 <strong>Permission modes</strong></td><td><code>autonomous</code> (default), <code>controlled</code> (ask for everything), or <code>supervised</code> (ask before file edits only)</td></tr>
+<tr><td>🧬 <strong>Bio &amp; chem connectors</strong></td><td>Direct REST access to UniProt, PubChem, ChEMBL, RCSB PDB, AlphaFold, NCBI GEO, ENA — plus RDKit and FASTA/PDB inspection</td></tr>
 </table>
 
 ---
@@ -81,29 +90,16 @@ It ships two modes:
 <summary><strong>Windows</strong></summary>
 
 1. Go to [https://www.python.org/downloads/](https://www.python.org/downloads/) and click **Download Python 3.x.x**.
-2. Run the installer. **Important:** tick the box **"Add Python to PATH"** before clicking Install.
-3. Open **Command Prompt** (`Win + R` → type `cmd` → Enter) and verify:
-   ```
-   python --version
-   ```
-   You should see something like `Python 3.12.3`.
+2. Run the installer. **Important:** tick **"Add Python to PATH"** before clicking Install.
+3. Open **Command Prompt** and verify: `python --version`
 
 </details>
 
 <details>
 <summary><strong>macOS</strong></summary>
 
-Option A — official installer (easiest):
-1. Go to [https://www.python.org/downloads/](https://www.python.org/downloads/) and download the macOS package.
-2. Run the `.pkg` installer and follow the prompts.
-
-Option B — Homebrew (if you already use it):
 ```bash
-brew install python
-```
-
-Verify in **Terminal**:
-```bash
+brew install python      # or download the .pkg from python.org
 python3 --version
 ```
 
@@ -120,73 +116,60 @@ python3 --version
 
 </details>
 
-> `pip` (the Python package installer) is bundled with Python 3.10+ — you do not need to install it separately. If `pip` is missing for any reason, run `python -m ensurepip --upgrade`.
-
----
-
 ### Step 2 — Get the code
-
-If you have [Git](https://git-scm.com/downloads) installed:
 
 ```bash
 git clone https://github.com/karatedava/octoslave.git
 cd octoslave
 ```
 
-No Git? Download the ZIP directly from the GitHub page → **Code → Download ZIP**, then unzip and open a terminal inside the folder.
-
----
-
 ### Step 3 — Install OctoSlave
 
 ```bash
-# CLI only
-pip install -e .
-
 # CLI + web UI (recommended)
 pip install -e ".[web]"
-```
 
-> On macOS/Linux you may need to use `pip3` instead of `pip` if your system has both Python 2 and Python 3. If you see a "permission denied" error, add `--user` to the command: `pip install --user -e ".[web]"`.
+# CLI + bio/chem tools
+pip install -e ".[bio]"
+
+# Everything
+pip install -e ".[all]"
+```
 
 > **Recommended:** use [uv](https://github.com/astral-sh/uv) for faster, reproducible installs:
 > ```bash
-> pip install uv          # install uv once
-> uv pip install -e ".[web]"
+> pip install uv
+> uv pip install -e ".[all]"
 > ```
 
-### Set your API key
+### Step 4 — Set your API key
 
 ```bash
-ots config                        # interactive setup wizard (choose einfra / nim / ollama)
-ots config --api-key sk-YOUR_KEY  # set e-INFRA CZ key directly
-ots config --model qwen3-coder-30b  # set default model
-ots config --ollama-url http://remote-host:11434/v1  # remote Ollama
-ots config --show                 # print current config (keys masked)
-export OCTOSLAVE_API_KEY=sk-...   # e-INFRA CZ key — env var for the session
-export OCTOSLAVE_NIM_API_KEY=nvapi-...  # NVIDIA NIM key — env var for the session
+ots config                                     # interactive setup wizard (einfra / nim / ollama)
+ots config --api-key sk-YOUR_KEY               # e-INFRA CZ key directly
+ots config --nim-api-key nvapi-YOUR_KEY        # NVIDIA NIM key
+ots config --model deepseek-v3.2               # default model
+ots config --show                              # print current config (keys masked)
 ```
 
-Config is saved at `~/.octoslave/config.json`. Environment variables always take precedence.
+Config is saved at `~/.octoslave/config.json`. Environment variables always take precedence:
 
-> **NVIDIA NIM users:** run `ots config`, choose `nim` as the backend, and paste your `nvapi-` key. See the [NVIDIA NIM section](#nvidia-nim) for full setup instructions.
+```bash
+export OCTOSLAVE_API_KEY=sk-...               # e-INFRA CZ
+export OCTOSLAVE_NIM_API_KEY=nvapi-...        # NVIDIA NIM
+```
 
 ---
 
 ## Quick start
 
 ```bash
-# Interactive TUI (e-INFRA CZ)
-ots
-
-# Interactive TUI (local Ollama)
-ots --local
-
-# Web UI (opens browser automatically)
-ots web
-
-# One-shot task
+ots                                            # interactive TUI (default backend)
+ots --local                                    # interactive TUI, local Ollama
+ots --nim                                      # interactive TUI, NVIDIA NIM
+ots web                                        # browser UI at http://127.0.0.1:7860
 ots run "build a Flask REST API for a todo app"
+ots run "summarise this paper" -i              # one-shot, then stay interactive
 
 # Research — 3 autonomous rounds
 ots
@@ -281,33 +264,26 @@ TUI toggles: `/plan on\|off`, `/verify on\|off`, `/memory on\|off`, `/memory cle
 
 ## Web UI
 
-OctoSlave includes a browser-based GUI with the same full functionality as the terminal — ideal if you prefer not to use the CLI.
-
 ```bash
-# Install web dependencies and launch
 pip install -e ".[web]"
-ots web                          # opens http://127.0.0.1:7860 in your browser
-ots web --port 8080              # custom port
-ots web --host 0.0.0.0           # expose on the network
-ots web --no-browser             # start server without auto-opening browser
+ots web                                        # auto-opens browser
+ots web --port 8080                            # custom port
+ots web --host 0.0.0.0                         # expose on the network
+ots web --no-browser                           # don't auto-open
 ```
-
-The web UI has four tabs:
 
 | Tab | What it does |
 |-----|-------------|
-| **Chat** | Full conversational agent — streaming responses, tool call inspector, conversation history |
-| **Research** | Launch `/long-research` pipeline with live round progress, agent status, and streaming console |
-| **Files** | Browse all research outputs — view HTML reports inline, preview plots and markdown |
-| **Settings** | Inspect current configuration (API key, model, backend) |
+| **Chat** | Full conversational agent — streaming responses, tool-call inspector, conversation history, file attachments |
+| **Research** | Launch `/long-research` with live round progress, agent status, and streaming console |
+| **Files** | Browse research outputs — view HTML reports inline, preview plots and markdown |
+| **Settings** | Inspect / refresh current configuration (API key, model, backend) |
 
-All research outputs (HTML reports, plots, markdown) are accessible directly in the Files tab without leaving the browser.
+All research outputs (HTML reports, plots, markdown) are accessible in the Files tab without leaving the browser.
 
 ---
 
 ## Interactive TUI
-
-Running `ots` opens the full TUI:
 
 ```
   ╭────────────────────────────────────────────────╮
@@ -318,8 +294,8 @@ Running `ots` opens the full TUI:
   │            ████◉███████◉█████                  │
   │            ██████████████████                  │
   │               ████ ▄▄▄▄▄ ████                  │
-  │            ◆─◆─◆─◆─◆─◆─◆─◆─◆─                  │ 
-  │                █████ ◈ █████                   │  
+  │            ◆─◆─◆─◆─◆─◆─◆─◆─◆─                  │
+  │                █████ ◈ █████                   │
   │             ╰██╯ ╰██╯ ╰██╯ ╰██╯                │
   │                                                │
   │               OCTOSLAVE                        │
@@ -332,9 +308,7 @@ Running `ots` opens the full TUI:
 
 - Type any task in natural language — the agent streams its thinking and tool calls live
 - Follow up freely; full conversation context is preserved across turns
-- Use `/` commands to control the session (see below)
-
-**Keyboard shortcuts**
+- Use `/` commands to control the session
 
 | Key | Action |
 |-----|--------|
@@ -349,8 +323,10 @@ Running `ots` opens the full TUI:
 
 | Command | Description |
 |---------|-------------|
+| `/help` | Show all commands |
 | `/model [name]` | Switch model; lists available if no name given |
 | `/dir [path]` | Change the active working directory |
+| `/new-project [hint]` | Create a fresh `~/octoslave/projects/<hint>/` directory and switch to it |
 | `/profile [name]` | Switch prompt profile (`base` / `coder` / `analyst` / `biomedic`) |
 | `/permission [mode]` | Show or change permission mode (`autonomous` / `controlled` / `supervised`) |
 | `/plan on\|off` | Enable / disable the upfront planning step (default: on) |
@@ -365,86 +341,106 @@ Running `ots` opens the full TUI:
 | `/local [model]` | Switch to local Ollama backend |
 | `/einfra` | Switch back to e-INFRA CZ backend |
 | `/nim [model]` | Switch to NVIDIA NIM backend |
-| `/pull model` | Pull a new Ollama model without leaving the session |
-| `/long-research TOPIC [flags]` | Launch the multi-agent research pipeline |
-| `/help` | Show all commands and flags |
-| `/exit` | Quit (also `Ctrl+D`) |
+| `/pull MODEL` | Pull a new Ollama model without leaving the session |
+| `/long-research TOPIC [flags]` | Launch the multi-agent research pipeline (see below) |
+| `/research-roles` | Inspect or override per-role models for `/long-research` |
+| `/vault-improve [path]` | Launch autonomous vault-wide note improvement |
+| `/exit` (`/quit`, `/q`) | Quit (also `Ctrl+D`) |
 
 ---
 
-## One-shot mode
+## CLI commands
 
 ```bash
-ots run "refactor the authentication module" \
-  --model qwen3-coder-30b \
-  --dir /path/to/project
+ots                              # interactive TUI
+ots run TASK [options]           # one-shot task; -i to stay interactive afterwards
+ots web [options]                # launch the browser UI
+ots config [options]             # interactive setup wizard, or pass flags directly
+ots models [--local]             # list available models (live for cloud backends)
+ots vault-improve PATH [options] # autonomous vault improvement (see below)
+ots batch TASKS_FILE [options]   # run tasks one-per-line from a file with resume
 
-# Stay interactive after the run completes
-ots run "set up a data processing pipeline for CSV files" -i
-
-# Skip planning (faster for trivial tasks)
-ots run "rename variable x to count" --no-plan
-
-# Grade completion after the task
-ots run "migrate the database schema" --verify
-
-# Don't load/save session memory for this run
-ots run "throwaway experiment" --no-memory
+# Examples with agentic flags
+ots run "refactor the authentication module" --model qwen3-coder-30b --dir /path/to/project
+ots run "set up a data processing pipeline for CSV files" -i   # stay interactive after run
+ots run "rename variable x to count" --no-plan                 # skip planning for trivial tasks
+ots run "migrate the database schema" --verify                 # grade completion after task
+ots run "throwaway experiment" --no-memory                     # skip cross-session memory
 
 ots run --help   # full flag reference
 ```
+
+Run `ots <command> --help` for the full flag reference for any command.
+
+Common flags accepted by `ots` and `ots run`:
+
+| Flag | Description |
+|------|-------------|
+| `-m`, `--model` | Model override |
+| `-d`, `--dir` | Working directory |
+| `-p`, `--prompt-profile` | `base` / `coder` / `analyst` / `biomedic` |
+| `--local` / `--nim` | Force backend for this session |
+| `--permission-mode` | `autonomous` / `controlled` / `supervised` |
+| `-v`, `--verbose` | Show full diffs, complete tool output, live bash |
+| `-i` (run only) | Stay interactive after the task completes |
+| `-n`, `--new-project` (run only) | Create a fresh project directory under `~/octoslave/projects/` |
 
 ---
 
 ## Long-research pipeline
 
-`/long-research` deploys **6 specialist agents** that collaborate over multiple fully autonomous rounds:
+`/long-research` deploys **7 specialist agents** that collaborate over multiple fully autonomous rounds:
 
 ```
 ╔══════════════════════════════════════════════════════════════╗
 ║  Round N                                                     ║
 ╠══════════════════════════════════════════════════════════════╣
-║  🔬 Researcher        Fast targeted scout — SOTA, datasets,  ║
+║  🔬 Researcher        Targeted scout — SOTA, datasets,       ║
 ║                       verified access status, handoff brief  ║
 ║     ↓                                                        ║
-║  💡 Experiment        Commits to ONE concrete experiment:    ║
-║     Designer          pseudocode, data plan, success metric  ║
+║  💡 Designer          Commits to ONE concrete experiment:    ║
+║                       pseudocode, data plan, success metric  ║
 ║     ↓                                                        ║
 ║  💻 Coder             Implements on real data, GPU-aware,    ║
 ║                       produces plots + key_results.json      ║
 ║     ↓                                                        ║
 ║  🐛 Debugger          Independent verifier — runs code,      ║
-║                       checks GPU use, validates numbers       ║
+║                       checks GPU use, validates numbers      ║
 ║     ↓                                                        ║
 ║  ⚖️  Evaluator         Critical scoring vs SOTA; generates   ║
-║                       a colour-coded scores bar chart         ║
+║                       a colour-coded scores bar chart        ║
 ║     ↓                                                        ║
 ║  🧠 Orchestrator      Synthesises findings → writes precise  ║
 ║                       brief for the next round               ║
 ╚══════════════════════════════════════════════════════════════╝
   ↓  (after all rounds)
-  📊 Master Reporter — comprehensive self-contained HTML report
-                       with embedded plots, score progression,
-                       and collapsible round deep-dives
+  📊 Master Reporter — self-contained HTML report with EMBEDDED
+                       plots (base64), score progression, and
+                       collapsible round deep-dives
 ```
 
-**Data integrity guarantee:** agents are explicitly forbidden from generating synthetic or dummy data.
-If a dataset is unavailable the failure is logged, alternatives are searched, and the pipeline pivots — it never fabricates results.
+**Data integrity guarantee:** agents are explicitly forbidden from generating synthetic, dummy, or "same-feature-range random" data. If a primary dataset is unreachable, the pipeline searches alternatives or marks the round BLOCKED — it never fabricates results.
 
 **GPU enforcement:** a hardware probe runs at startup; all generated code is required to use CUDA when available (mixed-precision, correct device placement, peak VRAM logging).
+
+**Self-contained reports:** the final HTML report has every plot inlined as a base64 data URI, so a single file can be emailed or shared without an asset folder.
 
 ### Usage
 
 ```
-/long-research TOPIC [--rounds N] [--all MODEL] [--overseer MODEL] [--resume]
+/long-research TOPIC [--rounds N] [--all MODEL] [--overseer MODEL]
+                     [--role ROLE MODEL] [--parallel N] [--resume] [--scrape]
 ```
 
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--rounds N` | `5` | Maximum number of research rounds |
-| `--all MODEL` | *(per-role defaults)* | Use one model for all 6 agents |
-| `--overseer MODEL` | `deepseek-v3.2` | Override the orchestrator model only |
+| `--all MODEL` | *per-role defaults* | Use one model for all 7 agents |
+| `--overseer MODEL` | *per-role default* | Override the orchestrator model only |
+| `--role ROLE MODEL` | — | Override a single role (e.g. `--role coder qwen3-coder-30b`) |
+| `--parallel N` | `1` | Run multiple rounds in parallel where possible |
 | `--resume` | off | Resume an interrupted run (skips agents whose output already exists) |
+| `--scrape` | off | Enable Playwright-backed website crawling for the Researcher |
 
 ### Examples
 
@@ -461,11 +457,11 @@ If a dataset is unavailable the failure is logged, alternatives are searched, an
 
 ### Output structure
 
-Each run creates a self-contained directory tree under `research/` in your working directory:
+Each run creates a self-contained tree under `research/` in the working directory:
 
 ```
 research/
-├── final_report.html          ← master HTML report — open in browser
+├── final_report.html          ← master HTML report (open in browser, fully self-contained)
 ├── findings.md                ← cumulative findings updated after each round
 ├── hw_profile.json            ← detected hardware (CPU, GPU, VRAM)
 │
@@ -481,241 +477,209 @@ research/
 │   ├── 05_scores_chart.png    ← colour-coded evaluation bar chart
 │   └── 06_synthesis.md        ← round summary + brief for next round
 │
-├── round_002/
-│   └── ...
+└── round_002/ ...
 ```
+
+See [docs/RESEARCH.md](docs/RESEARCH.md) for the full pipeline contract.
 
 ---
 
-## Available models (e-INFRA CZ)
+## Vault improve
 
-Run `ots models` to see the live list. Default assignments in the research pipeline:
+Autonomous note-by-note improvement of an Obsidian / markdown vault — fact-check, expand, fix structure, and link related notes.
 
-| Model | Research role | Strengths |
-|-------|--------------|-----------|
-| `deepseek-v3.2` | Orchestrator, single-agent default | Strong reasoning, synthesis |
-| `deepseek-v3.2-thinking` | Evaluator, Experiment Designer | Extended chain-of-thought |
-| `qwen3-coder-30b` | Coder, Debugger | Code generation, tool use |
-| `qwen3.5-122b` | Researcher | Fast reading, web research |
-| `gpt-oss-120b` | Master Reporter | Large context, clean writing |
-| `qwen3-coder` | Lightweight coder | Faster, smaller tasks |
-| `qwen3-coder-next` | — | Next-gen coder preview |
-| `qwen3.5` | Balanced general | Good all-round |
-| `kimi-k2.5` | Long-context tasks | Extended context window |
-| `mistral-small-4` | — | Mistral Small 4 |
-| `llama-4-scout-17b-16e-instruct` | — | Meta Llama 4 |
-| `gemma4` | — | Google Gemma 4 |
-| `glm-4.7` / `glm-5` | — | Zhipu GLM series |
-| `redhatai-scout` | — | Red Hat AI Scout |
-| `thinker` / `coder` / `agentic` / `mini` | — | Alias shortcuts |
+```bash
+ots vault-improve ~/Brain --profile biomedic
+ots vault-improve ~/Brain --profile biomedic --resume
+ots vault-improve ~/Brain --model deepseek-v3.2-thinking
+```
 
-Switch mid-session: `/model qwen3-coder-30b` or pass `-m MODEL` to any command.
+| Flag | Description |
+|------|-------------|
+| `-p`, `--profile` | Prompt profile (`base` / `coder` / `analyst` / `biomedic`) |
+| `-m`, `--model` | Model override for all vault agents |
+| `--resume` | Resume an interrupted run |
+
+State is persisted under the vault — re-running with `--resume` skips notes already processed. See [docs/VAULT_IMPROVE.md](docs/VAULT_IMPROVE.md) for details.
 
 ---
 
-## NVIDIA NIM
+## Batch mode
 
-[NVIDIA NIM](https://build.nvidia.com) gives you cloud-hosted inference for frontier open-weight models (Llama 4, Nemotron, Mistral, Qwen, etc.) via an OpenAI-compatible API. It is a good option when you need top-tier reasoning without e-INFRA CZ access and don't have a large enough GPU to run models locally.
-
-### Get an API key
-
-1. Go to **[build.nvidia.com](https://build.nvidia.com)** and sign in (or create a free account).
-2. Open any model card (e.g. [Llama 3.3 70B](https://build.nvidia.com/meta/llama-3_3-70b-instruct)) and click **Get API Key**.
-3. Copy the generated key — it starts with `nvapi-`.
-
-Free-tier accounts receive a number of free credits. Some large models (e.g. `nvidia/llama-3.1-nemotron-ultra-253b-v1`) require a paid plan — if you try one and get a 404 "not found for account" error, switch to a smaller model from the list below.
-
-### Configure OctoSlave for NIM
+Run a list of tasks from a plain text file, one per line, with resume support.
 
 ```bash
-ots config
-# → choose backend: nim
-# → paste your nvapi-... key when prompted
-# → choose a default model (e.g. meta/llama-3.3-70b-instruct)
+ots batch tasks.txt
+ots batch tasks.txt --profile biomedic --resume
+ots batch tasks.txt -m deepseek-v3.2-thinking --output-dir ~/results
 ```
 
-Or pass flags directly:
+- Lines starting with `#` are treated as comments and skipped.
+- State is saved to `tasks.txt.state.json` after every completed task.
+- Re-run with `--resume` to skip already-completed tasks.
 
-```bash
-ots config \
-  --backend nim \
-  --nim-api-key nvapi-YOUR_KEY \
-  --model meta/llama-3.3-70b-instruct
+---
+
+## Backends and models
+
+```
+Do you have access to e-INFRA CZ? ──yes──▶ use einfra  (best model quality, free for Masaryk University)
+         │
+         no
+         │
+         ▼
+Do you have an NVIDIA NIM key?   ──yes──▶ use nim      (good models, no local GPU needed)
+         │
+         no
+         │
+         ▼
+Do you have a GPU (≥8 GB VRAM)?  ──yes──▶ use ollama   (fully local, private, no API key needed)
+         │
+         no
+         │
+         ▼
+         use ollama on CPU (interactive tasks only; long-research not recommended)
 ```
 
-### Start OctoSlave with NIM
+Run `ots config` to launch the interactive wizard.
+
+### e-INFRA CZ
+
+The default backend. Run `ots models` for the live list. Recommended defaults:
+
+| Goal | Model |
+|------|-------|
+| Best all-round (reasoning + coding) | `deepseek-v3.2` ← **start here** |
+| Chain-of-thought / hard problems | `deepseek-v3.2-thinking` |
+| Code generation focus | `qwen3-coder-30b` |
+| Long-context tasks | `kimi-k2.6` |
+| Writing-heavy tasks | `gpt-oss-120b` |
+
+Common available models on e-INFRA CZ: `deepseek-v3.2`, `deepseek-v3.2-thinking`, `qwen3.5`, `qwen3.5-122b`, `qwen3-coder`, `qwen3-coder-30b`, `qwen3-coder-next`, `gpt-oss-120b`, `kimi-k2.5`, `kimi-k2.6`, `mistral-medium-3.5`, `llama-4-scout-17b-16e-instruct`, `gemma4`, `glm-4.7`, `glm-5`, `glm-5.1`.
+
+Default per-role assignments for the long-research pipeline (override with `--all` / `--overseer` / `--role`):
+
+| Role | Default model |
+|------|---------------|
+| Researcher | `deepseek-v3.2-thinking` |
+| Designer (hypothesis) | `deepseek-v3.2-thinking` |
+| Coder | `kimi-k2.6` |
+| Debugger | `qwen3-coder-30b` |
+| Evaluator | `kimi-k2.6` |
+| Orchestrator | `kimi-k2.6` |
+| Reporter | `kimi-k2.6` |
+| Merger (parallel mode) | `deepseek-v3.2` |
+
+### NVIDIA NIM
+
+[NVIDIA NIM](https://build.nvidia.com) gives you cloud-hosted inference for frontier open-weight models (Llama 4, Nemotron, Qwen, etc.) via an OpenAI-compatible API.
+
+**Get a key:** sign in at [build.nvidia.com](https://build.nvidia.com), open any model card, click **Get API Key**. The key starts with `nvapi-`. Free-tier accounts get monthly credits.
+
+**Configure:**
 
 ```bash
-ots                          # starts with whichever backend is in config
-ots --nim                    # force NIM backend for this session
-ots --nim --model meta/llama-4-scout-17b-16e-instruct
+ots config --backend nim --nim-api-key nvapi-YOUR_KEY \
+           --model nvidia/nemotron-3-super-120b-a12b
 ```
 
-### Switch backend at runtime
+**Use:**
 
 ```bash
+ots --nim                                                  # force NIM for this session
+ots --nim --model meta/llama-4-maverick-17b-128e-instruct
+
 # In the TUI:
-/nim                                            # switch to NIM (keeps current model)
-/nim meta/llama-4-maverick-17b-128e-instruct    # switch to NIM with a specific model
-/model                                          # list available NIM models
-
-# In the web UI:
-# Use the Backend dropdown in the Chat config bar (top of the Chat tab)
+/nim                                                       # switch to NIM (keeps current model)
+/nim nvidia/nemotron-3-super-120b-a12b                     # switch to NIM with a specific model
+/model                                                     # list available NIM models
 ```
 
-### Environment variables
+Default model: `nvidia/nemotron-3-super-120b-a12b` (used for **all** roles in the long-research pipeline by default — chosen because it handles long contexts reliably without hitting NIM gateway timeouts).
 
-| Variable | Description |
-|----------|-------------|
-| `OCTOSLAVE_NIM_API_KEY` | Your NVIDIA NIM API key (`nvapi-...`) |
-| `OCTOSLAVE_NIM_URL` | NIM base URL (default: `https://integrate.api.nvidia.com/v1`) |
+Commonly available NIM models (run `ots models` with NIM configured for your live list):
 
-```bash
-export OCTOSLAVE_NIM_API_KEY=nvapi-...
-export OCTOSLAVE_BACKEND=nim
-ots
-```
-
-### Available NIM models
-
-Run `ots models` (with NIM configured) to get the live list from your account. Commonly available models:
-
-| Model | Strengths |
-|-------|-----------|
-| `meta/llama-4-scout-17b-16e-instruct` | Latest Llama 4, fast |
-| `meta/llama-4-maverick-17b-128e-instruct` | Latest Llama 4, balanced |
+| Model | Notes |
+|-------|-------|
+| `nvidia/nemotron-3-super-120b-a12b` | Default — strong reasoning, stable at long contexts |
+| `nvidia/llama-3.3-nemotron-super-49b-v1.5` | NVIDIA-tuned, smaller |
+| `nvidia/llama-3.1-nemotron-nano-8b-v1` | Smallest, fast |
+| `meta/llama-4-maverick-17b-128e-instruct` | Llama 4, balanced |
 | `meta/llama-3.3-70b-instruct` | Reliable, widely available |
-| `nvidia/llama-3.3-nemotron-super-49b-v1` | NVIDIA-tuned SOTA |
-| `nvidia/llama-3.1-nemotron-ultra-253b-v1` | Highest quality (paid tier) |
-| `mistralai/mistral-large-2-instruct` | Strong reasoning |
-| `qwen/qwen2.5-72b-instruct` | Fast, code-capable |
-| `microsoft/phi-4` | Compact, efficient |
-| `google/gemma-3-27b-it` | Google Gemma 3 |
+| `meta/llama-3.1-405b-instruct` | Largest Llama 3 |
+| `qwen/qwen3-coder-480b-a35b-instruct` | Strong code generation |
+| `deepseek-ai/deepseek-v3.2` | DeepSeek on NIM |
+| `google/gemma-3-27b-it` | Compact, efficient |
+| `mistralai/mistral-large-2-instruct` | Strong reasoning (paid tier) |
 
-> **Tip:** if a model returns a 404 "not found for account" error, your current account tier doesn't have access to it. Use `/model` to list the models your key can actually reach.
+> If a model returns a 404 "not found for account" error, your tier doesn't have access. Use `/model` to list what your key can actually reach.
 
----
+### Ollama (local)
 
-## Local models (Ollama)
-
-OctoSlave runs fully offline via [Ollama](https://ollama.com). All functionality — chat, one-shot tasks, and the full research pipeline — works identically with local models.
-
-### Setup
+OctoSlave runs fully offline via [Ollama](https://ollama.com). All functionality — chat, one-shot, vault, and `/long-research` — works identically with local models.
 
 ```bash
-# 1. Install Ollama
-#    macOS:   brew install ollama
-#    Linux:   curl -fsSL https://ollama.com/install.sh | sh
+# 1. Install
+brew install ollama                            # macOS
+curl -fsSL https://ollama.com/install.sh | sh  # Linux
 
-# 2. Start the Ollama daemon
+# 2. Run the daemon
 ollama serve
 
-# 3. Pull a model (see hardware guide below)
+# 3. Pull a model
 ollama pull llama3.1:8b
 
 # 4. Start OctoSlave in local mode
 ots --local
 ```
 
-### Backend switching
-
-```bash
-# In the TUI:
-/local                    # switch to Ollama (first pulled model)
-/local llama3.1:8b        # switch to a specific model
-/pull qwen2.5-coder:14b   # pull a model without leaving the session
-/einfra                   # switch back to e-INFRA CZ
-
-# On the command line:
-ots --local run "explain this code"
-ots models --local        # list pulled Ollama models
-```
-
-### Long-research with local models
-
-In local mode, `/long-research` automatically distributes up to **3 pulled models** across the 6 specialist roles by priority tier:
+In `/long-research` mode with Ollama, OctoSlave automatically distributes up to **3 pulled models** across the 7 specialist roles by tier:
 
 | Tier | Roles | Characteristic needed |
 |------|-------|----------------------|
 | **A** — model 1 | Orchestrator, Evaluator | Strong reasoning, synthesis |
 | **B** — model 2 | Coder, Debugger, Reporter | Code generation, structured output |
-| **C** — model 3 | Researcher, Experiment Designer | Document reading, writing |
+| **C** — model 3 | Researcher, Designer | Document reading, writing |
 
-If you only have 1 or 2 models pulled, tiers collapse automatically.
-
-### Hardware recommendations
+If you have only 1 or 2 models pulled, tiers collapse automatically.
 
 <details>
-<summary><strong>8 GB VRAM / 16 GB RAM</strong> — minimum viable</summary>
+<summary><strong>Hardware recommendations</strong></summary>
 
-```bash
-ollama pull mistral          # 4 GB — fast, general
-```
-Good for interactive chat and simple coding tasks. Long-research will be slow and capability-limited.
+| VRAM | Recommended models | Use case |
+|------|-------------------|----------|
+| 8 GB | `mistral` (4 GB) | Chat + simple coding only |
+| 16 GB | `llama3.1:8b` + `qwen2.5-coder` | Recommended starter for research |
+| 24 GB | `llama3.1:8b` + `qwen2.5-coder:14b` + `mistral` | Sweet spot for autonomous research |
+| 48 GB+ | `llama3.3:70b` + `qwen2.5-coder:32b` + `qwen2.5:14b` | Approaches cloud quality |
+| CPU only | `llama3.2:3b` + `qwen2.5-coder:3b` | Interactive tasks only — `/long-research` not recommended |
+
+Run `ots models --local` at any time to see what you have pulled.
 </details>
-
-<details>
-<summary><strong>16 GB VRAM / 32 GB RAM</strong> — recommended starter</summary>
-
-```bash
-ollama pull llama3.1:8b      # 5 GB — best reasoning at this size
-ollama pull qwen2.5-coder    # 4 GB — strong at code
-```
-Assign: `llama3.1:8b` → Tier A, `qwen2.5-coder` → Tier B.
-</details>
-
-<details>
-<summary><strong>24 GB VRAM / 48 GB RAM</strong> — comfortable research</summary>
-
-```bash
-ollama pull llama3.1:8b        # 5 GB — Tier A
-ollama pull qwen2.5-coder:14b  # 9 GB — Tier B
-ollama pull mistral             # 4 GB — Tier C
-```
-This is the sweet spot for autonomous research runs.
-</details>
-
-<details>
-<summary><strong>48 GB+ VRAM</strong> — full power</summary>
-
-```bash
-ollama pull llama3.3:70b       # 40 GB — Tier A
-ollama pull qwen2.5-coder:32b  # 20 GB — Tier B
-ollama pull qwen2.5:14b        # 9 GB  — Tier C
-```
-Approaches cloud model quality for most research tasks.
-</details>
-
-<details>
-<summary><strong>CPU only (no GPU)</strong></summary>
-
-```bash
-ollama pull llama3.2:3b        # 2 GB — smallest capable model
-ollama pull qwen2.5-coder:3b   # 2 GB — minimal coding capability
-```
-Usable for simple interactive tasks. Long-research not recommended on CPU only.
-</details>
-
-> Run `ots models --local` at any time to see what you have pulled.
 
 ---
 
 ## Tools reference
 
-**General**
+**Filesystem &amp; shell**
 
 | Tool | Description |
 |------|-------------|
 | `read_file` | Read file contents (offset/limit for large files); PDFs auto-extracted to text |
 | `write_file` | Create or fully overwrite a file |
-| `edit_file` | Targeted string replacement — safer than rewriting whole files |
+| `edit_file` | Targeted string replacement (use `replace_all=true` for renames) |
 | `bash` | Run any shell command: builds, tests, git, data processing, package installs |
-| `glob` | Find files by pattern, e.g. `**/*.py` |
+| `glob` | Find files by pattern (e.g. `**/*.py`) |
 | `grep` | Regex search across files with context lines |
 | `list_dir` | Directory listing with sizes and modification times |
+
+**Web**
+
+| Tool | Description |
+|------|-------------|
 | `web_search` | DuckDuckGo search → titles, URLs, one-line snippets |
-| `web_fetch` | Fetch URL → clean readable text (strips JS/CSS/ads/nav) |
-| `crawl_tree` | BFS-crawl a website tree (Playwright-aware) |
+| `web_fetch` | Fetch URL → clean readable text (strips JS/CSS/ads/nav); PDFs auto-extracted |
+| `crawl_tree` | BFS-crawl a website tree (Playwright-aware) — for documentation, catalogues, hierarchies |
 
 **Biology &amp; chemistry** *(install with `pip install -e ".[bio]"`)*
 
@@ -736,98 +700,39 @@ Usable for simple interactive tasks. Long-research not recommended on CPU only.
 
 ---
 
-## Configuration
+## Prompt profiles
 
-### Which backend should I use?
+A prompt profile is the system prompt used to seed the agent. Switch with `-p NAME` on the CLI or `/profile NAME` in the TUI.
 
-```
-Do you have access to e-INFRA CZ? ──yes──▶ use einfra  (best model quality, free for Masaryk University)
-         │
-         no
-         │
-         ▼
-Do you have an NVIDIA NIM key?   ──yes──▶ use nim      (good models, no local GPU needed)
-         │
-         no
-         │
-         ▼
-Do you have a GPU (≥8 GB VRAM)?  ──yes──▶ use ollama  (fully local, private, no API key needed)
-         │
-         no
-         │
-         ▼
-         use ollama on CPU  (interactive tasks only; long-research not recommended)
-```
+| Profile | Best for |
+|---------|----------|
+| `base` | General-purpose engineering and research (default) |
+| `coder` | Pure software engineering — file edits, tests, refactors |
+| `analyst` | Data analysis, exploration, plotting, statistical inference |
+| `biomedic` | Bio / chem research — uses bio tools by preference, follows literature conventions |
 
-Run `ots config` — the interactive wizard will walk you through each choice.
+See [docs/PROMPT_PROFILES.md](docs/PROMPT_PROFILES.md) for details and examples.
 
-### Which model should I set as default?
+---
 
-| Goal | Recommended default |
-|------|-------------------|
-| Best all-round (reasoning + coding) | `deepseek-v3.2` ← **start here** |
-| Writing-heavy tasks | `gpt-oss-120b` |
-| Code generation focus | `qwen3-coder-30b` |
-| Chain-of-thought / hard problems | `deepseek-v3.2-thinking` |
-| Fast general purpose | `qwen3.5-122b` |
+## Permission modes
 
-The default model is only the starting point — switch any time with `/model NAME` inside the TUI.
-
-### What about `base_url` and `ollama_url`?
-
-- **`base_url`** — leave at the default (`https://llm.ai.e-infra.cz/v1`) unless you are self-hosting an OpenAI-compatible API.
-- **`ollama_url`** — leave at the default (`http://localhost:11434/v1`) unless Ollama runs on a different machine or port.
-
-### Precedence and environment variables
-
-| Mechanism | Precedence | Notes |
-|-----------|-----------|-------|
-| Environment variable | **Highest** | Overrides everything |
-| `~/.octoslave/config.json` | Medium | Written by `ots config` |
-| Built-in default | Lowest | `deepseek-v3.2`, e-INFRA CZ endpoint |
-
-| Variable | Description |
-|----------|-------------|
-| `OCTOSLAVE_API_KEY` | e-INFRA CZ API key |
-| `OCTOSLAVE_BASE_URL` | e-INFRA CZ base URL (default: `https://llm.ai.e-infra.cz/v1`) |
-| `OCTOSLAVE_MODEL` | Default model override |
-| `OCTOSLAVE_BACKEND` | `einfra` (default), `ollama`, or `nim` |
-| `OCTOSLAVE_OLLAMA_URL` | Ollama base URL (default: `http://localhost:11434/v1`) |
-| `OCTOSLAVE_NIM_API_KEY` | NVIDIA NIM API key (`nvapi-...`) |
-| `OCTOSLAVE_NIM_URL` | NIM base URL (default: `https://integrate.api.nvidia.com/v1`) |
-| `OCTOSLAVE_PERMISSION_MODE` | `autonomous` (default), `controlled`, or `supervised` |
+| Mode | Behaviour |
+|------|-----------|
+| `autonomous` *(default)* | Agent works without asking. Best for trusted workflows. |
+| `controlled` | Agent asks before any modifying action (file edits, writes, shell). Best for production code. |
+| `supervised` | Agent asks before file edits/writes; shell commands run automatically. Best for "watch the diffs but don't approve every test". |
 
 ```bash
-ots config          # guided interactive setup
-ots config --show   # print current config (key masked)
-```
-
-### Permission Modes
-
-OctoSlave supports three permission modes that control how the agent interacts with your system:
-
-- **`autonomous`** (default) — The agent works without asking for permission. Best for trusted workflows and automated tasks.
-- **`controlled`** — The agent asks for permission before making any changes (file edits, writes, or command execution). Best for production code or when you want full oversight.
-- **`supervised`** — The agent asks for permission before file operations (read/write/edit) but runs shell commands automatically. Ideal when you want oversight on file changes but don't want to approve every test/run command.
-
-Set the mode:
-
-```bash
-# Via CLI flag
 ots --permission-mode supervised
 ots run "edit files" --permission-mode supervised
-
-# Via environment variable
 export OCTOSLAVE_PERMISSION_MODE=supervised
 
-# In interactive mode
-/permission supervised    # switch to supervised mode
-/permission controlled    # switch to controlled mode
-/permission autonomous    # switch to autonomous mode
-/permission               # show current mode
+# In the TUI:
+/permission supervised
 ```
 
-When in controlled or supervised mode, you'll see a prompt before modifying actions:
+In `controlled` / `supervised` mode you'll see a prompt before modifying actions:
 
 ```
 ┌────── Controlled Mode ──────┐     ┌────── Supervised Mode ───────┐
@@ -840,9 +745,37 @@ When in controlled or supervised mode, you'll see a prompt before modifying acti
 Allow? (y)/n                            Allow? (y)/n
 ```
 
-In **supervised** mode, shell commands (`bash`) are executed automatically without prompting, while file operations still require approval.
+Full details: [docs/PERMISSION_MODE.md](docs/PERMISSION_MODE.md).
 
-See [PERMISSION_MODE.md](docs/PERMISSION_MODE.md) for full documentation.
+---
+
+## Configuration
+
+### Precedence
+
+| Mechanism | Precedence | Notes |
+|-----------|-----------|-------|
+| Environment variable | **Highest** | Overrides everything |
+| `~/.octoslave/config.json` | Medium | Written by `ots config` |
+| Built-in default | Lowest | `deepseek-v3.2`, e-INFRA CZ endpoint |
+
+### Environment variables
+
+| Variable | Description |
+|----------|-------------|
+| `OCTOSLAVE_API_KEY` | e-INFRA CZ API key |
+| `OCTOSLAVE_BASE_URL` | e-INFRA CZ base URL (default: `https://llm.ai.e-infra.cz/v1`) |
+| `OCTOSLAVE_MODEL` | Default model override |
+| `OCTOSLAVE_BACKEND` | `einfra` (default), `ollama`, or `nim` |
+| `OCTOSLAVE_OLLAMA_URL` | Ollama base URL (default: `http://localhost:11434/v1`) |
+| `OCTOSLAVE_NIM_API_KEY` | NVIDIA NIM API key (`nvapi-...`) |
+| `OCTOSLAVE_NIM_URL` | NIM base URL (default: `https://integrate.api.nvidia.com/v1`) |
+| `OCTOSLAVE_PERMISSION_MODE` | `autonomous` / `controlled` / `supervised` |
+
+```bash
+ots config            # interactive wizard
+ots config --show     # print current config (keys masked)
+```
 
 ---
 
@@ -851,30 +784,36 @@ See [PERMISSION_MODE.md](docs/PERMISSION_MODE.md) for full documentation.
 ```
 octoslave/
 ├── assets/
-│   └── logo.png              ← project logo (pixel-art octopus)
+│   └── logo.png
 ├── docs/
-│   ├── PERMISSION_MODE.md    ← permission mode documentation
-│   └── PROMPT_PROFILES.md    ← prompt profile documentation
+│   ├── DEPLOYMENT.md         ← deployment guide
+│   ├── PERMISSION_MODE.md    ← permission mode reference
+│   ├── PROMPT_PROFILES.md    ← prompt profile reference
+│   ├── RESEARCH.md           ← long-research pipeline contract
+│   ├── SCRAPING.md           ← web scraping / crawl_tree details
+│   ├── USAGE.md              ← extended usage examples
+│   └── VAULT_IMPROVE.md      ← vault-improve pipeline
 ├── octoslave/
 │   ├── agent.py              ← core agent loop, system prompt, context management
-│   ├── config.py             ← config load/save, Ollama helpers, model list
-│   ├── display.py            ← Rich TUI + web event bridge (thread-safe emit system)
+│   ├── config.py             ← config load/save, model lists, role-model maps
+│   ├── display.py            ← Rich TUI + web event bridge (thread-safe emit)
 │   ├── main.py               ← Click CLI, interactive REPL, slash-command handler
-│   ├── prompt_profiles/      ← system prompt profiles (base, simple, strict)
+│   ├── prompt_profiles/      ← system prompts: base, coder, analyst, biomedic
 │   ├── research.py           ← multi-agent long-research pipeline
-│   ├── tools.py              ← all tool definitions and implementations
+│   ├── tools.py              ← filesystem, shell, web tool definitions
+│   ├── tools_bio.py          ← biology / chemistry connectors (UniProt, PubChem, …)
+│   ├── vault.py              ← vault-improve pipeline
 │   └── web/
 │       ├── app.py            ← FastAPI backend: WebSocket handler, file serving
 │       └── static/
-│           ├── index.html    ← single-page web UI (Chat / Research / Files / Settings)
-│           ├── css/
-│           │   └── styles.css
+│           ├── index.html    ← single-page UI (Chat / Research / Files / Settings)
+│           ├── css/styles.css
 │           └── js/
-│               ├── app.js        ← main application logic
-│               ├── components.js ← UI components (history, file tree, chat helpers)
-│               ├── slash-commands.js ← web slash command handler
-│               ├── utils.js      ← shared utilities (markdown, escaping)
-│               └── websocket.js  ← WebSocket management and reconnection
+│               ├── app.js
+│               ├── components.js
+│               ├── slash-commands.js
+│               ├── utils.js
+│               └── websocket.js
 ├── run_research.py           ← CLI helper: run long-research without the TUI
 └── pyproject.toml
 ```

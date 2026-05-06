@@ -17,7 +17,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from pathlib import Path
 
-from openai import OpenAI, BadRequestError
+from openai import OpenAI, BadRequestError, APIStatusError, APITimeoutError, APIConnectionError
 
 from . import display
 from .agent import _cap_result, _compact_and_trim as _trim_messages
@@ -33,7 +33,7 @@ ROLES: dict[str, dict] = {
         "icon": "🔬",
         "color": "bold cyan",
         "default_model": "deepseek-v3.2-thinking",           # large — fast reading + search
-        "max_iter": 15,                             # 15 = budget for ~5 web ops + write
+        "max_iter": 25,                             # was 15 — 120b stubs at lower caps
         "tools": ["read_file", "write_file", "web_search", "web_fetch",
                   "list_dir", "glob",
                   # First-class bio/chem connectors — prefer over web_fetch
@@ -56,7 +56,7 @@ ROLES: dict[str, dict] = {
         "icon": "💻",
         "color": "bold green",
         "default_model": "qwen3-coder-30b",         # large code model — fewer mistakes
-        "max_iter": 50,
+        "max_iter": 80,                             # was 50 — 120b coder thrashes longer
         "tools": ["read_file", "write_file", "edit_file", "bash",
                   "glob", "grep", "list_dir",
                   "bio_inspect", "rdkit_describe", "pdb_fetch",
@@ -68,7 +68,7 @@ ROLES: dict[str, dict] = {
         "icon": "🐛",
         "color": "bold red",
         "default_model": "qwen3-coder-30b",         # same coder — knows the code
-        "max_iter": 20,
+        "max_iter": 30,                             # was 20 — match coder cap proportions
         "tools": ["read_file", "write_file", "edit_file", "bash",
                   "glob", "grep", "list_dir",
                   "bio_inspect", "rdkit_describe"],
@@ -465,17 +465,33 @@ STEPS
    e. Save ALL output (metrics, plots) to {round_dir}/03_code/results/.
 6. Write {round_dir}/03_code/IMPLEMENTATION.md — keep it SHORT (under 300 words).
    STOP after writing IMPLEMENTATION.md. Your output is EXACTLY:
-     - {round_dir}/03_code/<script>.py     (the implementation)
+     - {round_dir}/03_code/<script>.py     (the implementation — ONE file, see below)
      - {round_dir}/03_code/IMPLEMENTATION.md
      - {round_dir}/03_code/results/*.json and *.png
+     - {round_dir}/03_code/<helper>.py     (only if genuinely modular — e.g. a
+                                            shared utility imported by the main script)
    FORBIDDEN files (writing these is an error):
-     - final_report.html  (Master Reporter's job — wrong role, wrong path)
+     - any *.html anywhere    (HTML reports are the Reporter's job, not yours)
      - 01_literature.md / 02_experiment.md  (Researcher / Experiment Designer's job)
      - 04_debug_report.md  (Debugger's job)
      - 05_evaluation.md   (Evaluator's job)
      - 06_synthesis.md    (Orchestrator's job — writing this will SKIP the Orchestrator)
      - 04_findings.md, README.md, or any other round-level summaries
+     - <name>_v2.py, <name>_final.py, <name>_fixed.py, <name>_proxy.py, temp.py,
+       backup files, or any "another version of the same script" — see SINGLE-FILE
+       DISCIPLINE below.
    If you find yourself writing anything other than the listed files, STOP.
+
+   SINGLE-FILE DISCIPLINE — KEEP THE WORKSPACE CLEAN
+   You write ONE primary script per round. When fixing bugs or pivoting strategy,
+   USE edit_file ON THE SAME script. Do NOT create `<name>_v2.py`, `<name>_final.py`,
+   `<name>_fixed.py`, `<name>_proxy.py`, or any "another attempt" copy.
+   Multiple variants are confusing for the Debugger and Evaluator (which one is
+   real? which one was actually run?) and indicate iteration thrash. Edit in place;
+   if the script is fundamentally wrong, delete and rewrite — but only ONE file should
+   exist when you finish. The single exception is genuine modular code (e.g. a
+   `utils.py` imported by the main script). A second script that is a copy-with-fixes
+   of the first is forbidden.
    - Hardware used (device, batch size chosen)
    - Data source + how it was accessed
    - Approach in 3–5 bullet points
@@ -653,6 +669,33 @@ DATA INTEGRITY IS NON-NEGOTIABLE. These rules apply without exception:
 - Quantitative results MUST be saved (JSON / CSV / text).
 - Every script that IS run must complete without error.
 - If a tool/package is unavailable or broken after 1 fix attempt, pivot to an alternative.
+
+MANDATORY MINIMUM RESULT — A ROUND WITHOUT NUMBERS IS A FAILED ROUND
+Even when the planned experiment is fully blocked (every data source 404'd, the
+validation API is unreachable, the package you needed isn't installed), the round
+MUST end with at least one real numerical value in key_results.json. Reporting
+"BLOCKED" with empty results is NOT acceptable — it produces zero transferable
+knowledge and wastes the round.
+
+What to compute when the planned experiment is fully blocked, in order of preference:
+  1. A reduced-scope version of the planned experiment using only the inputs
+     you DID manage to obtain. Even one observation is better than zero.
+  2. Descriptive statistics over whatever real data IS reachable: input-file
+     properties (row counts, column distributions, missing-value rates), schema
+     summaries, baseline-vs-trivial-predictor metrics.
+  3. A literature-grounded baseline computation (e.g. compute the same descriptors
+     for the wild-type / reference inputs from the user's local files; report them
+     as numerical baselines for future rounds to beat).
+  4. The simplest possible numerical artefact: count of unique categories, ratio
+     of missing entries, mean/std of a single feature. ANY honest number.
+
+Mark these numbers clearly with a `_partial` or `_descriptive` suffix and note in
+IMPLEMENTATION.md which step was blocked and why. The Evaluator and future rounds
+need numbers to anchor their work; an entirely empty key_results.json forces the
+next round to start from scratch.
+
+A "BLOCKED.txt" file with no numbers is FORBIDDEN. If you find yourself writing
+one, replace it with the basic-descriptors fallback above.
 
 VALIDATION-API CALLING RECIPE (when the task brief mentions a validation API):
 - The brief may include: URL, basic-auth credentials (`username:password`), purpose.
@@ -955,6 +998,36 @@ STRUCTURE — short bullets, not paragraphs:
      "numpy/scipy statistical analysis reliably produces numbers when specialised libraries fail".
      This section is MANDATORY — it feeds the case memory for future rounds.)
 
+CONTENT QUALITY — the synthesis is FOR future rounds, not a checklist of what you did.
+Every section MUST cite concrete content from THIS round's artifacts, not generic
+statements about how the pipeline works. Specifically:
+
+  ## Key Findings — every bullet MUST reference a specific number, metric, file, error
+                    message, or named dataset/parameter from this round's outputs.
+                    BANNED examples (these are facts about the pipeline, not findings):
+                      ❌ "All values in key_results.json are errors"
+                      ❌ "Read files successfully"
+                      ❌ "The same error appears in previous round"
+                    REQUIRED form:
+                      ✓ "RMSE 0.21 vs random-baseline 0.18 → active learning underperformed"
+                      ✓ "All 91 discovery URLs returned 404 — primary data source unusable"
+                      ✓ "Top mutant K4E selectivity 0.82 vs wild-type 0.27"
+
+  ## What Worked / Failed — describe the EXPERIMENT outcome, not the FILE READING.
+                    "Read 05_evaluation.md" is not a finding; it is a tool call you
+                    made. Describe what the experiment produced (or failed to produce).
+
+  ## Transferable Lessons — must reference a SPECIFIC technical pattern observed in
+                    THIS round, not a generic platitude. BANNED:
+                      ❌ "Always check for errors in key_results.json"
+                      ❌ "If same error appears twice, the approach is blocked"
+                    REQUIRED form: a specific learning that a future round can act on,
+                    grounded in something that actually happened (a tool that worked, a
+                    fallback that produced numbers, a specific input format that parsed).
+
+If you cannot cite specifics, you have not synthesised — go back and read the round's
+artifacts more carefully before writing.
+
   Then ONE of:
 
   {next_brief_marker}
@@ -1069,59 +1142,99 @@ def _tools_for_role(role: str, scrape_mode: bool = False) -> list[dict]:
 # Core specialist agent loop (mirrors agent._agent_loop with custom tools)
 # ---------------------------------------------------------------------------
 
+_REQUEST_TIMEOUT_SECS = 600     # 10 min — fail fast on stuck connections
+_MAX_504_RETRIES = 2            # 1 original attempt + 2 retries on 504/timeout
+_RETRY_BACKOFF_SECS = 30        # short backoff; gateway hiccups usually clear quickly
+
+
+def _is_retryable_error(exc: Exception) -> bool:
+    """True if the exception looks like an upstream gateway hiccup we should retry."""
+    if isinstance(exc, (APITimeoutError, APIConnectionError)):
+        return True
+    if isinstance(exc, APIStatusError):
+        # NIM gateway returns 504 (Gateway Timeout) or occasional 502/503 on
+        # heavy long-context calls (Reporter, Orchestrator with large input).
+        return exc.status_code in (502, 503, 504)
+    return False
+
+
 def _stream_completion_with_tools(
     client: OpenAI,
     model: str,
     messages: list[dict],
     tools: list[dict],
 ) -> dict:
-    """Stream one turn. Returns {content, tool_calls, finish_reason}."""
+    """Stream one turn. Returns {content, tool_calls, finish_reason}.
+
+    Retries on transient upstream errors (504/502/503 gateway hiccups, connection
+    timeouts) since these have hit the heaviest calls (Reporter, Orchestrator)
+    on long-context inputs.
+    """
     content_parts: list[str] = []
     tool_call_map: dict[int, dict] = {}
     finish_reason = "stop"
 
     display.stream_start()
 
-    try:
-        with client.chat.completions.create(
-            model=model,
-            messages=messages,
-            tools=tools,
-            tool_choice="auto",
-            stream=True,
-        ) as stream:
-            for chunk in stream:
-                if not chunk.choices:
-                    continue
-                choice = chunk.choices[0]
-                delta = choice.delta
+    import time as _time
+    last_exc: Exception | None = None
+    for attempt in range(_MAX_504_RETRIES + 1):
+        content_parts.clear()
+        tool_call_map.clear()
+        finish_reason = "stop"
+        try:
+            with client.chat.completions.create(
+                model=model,
+                messages=messages,
+                tools=tools,
+                tool_choice="auto",
+                stream=True,
+                timeout=_REQUEST_TIMEOUT_SECS,
+            ) as stream:
+                for chunk in stream:
+                    if not chunk.choices:
+                        continue
+                    choice = chunk.choices[0]
+                    delta = choice.delta
 
-                if delta.content:
-                    content_parts.append(delta.content)
-                    display.stream_chunk(delta.content)
+                    if delta.content:
+                        content_parts.append(delta.content)
+                        display.stream_chunk(delta.content)
 
-                if delta.tool_calls:
-                    for tc in delta.tool_calls:
-                        idx = tc.index
-                        if idx not in tool_call_map:
-                            tool_call_map[idx] = {
-                                "id": "", "type": "function",
-                                "function": {"name": "", "arguments": ""},
-                            }
-                        slot = tool_call_map[idx]
-                        if tc.id:
-                            slot["id"] = tc.id
-                        if tc.function:
-                            if tc.function.name:
-                                slot["function"]["name"] += tc.function.name
-                            if tc.function.arguments:
-                                slot["function"]["arguments"] += tc.function.arguments
+                    if delta.tool_calls:
+                        for tc in delta.tool_calls:
+                            idx = tc.index
+                            if idx not in tool_call_map:
+                                tool_call_map[idx] = {
+                                    "id": "", "type": "function",
+                                    "function": {"name": "", "arguments": ""},
+                                }
+                            slot = tool_call_map[idx]
+                            if tc.id:
+                                slot["id"] = tc.id
+                            if tc.function:
+                                if tc.function.name:
+                                    slot["function"]["name"] += tc.function.name
+                                if tc.function.arguments:
+                                    slot["function"]["arguments"] += tc.function.arguments
 
-                if choice.finish_reason:
-                    finish_reason = choice.finish_reason
-    except BadRequestError as e:
-        display.stream_end(False)
-        raise
+                    if choice.finish_reason:
+                        finish_reason = choice.finish_reason
+            break  # streaming completed without exception
+        except BadRequestError:
+            display.stream_end(False)
+            raise
+        except Exception as e:
+            if not _is_retryable_error(e) or attempt >= _MAX_504_RETRIES:
+                display.stream_end(False)
+                raise
+            last_exc = e
+            display.print_info(
+                f"  ↻ Upstream {type(e).__name__} ({getattr(e, 'status_code', '?')}); "
+                f"retry {attempt + 1}/{_MAX_504_RETRIES} in {_RETRY_BACKOFF_SECS}s…"
+            )
+            _time.sleep(_RETRY_BACKOFF_SECS)
+            continue
 
     had_content = bool(content_parts)
     display.stream_end(had_content)
@@ -2455,6 +2568,45 @@ def _postprocess_report_html(report_path: Path) -> int:
         return f'src="{path}"'
 
     new_html = placeholder_re.sub(_replace_placeholder, html)
+
+    # 1b. Embed every <img src="<relative path>"> as base64 so the report is
+    #     self-contained (shareable as a single .html file). Skips data: URIs
+    #     and absolute http(s) URLs. Caps individual files at 8 MB; missing
+    #     files fall through to the onerror box added in step 5.
+    import base64, mimetypes
+    embed_re = re.compile(r'<img\b([^>]*?)\bsrc=(["\'])(?P<src>[^"\']+)\2', re.IGNORECASE)
+    MAX_EMBED_BYTES = 8 * 1024 * 1024
+
+    def _embed(m: re.Match) -> str:
+        nonlocal fixes
+        src = m.group("src")
+        if src.startswith(("data:", "http://", "https://", "//")):
+            return m.group(0)
+        # Resolve relative to the research_dir
+        candidate = (research_dir / src).resolve()
+        try:
+            candidate.relative_to(research_dir.resolve())
+        except ValueError:
+            return m.group(0)  # outside research dir — leave alone
+        if not candidate.is_file():
+            return m.group(0)  # missing — onerror will show a labelled box
+        size = candidate.stat().st_size
+        if size > MAX_EMBED_BYTES:
+            return m.group(0)  # too large to inline
+        mime, _ = mimetypes.guess_type(candidate.name)
+        if not mime or not mime.startswith("image/"):
+            return m.group(0)
+        try:
+            b64 = base64.b64encode(candidate.read_bytes()).decode("ascii")
+        except OSError:
+            return m.group(0)
+        fixes += 1
+        # Preserve the original <img attrs> by reusing the captured prefix and quote.
+        prefix = m.group(1)
+        q = m.group(2)
+        return f'<img{prefix}src={q}data:{mime};base64,{b64}{q}'
+
+    new_html = embed_re.sub(_embed, new_html)
 
     # 2. Fix the stray `)>` HTML attribute syntax error this Reporter is fond of.
     new_html, n_paren = re.subn(r'(["\'])\)>', r'\1>', new_html)

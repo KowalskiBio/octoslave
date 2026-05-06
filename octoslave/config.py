@@ -96,13 +96,13 @@ NIM_ROLE_MODELS: dict[str, str] = {
     "coder":        "nvidia/nemotron-3-super-120b-a12b",
     "debugger":     "nvidia/nemotron-3-super-120b-a12b",
     "evaluator":    "nvidia/nemotron-3-super-120b-a12b",
-    # Synthesis / long-form writing — 49B nemotron struggled with valid HTML
-    # and truncated base64 placeholders in the Reporter, and Orchestrator hit
-    # empty-args bugs. Llama-3.3-70b-instruct is the most reliable widely-
-    # available NIM model for structured output and is on the free tier.
-    "orchestrator": "meta/llama-3.3-70b-instruct",
-    "reporter":     "meta/llama-3.3-70b-instruct",
-    "merger":       "meta/llama-3.3-70b-instruct",
+    # Synthesis / long-form writing — Llama-3.3-70b-instruct hit NIM 504 gateway
+    # timeouts (~14 min wait) on every Orchestrator + Reporter call across two
+    # consecutive runs. Switched to 120b nemotron — slower per call, but
+    # completes reliably; same family as the heavy roles.
+    "orchestrator": "nvidia/nemotron-3-super-120b-a12b",
+    "reporter":     "nvidia/nemotron-3-super-120b-a12b",
+    "merger":       "nvidia/nemotron-3-super-120b-a12b",
 }
 
 
