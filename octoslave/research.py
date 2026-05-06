@@ -51,6 +51,14 @@ ROLES: dict[str, dict] = {
         "tools": ["read_file", "write_file", "list_dir", "glob",
                   "bio_inspect", "rdkit_describe"],
     },
+    "skeptic": {
+        "label": "Skeptic",
+        "icon": "🤨",
+        "color": "bold magenta",
+        "default_model": "deepseek-v3.2-thinking",  # critical reasoning, no exec
+        "max_iter": 5,                              # cheap by design
+        "tools": ["read_file", "write_file"],       # review-only, no exec
+    },
     "coder": {
         "label": "Coder",
         "icon": "💻",
@@ -116,6 +124,7 @@ PARALLEL_ROLES: frozenset[str] = frozenset({"researcher", "hypothesis", "evaluat
 PIPELINE: list[str] = [
     "researcher",
     "hypothesis",
+    "skeptic",
     "coder",
     "debugger",
     "evaluator",
@@ -126,6 +135,7 @@ PIPELINE: list[str] = [
 OUTPUT_FILES: dict[str, str] = {
     "researcher":    "01_literature.md",
     "hypothesis":    "02_experiment.md",
+    "skeptic":       "02b_skeptic_review.md",
     "coder":         "03_code/",          # directory
     "debugger":      "04_debug_report.md",
     "evaluator":     "05_evaluation.md",
@@ -230,12 +240,12 @@ beat 10 shallow ones. Total output: under 500 words.
 HARD LIMITS — these protect your token budget so you have enough left to write 01_literature.md.
 Every limit below is a MAXIMUM, not a target:
   list_dir:    1 call   (step 0 only)
-  read_file:   0–2 calls (local data files only — NOT task.md, NOT findings.md twice)
+  read_file:   0–3 calls (local data files only — NOT task.md, NOT findings.md twice)
   bio_inspect: 0–3 calls (use on local FASTA / VCF / h5ad / PDB / SDF instead of read_file)
-  web_search:  max 2 calls  ← STRICT. Stop searching after 2.
-  web_fetch:   max 2 calls  ← STRICT. Stop fetching after 2.
+  web_search:  max 5 calls  ← STRICT. Stop searching after 2.
+  web_fetch:   max 5 calls  ← STRICT. Stop fetching after 2.
   write_file:  1 call   (your LAST call — always)
-  TOTAL: max 8 tool calls. Your 8th or earlier call MUST be write_file for 01_literature.md.
+  TOTAL: max 15 tool calls. Your 15th or earlier call MUST be write_file for 01_literature.md.
 
 DOMAIN CONNECTORS — prefer these over web_search / web_fetch for biology + chemistry:
   uniprot_lookup     proteins (UniProt accession or query) → name, organism, GO, PDB xrefs
@@ -250,7 +260,7 @@ DOMAIN CONNECTORS — prefer these over web_search / web_fetch for biology + che
                      Figure N" or you see "EXTRACTION FAILED" — do NOT give up at that
                      point, OCR the relevant pages first. Pass pages="N-M".
 These calls do NOT count against web_search / web_fetch budgets, but TOTAL calls
-still capped at 8. Use a connector first; fall back to web_fetch only if it fails.
+still capped at 15. Use a connector first; fall back to web_fetch only if it fails.
 
 RESEARCHER CONSTRAINTS — non-negotiable:
 - Do NOT read task.md. The topic is already in your brief above — reading it again wastes a call.
@@ -279,31 +289,45 @@ RESEARCHER CONSTRAINTS — non-negotiable:
 - After 2 web_search + 2 web_fetch calls, you have gathered enough. WRITE the file immediately.
 
 STEPS
-0. LOCAL DATA FIRST (mandatory, round 1 and every round):
-   Call list_dir on {working_dir}. If any PDFs, CSVs, TSVs, FASTA/FA files, or JSON files
-   exist there, read the most relevant ones NOW using read_file — they are the
-   user's primary input. A local PDF is the paper you are extending; a local CSV
-   is the dataset you must analyse. Do not web-search topics already covered by
-   local files.
+0. INVENTORY FIRST (mandatory, every round):
+   Read {research_dir}/inventory.md — the pipeline has already built a schema-aware
+   catalog of every local file (with inventory IDs R001, R002, …, columns, first rows,
+   PDF excerpts, etc.). Skim ## Local Resources before doing anything else; do NOT
+   re-list the working directory or re-read whole files when the inventory entry
+   already shows you the schema. If you need MORE than the inventory shows for a
+   specific file (e.g. extract numeric baselines from a paper PDF), THEN use
+   read_file on that file — but reference it by its inventory ID in your output.
 
-   MANDATORY EXTRACTION FROM LOCAL FILES:
-   If the local file is a scientific paper or data file, you MUST extract and record in
-   01_literature.md the key structured data the experiment will depend on:
-     - Primary entities being studied (sequences, molecule IDs, compound names, gene names,
-       dataset identifiers) — copy verbatim from the source, do not paraphrase.
-     - Key quantitative results reported in the paper: performance metrics, concentrations,
-       effect sizes, p-values, benchmark scores — with units and experimental context.
+   MANDATORY EXTRACTION FROM HIGH-VALUE LOCAL FILES (papers / data files):
+   For each scientific paper or data file in inventory.md, extract and record in
+   01_literature.md the structured data the experiment will depend on:
+     - Primary entities being studied (sequences, molecule IDs, compound names, gene
+       names, dataset identifiers) — copy verbatim from the source, do not paraphrase.
+     - Key quantitative results reported in the paper: performance metrics,
+       concentrations, effect sizes, p-values, benchmark scores — with units and
+       experimental context.
    These values go into ## Baselines AND ## FOR THE EXPERIMENT DESIGNER verbatim.
-   Do NOT write "TBD", "~?", or "to be extracted" — extract them NOW during this step.
+   Do NOT write "TBD", "~?", or "to be extracted" — extract them NOW.
    If extraction genuinely fails (garbled text, image-only PDF, encrypted):
-     write "EXTRACTION FAILED: <reason>" in ## Baselines so the Coder knows not to rely
-     on values from this file and must find an alternative source.
+     write "EXTRACTION FAILED: <reason>" in ## Baselines so the Coder knows not to
+     rely on values from this file and must find an alternative source.
+
+0b. EXTERNAL RESOURCES — record external papers / datasets you discover in
+    01_literature.md's `## Available Datasets` section (see OUTPUT below). The
+    inventory.md file is for local resources only; external sources live in your
+    literature output and the Designer reads both.
 1. Round > 1: read {research_dir}/findings.md — ONLY the ## Key Findings section
    (use read_file with offset/limit). Round 1: skip this step entirely.
 1b. Round > 1: if {research_dir}/case_memory.md exists, read the last 600 chars
    (use read_file with a high offset). It records which datasets FAILED and which
    approaches worked. Honour it: if a dataset was UNAVAILABLE in a prior round,
    do NOT recommend it again. This uses one of your read_file calls.
+1c. Round > 1: if {research_dir}/forbidden_approaches.md exists, read the FULL file
+   (it is short, pipeline-distilled). Datasets / sources / methods cited under
+   forbidden approaches are PROVEN-failed. Do NOT recommend them again. Search for
+   structurally different sources (different domain, different access route) or pivot
+   the literature scope to surface new options. The Designer will reject a plan that
+   reuses a forbidden source without a documented structural difference.
 2. Run at most 2 targeted web searches to fill gaps NOT covered by local files. Fetch ONE
    page per search (the most useful one). Stop the moment you can answer:
    (a) best known result / method, (b) which dataset is directly downloadable right now.
@@ -337,6 +361,10 @@ Design exactly ONE concrete, executable experiment. Be decisive.
 Total output: under 400 words.
 
 STEPS
+0. Read {research_dir}/inventory.md — the pipeline-built schema-aware catalog of
+   every local resource. Note the inventory IDs (R001, R002, …) — your `## Data Plan`
+   below MUST cite primary data by inventory ID, not bare path. Skim only — entries
+   are concise.
 1. Read ONLY the ## FOR THE EXPERIMENT DESIGNER section from
    {round_dir}/01_literature.md (use offset/limit — do not read the whole file).
 2. Round > 1: read ONLY the ## What Failed section from {research_dir}/findings.md.
@@ -348,17 +376,32 @@ STEPS
    - Carry forward a successful approach from a prior round rather than reinventing.
    - Explicitly note in ## FOR THE CODER if you are reusing a prior winning pattern.
    Round 1: skip.
+2c. Round > 1: if {research_dir}/forbidden_approaches.md exists, read the FULL file
+   (it is short — pipeline-distilled, no offset/limit needed).
+   It lists approaches that already FAILED in prior rounds. HARD RULE:
+   - If your proposed experiment resembles ANY listed entry — same data source +
+     same method class, OR same failure mode (e.g. circular evaluation on synthetic
+     ground truth) — you MUST add a `## Why This Differs` section to 02_experiment.md
+     with concrete structural differences (different dataset, different method class,
+     different validation strategy, or new real data).
+   - If you cannot identify a structural difference: pivot to a genuinely new approach
+     rather than dressing up a failed one. A new question with real data beats a
+     repolished failure every round.
+   Round 1: skip.
 3. Think once, commit, write. No drafting, no iteration.
 3. COMPLEXITY CALIBRATION (mandatory for round > 1):
-   a. Read {{research_dir}}/hw_profile.json → `available_packages` field.
-      ONLY propose experiments that use listed packages. numpy/scipy/matplotlib/pandas
-      are always safe. Domain-specific packages only if listed.
+   a. Read {research_dir}/hw_profile.json → `available_packages` field.
+      PREFER listed packages. numpy/scipy/matplotlib/pandas are always safe.
+      Domain-specific packages: prefer listed; if a single missing package is
+      critical to the core idea, the Coder will attempt ONE fast install (≤ 60 s)
+      before falling back. Do not base the entire experiment on a stack of
+      unlisted dependencies — every additional install increases failure risk.
    b. If previous round's 05_evaluation.md shows Implementation Quality < 5/10 OR
       Results Validity < 3/10: this round's experiment MUST be simpler than last round.
       Prefer the lowest complexity level that still answers the question:
         Level 1 (always works): basic statistical analysis with numpy/scipy/pandas
-        Level 2 (if in available_packages): domain-specific descriptors or sklearn models
-        Level 3 (if in available_packages + confirmed working): specialised computation
+        Level 2: domain-specific descriptors or sklearn models (Coder installs if needed)
+        Level 3: specialised computation (Coder installs if needed)
         Level 4: full pipeline — ONLY after Level 3 succeeds in a prior round
    c. NEVER propose a more complex experiment than one that just failed to produce results.
 
@@ -376,26 +419,46 @@ is WRONG and will break the pipeline. No exceptions.
    Include: method, loss, key hyperparameters, eval protocol. Max 10 lines.]
 
   ## Data Plan
-  **Primary**: <name> · <absolute path or download URL> · <format>
-  **Fallback**: <ANOTHER REAL data source> · <path or URL>
-  (Files in {working_dir} are always ACCESSIBLE — use their absolute paths.
-   For external sources, only list those confirmed ACCESSIBLE in 01_literature.md.)
+  **Primary**: <inventory ID e.g. R001> · <name> · <absolute path or download URL> · <format>
+  **Fallback**: <inventory ID or external URL> · <name> · <path or URL>
+  (LOCAL data MUST be cited by inventory ID from inventory.md (R001, R002, …) so the
+   Coder reuses the cached schema. External sources may be cited by URL.
+   Bare paths without inventory IDs are wrong: it means you did not read inventory.md.)
 
-  DATA-PLAN BAN — read carefully:
-  - The Fallback MUST be another REAL data source (alternative dataset, alternative
-    file format of the same data, alternative download URL).
-  - NEVER propose synthetic / simulated / generated / placeholder / dummy / mock /
-    "random data with same feature ranges" as a fallback. These are scientifically
-    invalid and the Coder is forbidden from running them.
-  - NEVER include phrases like "if X unreadable use placeholder", "simulate values",
-    "generate synthetic data" anywhere in the Algorithm or Data Plan.
-  - If you cannot identify a SECOND real data source: write
-    `**Fallback**: NONE — if Primary is unreadable, the round must report BLOCKED
-     and pivot in the next round.`
-    A blocked round is acceptable; a synthetic-data round is NOT.
-  - Same rule applies to algorithm steps: never write "if value missing, use a
-    typical value" / "use placeholder" / "fall back to a default". If a value
-    cannot be measured, the metric is omitted from key_results.json — period.
+  DATA-PLAN BAN — round-aware (read carefully):
+
+  ROUND 1 (no exceptions):
+  - Synthetic / simulated / simulator-generated / dummy / mock / placeholder /
+    "random data with same feature ranges" data is FORBIDDEN as Primary, Fallback,
+    OR anywhere in the Algorithm. If no real data is reachable from inventory.md
+    or external sources, write:
+    `**Primary**: NONE — no real data accessible`
+    `**Fallback**: NONE`
+    `**STATUS**: BLOCKED — round must skip execution and report BLOCKED in
+    IMPLEMENTATION.md. Next round must search for real data first.`
+    A blocked round is acceptable; a synthetic-data round in round 1 is NOT.
+  - The Fallback (when present) MUST be another REAL data source (alternative
+    dataset, alternative file format of the same data, alternative download URL).
+
+  ROUND > 1 (simulator only as an EARNED position):
+  - Default: same rules as round 1. Real data is the default expectation.
+  - Simulator is allowed ONLY if you cite the specific case_memory.md case number
+    where the real-data approach was attempted and failed:
+      `**Simulator justification**: Per Case <N>, real-data approach failed because
+      <documented reason>. Simulator now used as a methodological tool for
+      <specific question — e.g. power analysis, kernel comparison>.`
+    Without that citation, simulator usage is rejected and the Coder will treat
+    the design as BLOCKED.
+  - "We don't have real data yet" is NOT a valid justification — find some, or
+    write BLOCKED. Re-running last round's simulator without a Case citation is
+    forbidden.
+
+  ALGORITHM-STEP RULES (both rounds):
+  - Never write "if value missing, use a typical value" / "use placeholder" /
+    "fall back to a default". If a value cannot be measured, the metric is omitted
+    from key_results.json — period.
+  - Never write "generate synthetic data" / "simulate values" / "create dummy
+    dataset" as algorithm steps unless explicitly justified per the rules above.
 
   ## Expected Output Files
   - results/key_results.json  → {{"metric": <name>, "value": <float>, "baseline": <float>}}
@@ -418,6 +481,72 @@ Instead design a MULTI-METRIC evaluation:
   - Always include baseline values in key_results.json for comparison.
 """,
 
+"skeptic": """\
+YOUR MISSION
+Pre-hoc PI review. Catch issues in 02_experiment.md BEFORE the Coder burns 80
+iterations on a flawed plan. You have 5 iters and NO execution tools.
+Total output: under 250 words.
+
+STEPS
+1. Read {round_dir}/02_experiment.md (the plan you are reviewing — full file).
+2. Read {research_dir}/inventory.md `## Local Resources` only — to verify which
+   inventory IDs the plan cites and which exist.
+3. Round > 1: read {research_dir}/forbidden_approaches.md (full file, short) if
+   it exists. Check whether the plan resembles any forbidden approach without a
+   `## Why This Differs` section.
+
+CHECKS — apply each, in order. Object on the first concrete issue you find;
+do not pile on. Be specific (cite line / section).
+
+  A. CIRCULAR EVALUATION
+     Does the plan train a model on labels generated by the same model class /
+     same feature space the model is then tested on? (e.g. fit a GP on labels
+     produced by a simulator that uses the same descriptors fed to the GP)
+     This is the #1 failure mode — it produces meaningless near-perfect metrics.
+
+  B. SYNTHETIC-DATA WITHOUT EARNED FAILURE
+     Does the plan use synthetic / simulated / dummy / placeholder data?
+     Round 1: no exception — OBJECT.
+     Round > 1: only allowed with `Per Case <N>: real-data approach failed
+     because <reason>` citation. Without it, OBJECT.
+
+  C. INVENTORY COVERAGE
+     Are all primary data sources cited by inventory ID (R001, R002, …)?
+     Are they actually present in inventory.md `## Local Resources`?
+     Bare paths or hallucinated IDs → OBJECT.
+
+  D. FORBIDDEN-APPROACH OVERLAP (round > 1)
+     Does the plan resemble any entry in forbidden_approaches.md (same data +
+     same method class, OR same failure mode)? If yes, is `## Why This Differs`
+     present and substantive (concrete differences, not "we'll be more careful
+     this time")? Without it, OBJECT.
+
+  E. SUCCESS-METRIC REALISM
+     Is the success threshold structurally achievable given the data size /
+     held-out set / known noise floor? An impossible-by-construction target
+     (e.g. ≤0.15 RMSE on 4 held-out blocks with σ=0.5 interaction noise) is a
+     planned failure → OBJECT.
+
+OUTPUT — write EXACTLY ONE file: {round_dir}/02b_skeptic_review.md
+Format (literal — Coder parses `## Verdict:`):
+
+  ## Verdict: PASS
+  (or)
+  ## Verdict: OBJECT
+
+  ## Issues  (1 bullet per concrete issue, max 5; cite specific text from 02_experiment.md)
+  - <issue 1>
+  - <issue 2>
+
+  ## Required Revisions  (only if OBJECT — bulleted, specific, actionable)
+  - Replace simulator with R001 (PredictiveModellingPlanningSheet.xlsx) which has 90 real rows
+  - Cite Per Case 2 if simulator is intentional (round > 1 only)
+  - …
+
+If verdict is PASS, omit the Required Revisions section. Stop after writing
+the file. Do not re-read it.
+""",
+
 "coder": """\
 YOUR MISSION
 Implement the experiment. Write real, working, runnable code.
@@ -433,7 +562,41 @@ Reading the same file twice is a wasted iteration. You have 50 tool-call iterati
 After steps 1-3 below, START WRITING CODE IMMEDIATELY.
 
 STEPS
+0. INSTALL PHASE (before writing any code):
+   Based on the experiment plan from 02_experiment.md, identify ALL Python packages
+   you expect to import. For each, check if it appears in hw_profile.json's
+   `available_packages` list. Split them into:
+     ALREADY-INSTALLED → use immediately in code
+     MISSING-CRITICAL  → install now using the install recipe below
+     MISSING-OPTIONAL  → skip; wrap in try/except if useful for plots only
+   
+   Install recipe (ONE batch install per round):
+     - Build a single requirements list of all MISSING-CRITICAL packages.
+     - Use uv if hw_profile.json says `uv_available: true`, else pip.
+     - Estimate timeout: base 60 s + 30 s per package in list.
+       Small pure-Python packages: ~60–120 s total.
+       torch / transformers / biopython with C extensions: ~300–600 s total.
+       Example: `timeout=300` for torch+transformers on a slow connection.
+     - Run ONE bash call with timeout. Example:
+         uv pip install torch transformers biopython --timeout=300
+     - Immediately after install, verify: python -c "import torch; print(torch.__version__)"
+     - If ANY package fails to import after install → remove it from the critical
+       list (do NOT retry install or read build logs) and fall back to alternatives.
+   
+   RULES:
+   - This is YOUR ONLY install phase. Do NOT pause mid-coding to install a package
+     you "forgot" in this step. If you missed a package → rewrite the code to avoid it.
+   - Do NOT install packages that are already verified in available_packages.
+   - Do NOT install anything purely optional (e.g. extra visualisation libraries).
+   - If a large package (torch, spacy, biopython) fails to install due to timeout,
+     fall back immediately — never retry with a longer timeout.
+
 1. Read ONLY ## FOR THE CODER and ## Data Plan from {round_dir}/02_experiment.md.
+1b. Read {research_dir}/inventory.md — pipeline-built schema-aware catalog of every
+   local resource. The Designer's Data Plan cites primary data by inventory ID
+   (R001, R002, …); inventory.md gives you the absolute path, columns, and first
+   rows already. DO NOT re-discover the schema with extra read_file / list_dir calls
+   — the inventory entry already shows column names and sample rows.
 2. Read ONLY ## Available Datasets AND ## Baselines from {round_dir}/01_literature.md.
    This is where the Researcher recorded all primary entities and experimental values.
    Use those values EXACTLY as written — do NOT modify, guess, or replace them.
@@ -441,13 +604,11 @@ STEPS
    numeric baseline) that does not appear verbatim in 01_literature.md or 02_experiment.md.
    If no primary entities are present in those files, write a script that reads the
    primary data file directly rather than inventing values from memory.
-3. Read {research_dir}/hw_profile.json — hardware and available packages are already
-   probed. Check `available_packages`: ONLY import packages listed there. Do NOT
-   assume a package is installed if it isn't listed. Do NOT re-probe.
-   If a package you planned to use is NOT listed → use the FALLBACK LADDER below.
+3. Read {research_dir}/hw_profile.json — hardware probed at pipeline start.
+   Check `available_packages` for what is already installed. You installed missing
+   critical packages in Step 0 (INSTALL PHASE). Do NOT install any more packages now.
    IMPORTANT: hw_profile.json may contain a `python_executable` field — a full path
-   to the Python interpreter that has the probed packages. If present, use that
-   exact path for ALL python/pip calls instead of bare `python3` or `python`.
+   to the Python interpreter. If present, use that exact path for ALL python/pip calls.
    Example: if python_executable="/home/user/miniconda3/bin/python", then run:
      /home/user/miniconda3/bin/python script.py
      /home/user/miniconda3/bin/python -m pip install <pkg>
@@ -460,8 +621,10 @@ STEPS
 5. Execute:
    a. Create {round_dir}/03_code/ directory.
    b. Download / access the verified dataset(s).
-   c. Write modular Python. Install packages with uv (see below).
-   d. Run the code. Fix runtime errors.
+   c. Write modular Python using ONLY packages from available_packages OR the ones
+      you successfully installed in Step 0.
+   d. Run the code. Fix runtime errors (but if the fix requires installing a new
+      package → the error goes into IMPLEMENTATION.md; do NOT install mid-round).
    e. Save ALL output (metrics, plots) to {round_dir}/03_code/results/.
 6. Write {round_dir}/03_code/IMPLEMENTATION.md — keep it SHORT (under 300 words).
    STOP after writing IMPLEMENTATION.md. Your output is EXACTLY:
@@ -527,10 +690,13 @@ GPU RULES (if CUDA available per hw_profile.json — no exceptions)
 - Log peak_vram_gb to results/ via torch.cuda.max_memory_allocated()/1e9.
 
 TOOL AVAILABILITY & FALLBACK LADDER
-hw_profile.json `available_packages` is ground truth. Before writing any import:
-  1. Verify it's in the list. If not, use the fallback immediately — do NOT waste iterations
-     on pip install for packages that aren't already in the environment.
-  2. Domain fallbacks (apply to any research field):
+hw_profile.json `available_packages` is the ground-truth *at pipeline start*. The packages
+you installed in Step 0 (INSTALL PHASE) are additional tools at your disposal. Before
+writing any import:
+  1. Check if the package is in `available_packages` or in your successfully-installed
+     set from Step 0. If YES → use immediately.
+  2. If NO (not listed AND install failed in Step 0) → use the fallback below.
+  3. Domain fallbacks (apply to any research field):
      Specialised simulation / analysis library unavailable:
        → Use a simpler library from available_packages that computes related quantities
          directly from raw data (e.g. numpy/scipy for statistics, pandas for aggregation)
@@ -545,7 +711,7 @@ hw_profile.json `available_packages` is ground truth. Before writing any import:
          Label surrogate metrics with a _proxy or _estimated suffix so downstream
          agents know these are computed approximations, not validated measurements.
          NEVER name a surrogate metric the same as the gold-standard metric.
-  3. ANY numerical result from REAL computation is better than zero results.
+  4. ANY numerical result from REAL computation is better than zero results.
      A working basic analysis in round 1 is MORE valuable than a broken specialised
      pipeline in round 3. Surrogate/proxy metrics are scientifically valid starting
      points — simulated/placeholder values are not.
@@ -891,8 +1057,11 @@ STAGNATION PENALTY (apply when scoring):
   Results Validity: 1/10 (hard cap, regardless of how good the approach was in theory)
 - If the same error message appears in findings.md from the previous round AND this round:
   Hypothesis Quality: max 4/10 (proposing the same blocked approach is poor experimental design)
-- If the implementation attempted packages NOT in hw_profile.json available_packages:
-  Implementation Quality: max 5/10 (poor tool selection given known environment)
+- If the implementation attempted packages NOT in hw_profile.json available_packages
+  AND the install attempt (if any) failed without a fallback:
+  Implementation Quality: max 5/10 (poor tool selection; Coder should attempt install or pivot faster).
+- If the implementation attempted a non-listed package AND the install succeeded:
+  Implementation Quality: no penalty (earned capability, well-documented in IMPLEMENTATION.md).
 - Transfer Quality measures whether this round BUILT ON prior knowledge AND produced reusable insights:
   * Do NOT check for 06_synthesis.md — the Orchestrator writes it AFTER you run; it will never
     exist when you are scoring. Checking for it is wrong and always produces a 3/10 penalty.
@@ -2019,6 +2188,534 @@ def _update_case_memory(
 
 
 # ---------------------------------------------------------------------------
+# Forensics: forbidden_approaches.md  —  hard constraint on the Designer.
+# Auto-generated each round (round > 1) from case_memory.md so prior failures
+# become structural input, not advisory text. Read by Researcher and Designer.
+# ---------------------------------------------------------------------------
+
+FORBIDDEN_FILE = "forbidden_approaches.md"
+
+
+def _parse_score(score_str: str) -> float | None:
+    """Parse e.g. '5/10', '7 / 10' → 5.0, 7.0. Returns None if unparseable."""
+    m = re.match(r"\s*(\d+(?:\.\d+)?)\s*/\s*\d+", score_str)
+    return float(m.group(1)) if m else None
+
+
+def _build_forbidden_approaches(research_dir: str, round_num: int) -> Path | None:
+    """
+    Build forbidden_approaches.md from case_memory.md.
+
+    Each case from a prior round with score ≤6/10 OR documented What-Failed
+    becomes a forbidden entry. The Designer must add `## Why This Differs`
+    if their proposal overlaps with any entry.
+
+    Returns the path if written, None otherwise (round 1, no failures).
+    """
+    case_memory_path = Path(research_dir) / CASE_MEMORY_FILE
+    forbidden_path = Path(research_dir) / FORBIDDEN_FILE
+
+    # Round 1 or no case memory yet → ensure stale file is cleared
+    if round_num < 2 or not case_memory_path.exists():
+        if forbidden_path.exists():
+            try:
+                forbidden_path.unlink()
+            except OSError:
+                pass
+        return None
+
+    text = case_memory_path.read_text(errors="replace")
+
+    # Split into case blocks. Each starts with a line "## Case N  ·  timestamp  ·  Score: …"
+    case_blocks = re.split(r"\n##\s+Case\s+", text)
+    if len(case_blocks) <= 1:
+        return None
+
+    forbidden_entries: list[dict] = []
+    for block in case_blocks[1:]:  # skip preamble before first "## Case"
+        header_match = re.match(r"(\d+)\s+·\s+[^·]+·\s+Score:\s+([^\n]+)", block)
+        if not header_match:
+            continue
+        case_num = header_match.group(1)
+        score_str = header_match.group(2).strip()
+        score_num = _parse_score(score_str)
+
+        exp_match = re.search(r"\*\*Experiment:\*\*\s+(.+?)\n", block)
+        experiment = exp_match.group(1).strip() if exp_match else "(unspecified)"
+
+        fail_match = re.search(
+            r"\*\*What Failed:\*\*\s*\n(.+?)(?=\n\*\*[A-Z]|\n---|\Z)",
+            block,
+            re.DOTALL,
+        )
+        what_failed = fail_match.group(1).strip() if fail_match else ""
+
+        is_low_score = score_num is not None and score_num <= 6
+        if not is_low_score and not what_failed:
+            continue  # successful round — not forbidden
+
+        forbidden_entries.append({
+            "case": case_num,
+            "score": score_str,
+            "experiment": experiment[:200],
+            "failed": what_failed[:500] if what_failed else "(low score, no specific failure recorded)",
+        })
+
+    if not forbidden_entries:
+        if forbidden_path.exists():
+            try:
+                forbidden_path.unlink()
+            except OSError:
+                pass
+        return None
+
+    lines = [
+        "# Forbidden Approaches",
+        "",
+        "_Auto-generated by the pipeline from case_memory.md before each round (round > 1). "
+        "These approaches were tried in prior rounds and FAILED. "
+        "If your proposed experiment resembles ANY entry below — same data source + same "
+        "method class, OR same failure mode — you MUST add a `## Why This Differs` section "
+        "to 02_experiment.md citing concrete structural differences (different dataset, "
+        "different method class, different validation strategy, or new real data). "
+        "If you cannot identify a structural difference, pivot to a genuinely new approach._",
+        "",
+    ]
+    for e in forbidden_entries:
+        lines.append(f"## Case {e['case']} — Score {e['score']}")
+        lines.append(f"**Approach**: {e['experiment']}")
+        lines.append("**Why it failed**:")
+        lines.append(e['failed'])
+        lines.append("")
+
+    forbidden_path.write_text("\n".join(lines), encoding="utf-8")
+    return forbidden_path
+
+
+# ---------------------------------------------------------------------------
+# Resource Inventory: inventory.md  —  the lab's filing cabinet.
+# Pipeline-owned, deterministic catalog of every file the agents may use as input.
+# Replaces ad-hoc list_dir surveys; gives Designer stable inventory IDs (R001…) to
+# cite in 02_experiment.md so the Coder doesn't rediscover schemas every round.
+# ---------------------------------------------------------------------------
+
+INVENTORY_FILE = "inventory.md"
+
+INVENTORY_IGNORE_DIRS: frozenset[str] = frozenset({
+    "research", "__pycache__", ".git", ".venv", "venv", "env",
+    "node_modules", ".cache", ".pytest_cache", ".ipynb_checkpoints",
+    "build", "dist", ".tox", ".mypy_cache",
+})
+
+INVENTORY_TABULAR_SUFFIXES = frozenset({
+    ".csv", ".tsv", ".parquet", ".feather", ".xlsx", ".xls",
+})
+INVENTORY_BIO_SUFFIXES = frozenset({
+    ".fasta", ".fa", ".faa", ".fna", ".fastq", ".fq",
+    ".vcf", ".gff", ".gff3", ".gtf",
+    ".pdb", ".cif", ".mol", ".mol2", ".sdf", ".smi",
+    ".h5ad", ".mtx",
+})
+INVENTORY_TEXT_SUFFIXES = frozenset({
+    ".txt", ".md", ".rst", ".py", ".json", ".jsonl",
+    ".yaml", ".yml", ".toml", ".bed",
+})
+INVENTORY_ARRAY_SUFFIXES = frozenset({".npy", ".npz", ".h5", ".hdf5", ".nc"})
+
+# Total set of suffixes profiled by the inventory (extends LOCAL_DATA_EXTENSIONS
+# with code/presentation suffixes the agents also benefit from seeing).
+INVENTORY_PROFILED_SUFFIXES: frozenset[str] = (
+    LOCAL_DATA_EXTENSIONS
+    | {".pptx", ".docx", ".py"}
+    | INVENTORY_BIO_SUFFIXES
+    | INVENTORY_ARRAY_SUFFIXES
+)
+
+
+def _human_size(n: int) -> str:
+    f = float(n)
+    for unit in ("B", "KB", "MB", "GB"):
+        if f < 1024:
+            return f"{int(f)} {unit}" if unit == "B" else f"{f:.1f} {unit}"
+        f /= 1024
+    return f"{f:.1f} TB"
+
+
+def _profile_tabular(path: Path) -> str:
+    """Profile a tabular file (csv/tsv/xlsx/parquet/feather). Returns markdown bullets."""
+    suffix = path.suffix.lower()
+    try:
+        if suffix in (".xlsx", ".xls"):
+            from .tools import _extract_excel
+            text, ok = _extract_excel(path, offset=1, limit=8)
+            if not ok:
+                return f"(xlsx profile failed: {text[:160]})"
+            return f"```\n{text[:800]}\n```"
+
+        if suffix in (".csv", ".tsv"):
+            sep = "\t" if suffix == ".tsv" else ","
+            try:
+                import csv as _csv
+                with path.open("r", encoding="utf-8", errors="replace") as f:
+                    reader = _csv.reader(f, delimiter=sep)
+                    rows = []
+                    for i, row in enumerate(reader):
+                        if i >= 6:
+                            break
+                        rows.append(row)
+                if not rows:
+                    return "(empty file)"
+                cols = rows[0]
+                col_str = ", ".join(repr(c)[:40] for c in cols[:12])
+                if len(cols) > 12:
+                    col_str += f"  …({len(cols)} cols total)"
+                head_lines = ["\t".join(str(c)[:40] for c in r) for r in rows[:5]]
+                return f"- **Columns** ({len(cols)}): {col_str}\n- **First rows**:\n```\n" + "\n".join(head_lines) + "\n```"
+            except Exception as e:
+                return f"(csv profile failed: {type(e).__name__}: {str(e)[:120]})"
+
+        if suffix in (".parquet", ".feather"):
+            try:
+                import pandas as _pd
+                df = _pd.read_parquet(path) if suffix == ".parquet" else _pd.read_feather(path)
+                head = df.head(3).to_string(max_cols=8, max_colwidth=40)[:600]
+                return f"- **Shape**: {df.shape}\n- **First rows**:\n```\n{head}\n```"
+            except ImportError:
+                return "(install pandas+pyarrow to profile parquet/feather)"
+            except Exception as e:
+                return f"(profile failed: {type(e).__name__})"
+    except Exception as e:
+        return f"(profile failed: {type(e).__name__})"
+    return "(unprofiled tabular)"
+
+
+def _profile_pdf(path: Path) -> str:
+    try:
+        from .tools import _extract_pdf
+        text, ok = _extract_pdf(path, offset=1, limit=15)
+        if not ok:
+            return f"(PDF profile failed: {text[:160]})"
+        return f"```\n{text[:900]}\n```"
+    except Exception as e:
+        return f"(PDF profile failed: {type(e).__name__})"
+
+
+def _profile_docx(path: Path) -> str:
+    try:
+        from .tools import _extract_docx
+        text, ok = _extract_docx(path, offset=1, limit=15)
+        if not ok:
+            return f"(docx profile failed: {text[:160]})"
+        return f"```\n{text[:900]}\n```"
+    except Exception as e:
+        return f"(docx profile failed: {type(e).__name__})"
+
+
+def _profile_pptx(path: Path) -> str:
+    """Best-effort .pptx text extraction. Falls back gracefully if python-pptx absent."""
+    try:
+        from pptx import Presentation
+    except ImportError:
+        return "(install `python-pptx` for slide-text extraction; binary file otherwise)"
+    try:
+        prs = Presentation(str(path))
+        slides = list(prs.slides)
+        chunks: list[str] = []
+        for slide in slides[:25]:
+            for shape in slide.shapes:
+                if hasattr(shape, "text_frame") and shape.has_text_frame:
+                    for para in shape.text_frame.paragraphs:
+                        t = para.text.strip()
+                        if t:
+                            chunks.append(t)
+            if len(chunks) > 80:
+                break
+        excerpt = "\n".join(chunks)[:1100]
+        return f"- **Slides**: {len(slides)}\n- **Text excerpt**:\n```\n{excerpt}\n```"
+    except Exception as e:
+        return f"(pptx profile failed: {type(e).__name__})"
+
+
+def _profile_bio(path: Path, working_dir: str) -> str:
+    """Use the existing bio_inspect tool function for FASTA/PDB/etc."""
+    try:
+        from .tools_bio import _bio_inspect
+        text, ok = _bio_inspect(str(path), working_dir, head=2)
+        if not ok:
+            return f"(bio_inspect failed: {text[:160]})"
+        return f"```\n{text[:800]}\n```"
+    except Exception as e:
+        return f"(bio profile failed: {type(e).__name__})"
+
+
+def _profile_text(path: Path, max_lines: int = 25, max_chars: int = 800) -> str:
+    try:
+        text = path.read_text(errors="replace")
+        excerpt = "\n".join(text.splitlines()[:max_lines])[:max_chars]
+        return f"```\n{excerpt}\n```"
+    except Exception as e:
+        return f"(text profile failed: {type(e).__name__})"
+
+
+def _profile_array(path: Path) -> str:
+    suffix = path.suffix.lower()
+    try:
+        import numpy as _np
+        if suffix == ".npy":
+            arr = _np.load(path, allow_pickle=False, mmap_mode="r")
+            return f"- **Shape**: {arr.shape}, **dtype**: {arr.dtype}"
+        if suffix == ".npz":
+            with _np.load(path, allow_pickle=False) as data:
+                keys = list(data.keys())
+                if not keys:
+                    return "(empty .npz)"
+                summaries = [f"{k}: shape={data[k].shape}, dtype={data[k].dtype}" for k in keys[:6]]
+                return "- **Arrays**:\n  - " + "\n  - ".join(summaries)
+        return f"(array file — open with the appropriate library: {suffix})"
+    except ImportError:
+        return "(install numpy to profile array files)"
+    except Exception as e:
+        return f"(array profile failed: {type(e).__name__})"
+
+
+def _build_inventory(research_dir: str, working_dir: str) -> Path:
+    """
+    Walk working_dir and produce inventory.md — a structured catalog of every file
+    the agents can use as input. Re-run each round (cheap; bounded scan).
+
+    Each file is assigned a stable inventory ID (R001, R002, …) which the Designer
+    must cite in 02_experiment.md's `## Data Plan` rather than bare paths.
+
+    The `## External Resources` section, if present, is preserved across re-runs
+    (the Researcher writes there).
+
+    Returns the inventory.md path.
+    """
+    wd = Path(working_dir)
+    inventory_path = Path(research_dir) / INVENTORY_FILE
+
+    # Collect candidate files (recursive, with ignore-dir filter)
+    candidates: list[Path] = []
+    research_abs = Path(research_dir).resolve()
+    for p in wd.rglob("*"):
+        try:
+            rel_parts = p.relative_to(wd).parts
+        except ValueError:
+            continue
+        # Skip files inside ignore dirs or hidden dirs
+        if any(part in INVENTORY_IGNORE_DIRS or part.startswith(".") for part in rel_parts[:-1]):
+            continue
+        # Skip files inside the research_dir itself (avoid recursive self-inclusion)
+        try:
+            p.resolve().relative_to(research_abs)
+            continue  # it's inside research_dir
+        except ValueError:
+            pass
+        if p.is_dir() or p.name.startswith("."):
+            continue
+        suffix = p.suffix.lower()
+        if suffix in INVENTORY_PROFILED_SUFFIXES:
+            candidates.append(p)
+
+    candidates.sort(key=lambda p: str(p.relative_to(wd)).lower())
+
+    # Preserve any existing ## External Resources section
+    existing_external = ""
+    if inventory_path.exists():
+        try:
+            existing = inventory_path.read_text(errors="replace")
+            m = re.search(r"\n## External Resources\b.*", existing, re.DOTALL)
+            if m:
+                existing_external = m.group(0)
+        except OSError:
+            pass
+
+    lines: list[str] = [
+        "# Resource Inventory",
+        "",
+        "_Auto-generated by the pipeline at the start of each round. The "
+        "`## Local Resources` section is rebuilt every round (deterministic, "
+        "cached schemas). The `## External Resources` section is for the "
+        "Researcher to append discovered external papers / datasets — the pipeline "
+        "preserves it across rebuilds._",
+        "",
+        "Each entry has an inventory ID (R001 / E001 / …). The Experiment Designer "
+        "MUST cite inventory IDs in 02_experiment.md's `## Data Plan` rather than "
+        "bare paths. Coder reads the schema from this file once and reuses it.",
+        "",
+        "## Local Resources",
+        "",
+    ]
+
+    if not candidates:
+        lines.append("_No local data files found in working directory._")
+        lines.append("")
+    else:
+        for i, p in enumerate(candidates, start=1):
+            rel = p.relative_to(wd)
+            suffix = p.suffix.lower()
+            try:
+                size = _human_size(p.stat().st_size)
+            except OSError:
+                size = "?"
+            inv_id = f"R{i:03d}"
+
+            if suffix in INVENTORY_TABULAR_SUFFIXES:
+                type_label = "tabular"
+                profile = _profile_tabular(p)
+            elif suffix == ".pdf":
+                type_label = "document/PDF"
+                profile = _profile_pdf(p)
+            elif suffix == ".docx":
+                type_label = "document/docx"
+                profile = _profile_docx(p)
+            elif suffix == ".pptx":
+                type_label = "presentation"
+                profile = _profile_pptx(p)
+            elif suffix in INVENTORY_BIO_SUFFIXES:
+                type_label = "bio"
+                profile = _profile_bio(p, working_dir)
+            elif suffix in INVENTORY_ARRAY_SUFFIXES:
+                type_label = "array"
+                profile = _profile_array(p)
+            elif suffix == ".py":
+                type_label = "code/python"
+                profile = _profile_text(p, max_lines=30)
+            elif suffix in (".json", ".jsonl", ".yaml", ".yml", ".toml"):
+                type_label = "config"
+                profile = _profile_text(p, max_lines=25)
+            elif suffix in INVENTORY_TEXT_SUFFIXES:
+                type_label = "text"
+                profile = _profile_text(p, max_lines=20)
+            else:
+                type_label = "binary"
+                profile = "(no profiler for this extension)"
+
+            lines.append(f"### {inv_id} — `{rel}`  *[{type_label}, {size}]*")
+            lines.append(f"- **Absolute path**: `{p.resolve()}`")
+            lines.append(profile)
+            lines.append("")
+
+    if existing_external:
+        # existing_external already starts with newline + ## External Resources
+        lines.append(existing_external.lstrip("\n"))
+    else:
+        lines.append("## External Resources")
+        lines.append("")
+        lines.append(
+            "_Researcher: append discovered external papers / datasets here. Format: "
+            "`### E0XX — <name>`, then `**URL**: …`, `**Access status**: ACCESSIBLE | "
+            "UNAVAILABLE | REQUIRES_SIGNUP`, `**Brief**: 1 line on what it contains._"
+        )
+        lines.append("")
+
+    inventory_path.write_text("\n".join(lines), encoding="utf-8")
+    return inventory_path
+
+
+# ---------------------------------------------------------------------------
+# No-Simulator-Without-Earned-Failure: post-Designer regex sanity check.
+# Catches synthetic-data proposals that slipped past the prompt-level rules
+# and writes a hard PIPELINE OVERRIDE block at the bottom of 02_experiment.md
+# so the Coder sees the correction inline.
+# ---------------------------------------------------------------------------
+
+# Patterns that flag synthetic-data proposals. Match in DATA PLAN or ALGORITHM
+# sections. Multi-word phrases preferred over single tokens to avoid false
+# positives on legitimate references (e.g. "the Cardinal Parameter Model
+# simulator from prior round" in a discussion is fine; "build a simulator that
+# generates labels" is not).
+_SYNTHETIC_PATTERNS: list[str] = [
+    r"\bsynthetic\s+(data|dataset|ground[\s-]*truth|labels?|features?|values?)",
+    r"\bsimulated\s+(data|dataset|ground[\s-]*truth|labels?)",
+    r"\b(generate|create|construct|sample)\s+\w*\s*(synthetic|fake|dummy|mock|simulated)\b",
+    r"\bdummy\s+(data|dataset|values?)",
+    r"\bmock\s+(data|dataset)",
+    r"\bplaceholder\s+(values?|data)",
+    r"\brandom\s+data\s+with\s+(same|similar)\s+(feature|range|distribution)",
+    r"\bsimulator\b.{0,40}\b(generate|produce|create|provide)\b",
+]
+
+# Indicator that a simulator usage IS justified (round > 1 escape valve)
+_CASE_CITATION = re.compile(r"\bPer\s+Case\s+\d+\b|\bCase\s+\d+\s+(showed|demonstrated)\b", re.IGNORECASE)
+
+
+def _validate_experiment_design(round_dir: Path, round_num: int) -> tuple[bool, str]:
+    """
+    Scan 02_experiment.md for banned synthetic-data patterns.
+
+    Returns (is_valid, reason). If invalid, the caller appends a PIPELINE
+    OVERRIDE block to 02_experiment.md so the Coder sees the correction.
+    """
+    exp_path = round_dir / OUTPUT_FILES["hypothesis"]
+    if not exp_path.exists():
+        return True, ""  # missing-file path is handled by _ensure_handoff_stubs
+
+    text = exp_path.read_text(errors="replace")
+
+    # Focus on Data Plan + Algorithm sections — discussion sections may legitimately
+    # mention simulators in context (e.g. "Round 1's simulator showed X").
+    plan_match = re.search(r"##\s*Data Plan\b.*?(?=\n## |\Z)", text, re.DOTALL | re.IGNORECASE)
+    algo_match = re.search(r"##\s*Algorithm[^\n]*\n.*?(?=\n## |\Z)", text, re.DOTALL | re.IGNORECASE)
+    scoped = (plan_match.group(0) if plan_match else "") + "\n" + (algo_match.group(0) if algo_match else "")
+
+    if not scoped.strip():
+        # No Data Plan or Algorithm sections detected — nothing to validate
+        return True, ""
+
+    matched: list[str] = []
+    for pat in _SYNTHETIC_PATTERNS:
+        if re.search(pat, scoped, re.IGNORECASE):
+            matched.append(pat)
+
+    if not matched:
+        return True, ""
+
+    # Banned pattern detected. Round 1: hard rejection. Round > 1: allowed only
+    # if a Case citation appears nearby (within 200 chars of any match).
+    if round_num >= 2:
+        for pat in matched:
+            for m in re.finditer(pat, scoped, re.IGNORECASE):
+                window_start = max(0, m.start() - 200)
+                window_end = min(len(scoped), m.end() + 200)
+                window = scoped[window_start:window_end]
+                if _CASE_CITATION.search(window):
+                    # Earned-failure citation present — accept.
+                    return True, ""
+        # No citation near any match.
+        return False, (
+            f"Round {round_num}: synthetic/simulated data proposed without a "
+            f"`Per Case N: real-data approach failed because …` citation."
+        )
+
+    # Round 1: any banned pattern is a hard rejection.
+    return False, "Round 1: synthetic/simulated/dummy data is forbidden as Primary, Fallback, or in the Algorithm."
+
+
+def _append_pipeline_override(round_dir: Path, reason: str) -> None:
+    """Append a PIPELINE OVERRIDE block to 02_experiment.md so the Coder sees it inline."""
+    exp_path = round_dir / OUTPUT_FILES["hypothesis"]
+    if not exp_path.exists():
+        return
+    override = (
+        "\n\n---\n\n"
+        "## PIPELINE OVERRIDE — DESIGNER VIOLATED DATA-PLAN BAN\n\n"
+        f"**Reason**: {reason}\n\n"
+        "**Coder instructions**: Do NOT execute the experiment as written above. Either:\n"
+        "  1. Identify a real data source from `research/inventory.md` or "
+        "01_literature.md `## Available Datasets` (ACCESSIBLE entries only) and run "
+        "the experiment against it, OR\n"
+        "  2. If no real data is accessible, write `IMPLEMENTATION.md` with status "
+        "`BLOCKED — no real data` and an empty `key_results.json` — do NOT fabricate "
+        "results from a synthetic source.\n\n"
+        "Running a synthetic experiment despite this override will be flagged by the "
+        "Evaluator's Results-Validity check (1/10 cap on circular evaluation).\n"
+    )
+    with open(exp_path, "a", encoding="utf-8") as f:
+        f.write(override)
+
+
+# ---------------------------------------------------------------------------
 # Pipeline fallback stubs — ensures 01_literature.md and 02_experiment.md
 # always exist before the coder runs, even if researcher/hypothesis agents failed.
 # ---------------------------------------------------------------------------
@@ -2895,6 +3592,67 @@ def _has_numerical_results(round_dir: Path) -> bool:
         return False
 
 
+# ---------------------------------------------------------------------------
+# Convergence detection: stop early when rounds have reached a plateau.
+# ---------------------------------------------------------------------------
+
+def _check_convergence(research_dir: str, round_num: int) -> tuple[bool, str]:
+    """
+    Detect convergence across the last 2 rounds.
+
+    Returns (converged: bool, reason: str)
+    """
+    research_path = Path(research_dir)
+    # Need at least 2 rounds and we're in round >= 2
+    if round_num < 2:
+        return False, "below min rounds"
+
+    scores: list[float] = []
+    for r in range(round_num - 1, round_num + 1):
+        eval_path = research_path / f"round_{r:03d}" / OUTPUT_FILES["evaluator"]
+        if not eval_path.exists():
+            return False, f"missing {eval_path.name}"
+        text = eval_path.read_text(errors="replace")
+        m = re.search(r"##\s*Overall Score\s+(\d+(?:\.\d+)?)\s*/\s*10", text)
+        if not m:
+            m = re.search(r"##\s*Overall Score\s+(\d+(?:\.\d+)?)", text)
+        if not m:
+            return False, f"no score in round {r}"
+        scores.append(float(m.group(1)))
+
+    if len(scores) < 2:
+        return False, "insufficient score history"
+
+    # If both scores >= 8 → converged (publishable)
+    if all(s >= 8 for s in scores):
+        return True, "publishable threshold reached (≥8 for 2 consecutive rounds)"
+
+    # If both in same ±0.5 band AND case_memory shows same failed approach
+    # repeated → plateau (only if max score < 6; productive 7/7 pair should continue).
+    if abs(scores[0] - scores[1]) <= 0.5 and max(scores) < 6:
+        case_path = research_path / CASE_MEMORY_FILE
+        if case_path.exists():
+            text = case_path.read_text(errors="replace")
+            # Check if the last two cases name the same experiment / failure
+            case_matches = list(re.finditer(r"##\s*Case\s+(\d+)\s+·[^·]+·\s*Score:\s*([^\n]+)", text))
+            if len(case_matches) >= 2:
+                last_two = case_matches[-2:]
+                # Extract experiment lines
+                experiments: list[str] = []
+                for cm in last_two:
+                    start = cm.end()
+                    end = text.find("\n---", start)
+                    if end == -1:
+                        end = len(text)
+                    block = text[start:end]
+                    em = re.search(r"\*\*Experiment:\*\*\s*(.+)", block)
+                    experiments.append(em.group(1).strip() if em else "")
+                if len(experiments) == 2 and experiments[0] and experiments[0] == experiments[1]:
+                    return True, "plateaued — same approach repeated with same low score"
+
+    return False, "not converged"
+
+
 def run_long_research(
     topic: str,
     working_dir: str,
@@ -2905,6 +3663,7 @@ def run_long_research(
     num_parallel: int = 1,
     scrape_mode: bool = False,
     prompt_profile: str = "base",
+    min_rounds: int = 2,
 ) -> None:
     """
     Run the full autonomous multi-agent research pipeline.
@@ -2920,6 +3679,7 @@ def run_long_research(
                          roles (researcher, hypothesis, evaluator). Default 1 = sequential.
         scrape_mode:     If True (or auto-detected from topic keywords), gives the
                          researcher the crawl_tree tool and a scraping-focused prompt.
+        min_rounds:      Never converge/complete before this round count.
     """
     # Auto-detect scrape intent from topic
     topic_lower = topic.lower()
@@ -2937,8 +3697,15 @@ def run_long_research(
     # and read by the coder/debugger agents in every subsequent round.
     _probe_hardware(str(research_dir))
 
+    # Build the resource inventory (inventory.md) — pipeline-owned, deterministic
+    # catalog of every local file with schema/excerpt. Agents reference inventory
+    # IDs (R001, R002, …) in their handoffs instead of rediscovering schemas.
+    inventory_path = _build_inventory(str(research_dir), working_dir)
+    display.print_info(f"  inventory.md built: {inventory_path}")
+
     # Scan working directory for user-supplied local files (PDFs, CSVs, data, etc.)
-    # Include them in the brief so every agent knows they exist from round 1.
+    # The inventory above has the canonical schema-aware view; the brief still
+    # mentions filenames so agents know to consult inventory.md.
     local_files = [
         p for p in Path(working_dir).iterdir()
         if p.is_file() and p.suffix.lower() in LOCAL_DATA_EXTENSIONS
@@ -2949,8 +3716,10 @@ def run_long_research(
         local_files_block = (
             f"\n\nLOCAL FILES IN WORKING DIR — provided by the user as primary input:\n"
             f"{file_list}\n"
-            "Agents MUST read these files before doing any web searches. "
-            "They take precedence over anything found online."
+            "Schema-aware preview for every file is in research/inventory.md "
+            "(read it first — saves rediscovering layouts each round). Agents MUST "
+            "read these files before doing any web searches. They take precedence "
+            "over anything found online."
         )
         display.print_info(
             f"  Local data files detected: {', '.join(p.name for p in local_files)}"
@@ -2976,8 +3745,21 @@ def run_long_research(
     completed_early = False
 
     for round_num in range(1, max_rounds + 1):
+        _skeptic_revised_this_round = False
         round_dir = research_dir / f"round_{round_num:03d}"
         round_dir.mkdir(parents=True, exist_ok=True)
+
+        # Refresh inventory.md (cheap, bounded scan — picks up files downloaded
+        # during prior rounds). External Resources section is preserved.
+        if round_num > 1:
+            _build_inventory(str(research_dir), working_dir)
+
+        # Refresh forbidden_approaches.md from prior rounds' case_memory.md.
+        # Round 1: no-op (nothing to forbid yet). Round > 1: pipeline distils
+        # failed approaches into a hard-constraint file the Designer must consult.
+        forbidden_path = _build_forbidden_approaches(str(research_dir), round_num)
+        if forbidden_path is not None:
+            display.print_info(f"  forbidden_approaches.md refreshed for round {round_num}")
 
         display.print_round_header(round_num, max_rounds, str(round_dir))
 
@@ -3088,6 +3870,87 @@ def run_long_research(
             # before the coder runs. Creates minimal stubs if agents failed.
             if role == "hypothesis":
                 _ensure_handoff_stubs(round_dir, research_dir, working_dir, round_num)
+                # Pipeline regex sanity check: catch synthetic-data proposals that
+                # slipped past the prompt rules. Append a PIPELINE OVERRIDE block
+                # to 02_experiment.md if violated; the Coder reads it inline.
+                ok_design, reason = _validate_experiment_design(round_dir, round_num)
+                if not ok_design:
+                    display.print_info(
+                        f"  [yellow]⚠ Designer violated DATA-PLAN BAN: {reason}[/yellow]"
+                    )
+                    _append_pipeline_override(round_dir, reason)
+
+            # After skeptic: parse review verdict. If OBJECT, re-run Designer once.
+            if role == "skeptic":
+                review_path = round_dir / OUTPUT_FILES["skeptic"]
+                if review_path.exists():
+                    review_text = review_path.read_text(errors="replace")
+                    if re.search(r"##\s*Verdict:\s*OBJECT", review_text, re.IGNORECASE):
+                        # Only one revision per round — avoid ping-pong
+                        if not _skeptic_revised_this_round:
+                            display.print_info(
+                                "  [yellow]⚠ Skeptic OBJECTED — re-running Designer once[/yellow]"
+                            )
+                            # Extract required revisions
+                            rev_match = re.search(
+                                r"##\s*Required Revisions\s*\n(.*?)(?:\n## |\Z)",
+                                review_text,
+                                re.DOTALL | re.IGNORECASE,
+                            )
+                            revisions = rev_match.group(1).strip() if rev_match else ""
+                            # Prepend forbidden context if round > 1
+                            fb_path = Path(research_dir) / FORBIDDEN_FILE
+                            forbidden_block = ""
+                            if round_num >= 2 and fb_path.exists():
+                                forbidden_block = fb_path.read_text(errors="replace")[:1200]
+                            # Build revised brief
+                            old_brief = brief
+                            revised_brief = (
+                                old_brief
+                                + "\n\n---\n"
+                                + "SKEPTIC OBJECTED (pre-hoc review). The following "
+                                + "revisions are REQUIRED:\n"
+                                + f"{revisions}\n\n"
+                                + "Rewrite `## Data Plan`, `## Algorithm / Approach`, "
+                                + "and `## Experiment` sections of 02_experiment.md "
+                                + "to address EVERY objection above. Re-write the file "
+                                + "— do not append."
+                            )
+                            if forbidden_block:
+                                revised_brief += (
+                                    f"\n\n{forbidden_block}\n"
+                                    + "If any previous FAILED APPROACH resembles this "
+                                    + "design, you MUST add a `## Why This Differs` "
+                                    + "section justifying concrete structural differences."
+                                )
+                            # Re-run Designer
+                            designer_model = overrides.get("hypothesis") or ROLES["hypothesis"]["default_model"]
+                            _run_specialist(
+                                role="hypothesis",
+                                model=designer_model,
+                                topic=topic,
+                                round_num=round_num,
+                                max_rounds=max_rounds,
+                                round_dir=str(round_dir),
+                                research_dir=str(research_dir),
+                                working_dir=working_dir,
+                                brief=revised_brief,
+                                client=client,
+                                scrape_mode=scrape_mode,
+                                prompt_profile=prompt_profile,
+                            )
+                            _skeptic_revised_this_round = True
+                            # Re-validate after revision
+                            ok_design2, reason2 = _validate_experiment_design(round_dir, round_num)
+                            if not ok_design2:
+                                display.print_info(
+                                    f"  [yellow]⚠ Designer still violated DATA-PLAN BAN after revision: {reason2}[/yellow]"
+                                )
+                                _append_pipeline_override(round_dir, reason2)
+                        else:
+                            display.print_info(
+                                "  [yellow]⚠ Skeptic OBJECTED but 1 revision already used — proceeding[/yellow]"
+                            )
 
         # Update findings.md and case_memory.md from round outputs — pipeline-owned, not LLM-owned
         _update_findings(
@@ -3103,15 +3966,23 @@ def run_long_research(
             topic=topic,
         )
 
-        # Parse orchestrator synthesis → next brief
-        synthesis_path = round_dir / OUTPUT_FILES["orchestrator"]
-        brief, is_complete = _parse_synthesis(str(synthesis_path))
+        # Convergence detection: automatic early-stop when scores are high or plateaued
+        converged, reason = _check_convergence(str(research_dir), round_num)
+        if converged and round_num >= min_rounds:
+            display.print_info(f"  🎯 Convergence: {reason}")
+            is_complete = True
+            brief = ""
+            synthesis_path = round_dir / OUTPUT_FILES["orchestrator"]
+        else:
+            # Parse orchestrator synthesis → next brief
+            synthesis_path = round_dir / OUTPUT_FILES["orchestrator"]
+            brief, is_complete = _parse_synthesis(str(synthesis_path))
 
         # Stagnation detection: two consecutive rounds with zero numerical results
         if round_num >= 2:
-            prev_dir = research_dir / f"round_{round_num:03d}"
-            prev2_dir = research_dir / f"round_{max(1, round_num - 1):03d}"
-            if not _has_numerical_results(prev_dir) and not _has_numerical_results(prev2_dir):
+            curr_dir = research_dir / f"round_{round_num:03d}"
+            prev_dir = research_dir / f"round_{max(1, round_num - 1):03d}"
+            if not _has_numerical_results(curr_dir) and not _has_numerical_results(prev_dir):
                 pivot_prefix = (
                     "⚠ MANDATORY PIVOT: Two consecutive rounds produced zero numerical results.\n"
                     "The current experimental approach is blocked by tooling or environment issues.\n"

@@ -12,6 +12,7 @@ def main():
     p.add_argument("task_file", help="Path to task.md (topic comes from file contents)")
     p.add_argument("--working-dir", required=True)
     p.add_argument("--rounds", type=int, default=3)
+    p.add_argument("--min-rounds", type=int, default=2, help="Never converge/complete before this round")
     p.add_argument("--model", default=None, help="Override all role models")
     p.add_argument("--resume", action="store_true")
     args = p.parse_args()
@@ -29,6 +30,7 @@ def main():
         max_rounds=args.rounds,
         model_overrides=model_overrides,
         resume=args.resume,
+        min_rounds=args.min_rounds,
     )
 
 if __name__ == "__main__":

@@ -62,10 +62,13 @@ It ships several modes:
 <tr><td>🌐 <strong>Web research</strong></td><td>DuckDuckGo search, full-page extraction from any URL or PDF, BFS website crawler</td></tr>
 <tr><td>🖥️ <strong>Shell &amp; filesystem</strong></td><td>Read, write, edit files; run arbitrary shell commands; install packages via uv / pip</td></tr>
 <tr><td>📡 <strong>Streaming output</strong></td><td>Reasoning and tool calls appear in real time in a Rich TUI or web UI</td></tr>
-<tr><td>🔬 <strong>Multi-agent research</strong></td><td>7 specialist roles collaborate over multiple rounds; cumulative <code>findings.md</code> updated each round</td></tr>
+<tr><td>🔬 <strong>Multi-agent research</strong></td><td>8 specialist roles collaborate over multiple rounds; cumulative <code>findings.md</code> updated each round</td></tr>
 <tr><td>📊 <strong>Self-contained reports</strong></td><td>Every round produces plots; final HTML report has all images embedded as base64 — shareable as a single file</td></tr>
-<tr><td>🛡️ <strong>Data integrity</strong></td><td>Synthetic / dummy data is forbidden — the pipeline pivots to alternatives or reports BLOCKED rather than fabricating</td></tr>
+<tr><td>🛡️ <strong>Data integrity</strong></td><td>Synthetic data forbidden — pre-hoc Skeptic catches bad plans before Coder burns tokens</td></tr>
+<tr><td>🧮 <strong>Resource inventory</strong></td><td>Deterministic pipeline-built file catalog (inventory IDs R001…); stops repeated schema re-discovery</td></tr>
 <tr><td>⚡ <strong>GPU-aware</strong></td><td>Hardware probe at startup; CUDA utilisation enforced in all generated code</td></tr>
+<tr><td>🎯 <strong>Convergence detection</strong></td><td>Auto-early-stop when scores plateau or publishable threshold (≥8/10) is reached two rounds in a row</td></tr>
+<tr><td>🔒 <strong>Anti-regression memory</strong></td><td>Failed approaches from prior rounds are locked in <code>forbidden_approaches.md</code>; Designer must justify any overlap</td></tr>
 <tr><td>🏠 <strong>Local mode</strong></td><td>Full functionality via Ollama — no API key needed, complete privacy</td></tr>
 <tr><td>💾 <strong>Resumable</strong></td><td>Research, vault, and batch runs persist to disk and resume exactly where they left off</td></tr>
 <tr><td>🔒 <strong>Permission modes</strong></td><td><code>autonomous</code> (default), <code>controlled</code> (ask for everything), or <code>supervised</code> (ask before file edits only)</td></tr>
@@ -284,29 +287,35 @@ Common flags accepted by `ots` and `ots run`:
 
 ## Long-research pipeline
 
-`/long-research` deploys **7 specialist agents** that collaborate over multiple fully autonomous rounds:
+`/long-research` deploys **8 specialist agents** that collaborate over multiple fully autonomous rounds:
 
 ```
 ╔══════════════════════════════════════════════════════════════╗
 ║  Round N                                                     ║
 ╠══════════════════════════════════════════════════════════════╣
-║  🔬 Researcher        Targeted scout — SOTA, datasets,       ║
-║                       verified access status, handoff brief  ║
+║  🔬 Researcher       Reads inventory.md first, then scouts   ║
+║                      SOTA papers, datasets, verified access  ║
 ║     ↓                                                        ║
-║  💡 Designer          Commits to ONE concrete experiment:    ║
-║                       pseudocode, data plan, success metric  ║
+║  💡 Designer         Commits to ONE concrete experiment:     ║
+║                      pseudocode, data plan, success metric   ║
 ║     ↓                                                        ║
-║  💻 Coder             Implements on real data, GPU-aware,    ║
-║                       produces plots + key_results.json      ║
+║  🤨 Skeptic          Pre-hoc PI review — catches circular    ║
+║                      eval, missing inventory IDs, simulator  ║
+║                      without earned failure BEFORE the Coder ║
 ║     ↓                                                        ║
-║  🐛 Debugger          Independent verifier — runs code,      ║
-║                       checks GPU use, validates numbers      ║
+║  💻 Coder            Implements on real data, GPU-aware,     ║
+║                      produces plots + key_results.json       ║
 ║     ↓                                                        ║
-║  ⚖️  Evaluator         Critical scoring vs SOTA; generates   ║
-║                       a colour-coded scores bar chart        ║
+║  🐛 Debugger         Independent verifier — runs code,       ║
+║                      checks GPU use, validates numbers       ║
 ║     ↓                                                        ║
-║  🧠 Orchestrator      Synthesises findings → writes precise  ║
-║                       brief for the next round               ║
+║  ⚖️  Evaluator        Critical scoring vs SOTA; generates   ║
+║                      a colour-coded scores bar chart         ║
+║     ↓                                                        ║
+║  🧠 Orchestrator     Synthesises findings → writes precise   ║
+║                      brief for the next round. Early stop    ║
+║                      if convergence detected (≥8/10 or       ║
+║                      plateaued failed approach)              ║
 ╚══════════════════════════════════════════════════════════════╝
   ↓  (after all rounds)
   📊 Master Reporter — self-contained HTML report with EMBEDDED
@@ -330,10 +339,11 @@ Common flags accepted by `ots` and `ots run`:
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--rounds N` | `5` | Maximum number of research rounds |
-| `--all MODEL` | *per-role defaults* | Use one model for all 7 agents |
+| `--all MODEL` | *per-role defaults* | Use one model for all 8 agents |
 | `--overseer MODEL` | *per-role default* | Override the orchestrator model only |
 | `--role ROLE MODEL` | — | Override a single role (e.g. `--role coder qwen3-coder-30b`) |
-| `--parallel N` | `1` | Run multiple rounds in parallel where possible |
+| `--parallel N` | `1` | Run multiple independent copies of researcher / designer / evaluator in parallel |
+| `--min-rounds N` | `2` | Never auto-terminate before this many rounds (protects against premature convergence) |
 | `--resume` | off | Resume an interrupted run (skips agents whose output already exists) |
 | `--scrape` | off | Enable Playwright-backed website crawling for the Researcher |
 
@@ -363,6 +373,7 @@ research/
 ├── round_001/
 │   ├── 01_literature.md       ← papers, datasets (with verified access status)
 │   ├── 02_experiment.md       ← experiment design, pseudocode, data plan
+│   ├── 02b_skeptic_review.md  ← pre-hoc PI review: PASS / OBJECT verdict + issues
 │   ├── 03_code/
 │   │   ├── *.py               ← experiment scripts
 │   │   ├── IMPLEMENTATION.md  ← approach, skipped steps, results summary
@@ -458,6 +469,7 @@ Default per-role assignments for the long-research pipeline (override with `--al
 |------|---------------|
 | Researcher | `deepseek-v3.2-thinking` |
 | Designer (hypothesis) | `deepseek-v3.2-thinking` |
+| Skeptic | `deepseek-v3.2-thinking` |
 | Coder | `kimi-k2.6` |
 | Debugger | `qwen3-coder-30b` |
 | Evaluator | `kimi-k2.6` |
