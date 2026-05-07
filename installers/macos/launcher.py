@@ -36,7 +36,7 @@ def main():
         cli()
     else:
         # Launched from Finder — show GUI launcher
-        from installers.macos.gui_launcher import run_launcher
+        from octoslave.mac_launcher import run_launcher
         run_launcher()
 
 

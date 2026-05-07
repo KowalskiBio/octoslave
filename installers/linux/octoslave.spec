@@ -43,7 +43,7 @@ hidden = [
 ]
 
 a = Analysis(
-    [str(OCTOSLAVE_PKG / "main.py")],
+    [str(ROOT / "installers" / "cli_entry.py")],
     pathex=[str(ROOT)],
     binaries=[],
     datas=datas,

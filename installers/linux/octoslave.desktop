@@ -5,6 +5,6 @@ Exec=ots %U
 Icon=octoslave
 Terminal=true
 Type=Application
-Categories=Development;Science;Utility;
+Categories=Science;Development;
 Keywords=AI;assistant;coding;research;chatbot;
 StartupNotify=true

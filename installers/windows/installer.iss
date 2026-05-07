@@ -27,11 +27,12 @@ AllowNoIcons=yes
 LicenseFile=..\..\LICENSE
 OutputDir=..\..\dist
 OutputBaseFilename=OctoSlave-Windows-Installer
-SetupIconFile=..\..\octoslave\web\static\logo.png
+; SetupIconFile requires .ico — omitted until an .ico asset is added to the repo
 Compression=lzma2/max
 SolidCompression=yes
 WizardStyle=modern
-WizardSmallImageFile=..\..\octoslave\web\static\logo.png
+; WizardSmallImageFile accepts .bmp or .png in Inno Setup 6, but skip for now
+; WizardSmallImageFile=..\..\octoslave\web\static\logo.png
 PrivilegesRequired=lowest
 PrivilegesRequiredOverridesAllowed=dialog
 ChangesEnvironment=yes

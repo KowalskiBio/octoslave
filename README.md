@@ -90,6 +90,20 @@ It ships several modes:
 
 **Requirements:** Python 3.10+ and an [e-INFRA CZ LLM](https://llm.ai.e-infra.cz) or [NVIDIA NIM](https://build.nvidia.com) API key — *or* Ollama for fully local mode.
 
+### Download installer — no Python required
+
+The easiest way to install OctoSlave. Each package bundles Python and all dependencies — just download and run.
+
+| Platform | Download | Notes |
+|----------|----------|-------|
+| **macOS** | [OctoSlave-macOS.dmg](https://github.com/karatedava/octoslave/releases/latest/download/OctoSlave-macOS.dmg) | Double-click → drag to Applications → open the app |
+| **Windows** | [OctoSlave-Windows-Installer.exe](https://github.com/karatedava/octoslave/releases/latest/download/OctoSlave-Windows-Installer.exe) | Run the installer wizard → follow the prompts |
+| **Linux** | [OctoSlave-x86_64.AppImage](https://github.com/karatedava/octoslave/releases/latest/download/OctoSlave-x86_64.AppImage) | `chmod +x OctoSlave-x86_64.AppImage && ./OctoSlave-x86_64.AppImage` |
+
+> All three installers launch a **setup wizard** on first run that guides you through choosing a backend, entering your API key, and picking a default model. No prior configuration needed.
+
+---
+
 ### One-shot installer (macOS / Linux)
 
 The included `scripts/install.sh` picks a Python ≥ 3.10, sets up `pipx` if it's missing, and installs OctoSlave into an isolated environment in one go:
