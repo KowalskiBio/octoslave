@@ -15,6 +15,14 @@ OLLAMA_BASE_URL = "http://localhost:11434/v1"
 NIM_BASE_URL = "https://integrate.api.nvidia.com/v1"
 NIM_DEFAULT_MODEL = "nvidia/nemotron-3-super-120b-a12b"
 
+# Built-in backends are first-class — they have dedicated config keys and
+# helpers (e.g. Ollama auto-discovery). Anything else is a user-defined
+# OpenAI-compatible provider stored in `custom_providers`.
+BUILTIN_BACKENDS = ("einfra", "ollama", "nim")
+
+# Reserved provider IDs that user cannot pick when adding a custom provider.
+RESERVED_PROVIDER_IDS = set(BUILTIN_BACKENDS)
+
 KNOWN_MODELS = [
     "deepseek-v3.2",
     "deepseek-v3.2-thinking",
@@ -323,8 +331,17 @@ def get_role_models(cfg: dict | None = None) -> dict[str, str]:
     elif backend == "ollama":
         pulled = ollama_list_models(cfg.get("ollama_url", OLLAMA_BASE_URL))
         base = assign_local_models(pulled) if pulled else dict(EINFRA_ROLE_MODELS)
-    else:  # einfra
-        base = dict(EINFRA_ROLE_MODELS)
+    else:
+        # einfra OR a user-defined custom provider — fall back to a uniform
+        # default. The user can override per-role via the committee UI.
+        provider = get_custom_provider(cfg, backend)
+        default_model = (provider or {}).get("default_model") or cfg.get("default_model") or DEFAULT_MODEL
+        if backend in BUILTIN_BACKENDS:
+            base = dict(EINFRA_ROLE_MODELS)
+        else:
+            # For a custom provider we have no per-role recommendation; assign
+            # the provider's default model to every role so the pipeline runs.
+            base = {role: default_model for role in PIPELINE_ROLES}
 
     # Apply any per-backend custom overrides saved by the user
     custom = cfg.get(f"role_models_{backend}") or {}
@@ -338,34 +355,15 @@ def save_role_model(role: str, model: str, backend: str) -> None:
     key = f"role_models_{backend}"
     role_models = dict(cfg.get(key) or {})
     role_models[role] = model
-    save_config(
-        api_key=cfg.get("api_key", ""),
-        base_url=cfg.get("base_url", BASE_URL),
-        default_model=cfg.get("default_model", DEFAULT_MODEL),
-        backend=cfg.get("backend", "einfra"),
-        ollama_url=cfg.get("ollama_url", OLLAMA_BASE_URL),
-        permission_mode=cfg.get("permission_mode", "autonomous"),
-        nim_api_key=cfg.get("nim_api_key"),
-        nim_url=cfg.get("nim_url"),
-        **{key: role_models},
-    )
+    cfg[key] = role_models
+    _write_config_file(cfg)
 
 
 def reset_role_models(backend: str) -> None:
     """Clear all custom per-role overrides for the given backend."""
     cfg = load_config()
-    key = f"role_models_{backend}"
-    save_config(
-        api_key=cfg.get("api_key", ""),
-        base_url=cfg.get("base_url", BASE_URL),
-        default_model=cfg.get("default_model", DEFAULT_MODEL),
-        backend=cfg.get("backend", "einfra"),
-        ollama_url=cfg.get("ollama_url", OLLAMA_BASE_URL),
-        permission_mode=cfg.get("permission_mode", "autonomous"),
-        nim_api_key=cfg.get("nim_api_key"),
-        nim_url=cfg.get("nim_url"),
-        **{key: {}},
-    )
+    cfg[f"role_models_{backend}"] = {}
+    _write_config_file(cfg)
 
 
 # ---------------------------------------------------------------------------
@@ -378,18 +376,35 @@ def list_models(cfg: dict | None = None) -> list[str]:
     - einfra: query /v1/models live; fall back to KNOWN_MODELS on failure
     - ollama: poll the local server; fall back to KNOWN_MODELS
     - nim:    query /v1/models live; fall back to NIM_KNOWN_MODELS on failure
+    - custom: query the provider's /v1/models live; fall back to provider.models
     """
     if cfg is None:
         cfg = {}
-    if cfg.get("backend") == "ollama":
+    backend = cfg.get("backend", "einfra")
+    if backend == "ollama":
         pulled = ollama_list_models(cfg.get("ollama_url", OLLAMA_BASE_URL))
         return pulled if pulled else list(KNOWN_MODELS)
-    if cfg.get("backend") == "nim":
+    if backend == "nim":
         live = nim_list_models(
             cfg.get("nim_url", NIM_BASE_URL),
             cfg.get("nim_api_key", ""),
         )
         return live if live else list(NIM_KNOWN_MODELS)
+    if backend not in BUILTIN_BACKENDS:
+        provider = get_custom_provider(cfg, backend)
+        if provider:
+            live = einfra_list_models(
+                provider.get("base_url", ""),
+                provider.get("api_key", "") or "x",  # some hosts (vLLM) accept anything
+            )
+            if live:
+                return live
+            saved = provider.get("models") or []
+            if saved:
+                return list(saved)
+            default = provider.get("default_model")
+            return [default] if default else []
+        # Fall through to einfra defaults if the provider was deleted
     # einfra
     live = einfra_list_models(
         cfg.get("base_url", BASE_URL),
@@ -403,7 +418,7 @@ def load_config() -> dict:
         "api_key": "",
         "base_url": BASE_URL,
         "default_model": DEFAULT_MODEL,
-        "backend": "einfra",        # "einfra" | "ollama" | "nim"
+        "backend": "einfra",        # "einfra" | "ollama" | "nim" | <custom-id>
         "ollama_url": OLLAMA_BASE_URL,
         "permission_mode": "autonomous",  # "autonomous" | "controlled" | "supervised"
         "nim_api_key": "",
@@ -411,6 +426,7 @@ def load_config() -> dict:
         "role_models_einfra": {},
         "role_models_nim": {},
         "role_models_ollama": {},
+        "custom_providers": [],     # list of {id, name, base_url, api_key, default_model, models?}
     }
     # Env vars override config file
     if os.environ.get("OCTOSLAVE_API_KEY"):
@@ -447,14 +463,31 @@ def load_config() -> dict:
             for key, env_var in _env_keys.items():
                 if not os.environ.get(env_var) and saved.get(key):
                     config[key] = saved[key]
-            # role_models_* are dicts — no env-var override, just load from file
-            for rm_key in ("role_models_einfra", "role_models_nim", "role_models_ollama"):
-                if isinstance(saved.get(rm_key), dict):
-                    config[rm_key] = saved[rm_key]
+            # Custom providers list — only loaded from file
+            providers = saved.get("custom_providers")
+            if isinstance(providers, list):
+                config["custom_providers"] = [
+                    p for p in providers if isinstance(p, dict) and p.get("id")
+                ]
+            # role_models_* are dicts — no env-var override, just load from file.
+            # We also pick up role_models_<custom-id> dynamically.
+            for k, v in saved.items():
+                if k.startswith("role_models_") and isinstance(v, dict):
+                    config[k] = v
         except (json.JSONDecodeError, OSError):
             pass
 
     return config
+
+
+def _write_config_file(cfg: dict) -> None:
+    """Persist the full config dict to disk. Caller is responsible for the
+    contents — load_config() returns a complete dict ready to be re-saved."""
+    CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+    # Drop any keys we never want on disk (defensive — none currently)
+    data = dict(cfg)
+    with open(CONFIG_FILE, "w") as f:
+        json.dump(data, f, indent=2)
 
 
 def save_config(
@@ -469,7 +502,11 @@ def save_config(
     role_models_einfra: dict | None = None,
     role_models_nim: dict | None = None,
     role_models_ollama: dict | None = None,
+    custom_providers: list | None = None,
+    **extra_role_models: dict,
 ):
+    """Backwards-compatible save. Preserves any keys not passed explicitly,
+    including dynamic `role_models_<custom-id>` entries from disk."""
     # Load existing config to preserve values not explicitly provided
     _existing: dict = {}
     if CONFIG_FILE.exists():
@@ -480,7 +517,8 @@ def save_config(
             pass
 
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-    data = {
+    data = dict(_existing)  # start from existing so unknown keys survive
+    data.update({
         "api_key": api_key,
         "base_url": base_url,
         "default_model": default_model,
@@ -492,6 +530,230 @@ def save_config(
         "role_models_einfra":  role_models_einfra  if role_models_einfra  is not None else _existing.get("role_models_einfra",  {}),
         "role_models_nim":     role_models_nim      if role_models_nim     is not None else _existing.get("role_models_nim",     {}),
         "role_models_ollama":  role_models_ollama   if role_models_ollama  is not None else _existing.get("role_models_ollama",  {}),
-    }
+        "custom_providers":    custom_providers     if custom_providers    is not None else _existing.get("custom_providers",    []),
+    })
+    # Dynamic role_models_<custom-id> overrides — accept kwargs starting with
+    # "role_models_" so callers can persist per-custom-backend role mappings.
+    for k, v in extra_role_models.items():
+        if k.startswith("role_models_") and isinstance(v, dict):
+            data[k] = v
     with open(CONFIG_FILE, "w") as f:
         json.dump(data, f, indent=2)
+
+
+# ---------------------------------------------------------------------------
+# Custom provider CRUD
+# ---------------------------------------------------------------------------
+
+# Allowed `id` characters: lowercase letters, digits, dash, underscore.
+_PROVIDER_ID_RE = None  # lazily compiled
+
+
+def _normalize_provider_id(raw: str) -> str:
+    """Lowercase, strip, collapse whitespace to '-'."""
+    return "-".join((raw or "").strip().lower().split())
+
+
+def _validate_provider_id(pid: str) -> str | None:
+    """Return error message if invalid, else None."""
+    import re
+    global _PROVIDER_ID_RE
+    if _PROVIDER_ID_RE is None:
+        _PROVIDER_ID_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,31}$")
+    if not pid:
+        return "Provider id is required."
+    if pid in RESERVED_PROVIDER_IDS:
+        return f"'{pid}' is reserved (built-in backend)."
+    if not _PROVIDER_ID_RE.match(pid):
+        return ("Provider id must be 1–32 chars: lowercase letters, digits, "
+                "dash or underscore; must start with a letter or digit.")
+    return None
+
+
+def _normalize_provider(p: dict) -> dict:
+    """Return a clean provider dict from raw user input."""
+    pid = _normalize_provider_id(p.get("id") or p.get("name") or "")
+    name = (p.get("name") or pid or "").strip() or pid
+    base_url = (p.get("base_url") or "").strip().rstrip("/")
+    api_key = (p.get("api_key") or "").strip()
+    default_model = (p.get("default_model") or "").strip()
+    models = p.get("models") or []
+    if isinstance(models, str):
+        models = [m.strip() for m in models.split(",") if m.strip()]
+    return {
+        "id": pid,
+        "name": name,
+        "base_url": base_url,
+        "api_key": api_key,
+        "default_model": default_model,
+        "models": list(models),
+    }
+
+
+def get_custom_providers(cfg: dict | None = None) -> list[dict]:
+    """Return the list of user-defined custom providers."""
+    if cfg is None:
+        cfg = load_config()
+    providers = cfg.get("custom_providers") or []
+    return [p for p in providers if isinstance(p, dict) and p.get("id")]
+
+
+def get_custom_provider(cfg: dict | None, provider_id: str) -> dict | None:
+    """Return the custom provider with this id, or None."""
+    if not provider_id:
+        return None
+    for p in get_custom_providers(cfg):
+        if p.get("id") == provider_id:
+            return p
+    return None
+
+
+def add_custom_provider(provider: dict) -> dict:
+    """Add a new custom provider. Raises ValueError on validation errors."""
+    p = _normalize_provider(provider)
+    err = _validate_provider_id(p["id"])
+    if err:
+        raise ValueError(err)
+    if not p["base_url"]:
+        raise ValueError("base_url is required.")
+    cfg = load_config()
+    existing = cfg.get("custom_providers") or []
+    if any(e.get("id") == p["id"] for e in existing):
+        raise ValueError(f"Provider id '{p['id']}' already exists.")
+    existing.append(p)
+    cfg["custom_providers"] = existing
+    _write_config_file(cfg)
+    return p
+
+
+def update_custom_provider(provider_id: str, fields: dict) -> dict:
+    """Patch an existing custom provider. id is immutable."""
+    cfg = load_config()
+    existing = cfg.get("custom_providers") or []
+    for i, e in enumerate(existing):
+        if e.get("id") == provider_id:
+            merged = {**e, **fields, "id": provider_id}
+            existing[i] = _normalize_provider(merged)
+            cfg["custom_providers"] = existing
+            _write_config_file(cfg)
+            return existing[i]
+    raise ValueError(f"Provider '{provider_id}' not found.")
+
+
+def remove_custom_provider(provider_id: str) -> bool:
+    """Remove a custom provider; if the active backend was this provider,
+    fall back to einfra. Returns True if removed."""
+    cfg = load_config()
+    existing = cfg.get("custom_providers") or []
+    new_list = [e for e in existing if e.get("id") != provider_id]
+    if len(new_list) == len(existing):
+        return False
+    cfg["custom_providers"] = new_list
+    if cfg.get("backend") == provider_id:
+        cfg["backend"] = "einfra"
+    # Drop any role_models_<id> entries for the removed provider
+    cfg.pop(f"role_models_{provider_id}", None)
+    _write_config_file(cfg)
+    return True
+
+
+# ---------------------------------------------------------------------------
+# Unified backend → (api_key, base_url, default_model, name) resolver
+# ---------------------------------------------------------------------------
+
+def resolve_backend(cfg: dict | None = None) -> dict:
+    """
+    Single source of truth for converting ``cfg["backend"]`` into the
+    arguments needed to construct an OpenAI-compatible client. Returns:
+        {
+          "backend":  str,            # the active backend id
+          "kind":     "builtin"|"custom",
+          "name":     str,            # human-readable label
+          "api_key":  str,
+          "base_url": str,
+          "default_model": str,
+        }
+    Falls back to einfra when the configured backend doesn't resolve
+    (e.g. a deleted custom provider).
+    """
+    if cfg is None:
+        cfg = load_config()
+    backend = cfg.get("backend", "einfra")
+
+    if backend == "ollama":
+        return {
+            "backend": "ollama",
+            "kind": "builtin",
+            "name": "Local (Ollama)",
+            "api_key": "ollama",
+            "base_url": cfg.get("ollama_url", OLLAMA_BASE_URL),
+            "default_model": cfg.get("default_model", DEFAULT_MODEL),
+        }
+    if backend == "nim":
+        return {
+            "backend": "nim",
+            "kind": "builtin",
+            "name": "NVIDIA NIM",
+            "api_key": cfg.get("nim_api_key", ""),
+            "base_url": cfg.get("nim_url", NIM_BASE_URL),
+            "default_model": cfg.get("default_model", NIM_DEFAULT_MODEL),
+        }
+    if backend not in BUILTIN_BACKENDS:
+        provider = get_custom_provider(cfg, backend)
+        if provider:
+            return {
+                "backend": backend,
+                "kind": "custom",
+                "name": provider.get("name") or backend,
+                "api_key": provider.get("api_key", ""),
+                "base_url": provider.get("base_url", ""),
+                "default_model": provider.get("default_model") or cfg.get("default_model", ""),
+            }
+        # provider was deleted — fall through to einfra
+    return {
+        "backend": "einfra",
+        "kind": "builtin",
+        "name": "e-INFRA CZ",
+        "api_key": cfg.get("api_key", ""),
+        "base_url": cfg.get("base_url", BASE_URL),
+        "default_model": cfg.get("default_model", DEFAULT_MODEL),
+    }
+
+
+def list_providers(cfg: dict | None = None) -> list[dict]:
+    """Return the full provider catalog for the UI dropdown — built-ins first,
+    then user-defined. Each entry: {id, name, kind, configured}."""
+    if cfg is None:
+        cfg = load_config()
+    providers = [
+        {
+            "id": "einfra",
+            "name": "e-INFRA CZ",
+            "kind": "builtin",
+            "configured": bool(cfg.get("api_key")),
+        },
+        {
+            "id": "ollama",
+            "name": "Local (Ollama)",
+            "kind": "builtin",
+            "configured": True,  # availability checked at switch time
+        },
+        {
+            "id": "nim",
+            "name": "NVIDIA NIM",
+            "kind": "builtin",
+            "configured": bool(cfg.get("nim_api_key")),
+        },
+    ]
+    for p in get_custom_providers(cfg):
+        providers.append({
+            "id": p["id"],
+            "name": p.get("name") or p["id"],
+            "kind": "custom",
+            "configured": bool(p.get("base_url")),
+            "base_url": p.get("base_url", ""),
+            "default_model": p.get("default_model", ""),
+            "has_api_key": bool(p.get("api_key")),
+            "models": p.get("models") or [],
+        })
+    return providers

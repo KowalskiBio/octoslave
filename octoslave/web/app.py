@@ -32,6 +32,9 @@ from ..config import (
     load_config,
     get_role_models, save_role_model, reset_role_models,
     PIPELINE_ROLES,
+    resolve_backend, list_providers,
+    get_custom_providers, get_custom_provider,
+    add_custom_provider, update_custom_provider, remove_custom_provider,
 )
 from ..research import PIPELINE, run_long_research
 
@@ -493,7 +496,7 @@ async def ws_endpoint(websocket: WebSocket):
                 await send({"type": "ok", "working_dir": wd})
 
             elif mtype == "switch_backend":
-                """Handle backend switching (ollama / einfra / nim)."""
+                """Handle backend switching (ollama / einfra / nim / <custom-id>)."""
                 try:
                     from ..config import (
                         save_config, ollama_is_running, ollama_list_models,
@@ -547,7 +550,7 @@ async def ws_endpoint(websocket: WebSocket):
                             state["model"] = chosen
                             await send({"type": "config_updated", "backend": "nim", "model": chosen})
                             await send({"type": "info", "text": f"Switched to NVIDIA NIM with {chosen}"})
-                    else:
+                    elif backend == "einfra":
                         # Switch to e-INFRA CZ
                         api_key = cfg.get("api_key", "")
                         if not api_key:
@@ -564,8 +567,127 @@ async def ws_endpoint(websocket: WebSocket):
                             state["model"] = DEFAULT_MODEL
                             await send({"type": "config_updated", "backend": "einfra", "model": DEFAULT_MODEL})
                             await send({"type": "info", "text": f"Switched to e-INFRA CZ mode with {DEFAULT_MODEL}"})
+                    else:
+                        # Custom user-defined provider
+                        provider = get_custom_provider(cfg, backend)
+                        if not provider:
+                            await send({"type": "error", "text": f"Unknown provider '{backend}'."})
+                        elif not provider.get("base_url"):
+                            await send({"type": "error", "text": f"Provider '{provider.get('name')}' has no base_url configured."})
+                        else:
+                            chosen = requested_model or provider.get("default_model") or ""
+                            save_config(
+                                cfg.get("api_key", ""),
+                                cfg.get("base_url", ""),
+                                chosen or cfg.get("default_model", DEFAULT_MODEL),
+                                backend=backend,
+                                ollama_url=cfg.get("ollama_url", ""),
+                                nim_api_key=cfg.get("nim_api_key", ""),
+                                nim_url=cfg.get("nim_url", ""),
+                            )
+                            state["backend"] = backend
+                            state["model"] = chosen
+                            await send({"type": "config_updated", "backend": backend, "model": chosen, "name": provider.get("name", backend)})
+                            await send({"type": "info", "text": f"Switched to {provider.get('name', backend)}" + (f" with {chosen}" if chosen else "")})
                 except Exception as exc:
                     await send({"type": "error", "text": f"Backend switch failed: {exc}"})
+
+            elif mtype == "list_providers":
+                try:
+                    cfg = load_config()
+                    await send({
+                        "type": "providers",
+                        "providers": list_providers(cfg),
+                        "active": cfg.get("backend", "einfra"),
+                    })
+                except Exception as exc:
+                    await send({"type": "error", "text": f"List providers failed: {exc}"})
+
+            elif mtype == "add_provider":
+                try:
+                    p = add_custom_provider(msg.get("provider") or {})
+                    cfg = load_config()
+                    await send({
+                        "type": "providers",
+                        "providers": list_providers(cfg),
+                        "active": cfg.get("backend", "einfra"),
+                        "added": p["id"],
+                    })
+                    await send({"type": "info", "text": f"✓ Provider '{p['name']}' added"})
+                except ValueError as exc:
+                    await send({"type": "error", "text": str(exc)})
+                except Exception as exc:
+                    await send({"type": "error", "text": f"Add provider failed: {exc}"})
+
+            elif mtype == "update_provider":
+                try:
+                    pid = msg.get("id") or ""
+                    fields = msg.get("provider") or {}
+                    p = update_custom_provider(pid, fields)
+                    cfg = load_config()
+                    await send({
+                        "type": "providers",
+                        "providers": list_providers(cfg),
+                        "active": cfg.get("backend", "einfra"),
+                        "updated": p["id"],
+                    })
+                    await send({"type": "info", "text": f"✓ Provider '{p['name']}' updated"})
+                except ValueError as exc:
+                    await send({"type": "error", "text": str(exc)})
+                except Exception as exc:
+                    await send({"type": "error", "text": f"Update provider failed: {exc}"})
+
+            elif mtype == "remove_provider":
+                try:
+                    pid = msg.get("id") or ""
+                    ok = remove_custom_provider(pid)
+                    cfg = load_config()
+                    if ok:
+                        # If the active provider was removed, the config's backend
+                        # was reset to einfra by remove_custom_provider; reflect
+                        # that in this connection's state too.
+                        if state.get("backend") == pid:
+                            state["backend"] = cfg.get("backend", "einfra")
+                            state["model"] = cfg.get("default_model", "")
+                            await send({"type": "config_updated",
+                                        "backend": state["backend"],
+                                        "model": state["model"]})
+                        await send({"type": "info", "text": f"Provider '{pid}' removed"})
+                    else:
+                        await send({"type": "error", "text": f"Provider '{pid}' not found"})
+                    await send({
+                        "type": "providers",
+                        "providers": list_providers(cfg),
+                        "active": cfg.get("backend", "einfra"),
+                    })
+                except Exception as exc:
+                    await send({"type": "error", "text": f"Remove provider failed: {exc}"})
+
+            elif mtype == "test_provider":
+                """Probe a provider's /v1/models endpoint to verify connectivity.
+                Accepts {provider: {base_url, api_key}} OR {id}."""
+                try:
+                    p = msg.get("provider") or {}
+                    if not p and msg.get("id"):
+                        cfg = load_config()
+                        p = get_custom_provider(cfg, msg["id"]) or {}
+                    base_url = (p.get("base_url") or "").strip().rstrip("/")
+                    api_key = (p.get("api_key") or "").strip()
+                    if not base_url:
+                        await send({"type": "provider_test",
+                                    "ok": False, "error": "base_url is required"})
+                    else:
+                        from ..config import einfra_list_models as _live_models
+                        models = _live_models(base_url, api_key or "x")
+                        await send({
+                            "type": "provider_test",
+                            "ok": bool(models),
+                            "models": models,
+                            "count": len(models),
+                            "error": "" if models else "No models returned (check URL/key).",
+                        })
+                except Exception as exc:
+                    await send({"type": "provider_test", "ok": False, "error": str(exc)})
 
             elif mtype == "pull_model":
                 """Handle pulling a model from Ollama."""
@@ -609,17 +731,10 @@ async def ws_endpoint(websocket: WebSocket):
                 state["model"] = model
                 state["working_dir"] = working_dir
                 state["running"] = True
-                _backend = state.get("backend") or cfg.get("backend", "einfra")
-                if _backend == "nim":
-                    _api_key = cfg.get("nim_api_key", "")
-                    _base_url = cfg.get("nim_url", "")
-                elif _backend == "ollama":
-                    _api_key = "ollama"
-                    _base_url = cfg.get("ollama_url", "")
-                else:
-                    _api_key = cfg.get("api_key", "")
-                    _base_url = cfg.get("base_url", "")
-                client = make_client(_api_key, _base_url)
+                if state.get("backend"):
+                    cfg["backend"] = state["backend"]
+                _resolved = resolve_backend(cfg)
+                client = make_client(_resolved["api_key"], _resolved["base_url"])
 
                 def chat_fn(txt=message_text, mdl=model, wd=working_dir, new=new_conv, 
                            pp=prompt_profile, pm=permission_mode):
@@ -667,16 +782,11 @@ async def ws_endpoint(websocket: WebSocket):
                 state["model"] = model
                 state["working_dir"] = working_dir
                 state["running"] = True
-                _backend = state.get("backend") or cfg.get("backend", "einfra")
-                if _backend == "nim":
-                    _api_key = cfg.get("nim_api_key", "")
-                    _base_url = cfg.get("nim_url", "")
-                elif _backend == "ollama":
-                    _api_key = "ollama"
-                    _base_url = cfg.get("ollama_url", "")
-                else:
-                    _api_key = cfg.get("api_key", "")
-                    _base_url = cfg.get("base_url", "")
+                if state.get("backend"):
+                    cfg["backend"] = state["backend"]
+                _resolved = resolve_backend(cfg)
+                _api_key = _resolved["api_key"]
+                _base_url = _resolved["base_url"]
                 client = make_client(_api_key, _base_url)
 
                 def parallel_fn(txt=message_text, mdl=model, wd=working_dir,
@@ -788,21 +898,14 @@ async def ws_endpoint(websocket: WebSocket):
                 state["working_dir"] = working_dir
                 state["running"] = True
 
+                if state.get("backend"):
+                    cfg["backend"] = state["backend"]
                 if model_all:
                     model_overrides = {role: model_all for role in PIPELINE_ROLES}
                 else:
                     model_overrides = get_role_models(cfg)
-                _backend = state.get("backend") or cfg.get("backend", "einfra")
-                if _backend == "nim":
-                    _api_key = cfg.get("nim_api_key", "")
-                    _base_url = cfg.get("nim_url", "")
-                elif _backend == "ollama":
-                    _api_key = "ollama"
-                    _base_url = cfg.get("ollama_url", "")
-                else:
-                    _api_key = cfg.get("api_key", "")
-                    _base_url = cfg.get("base_url", "")
-                client = make_client(_api_key, _base_url)
+                _resolved = resolve_backend(cfg)
+                client = make_client(_resolved["api_key"], _resolved["base_url"])
 
                 def research_fn(t=topic, r=rounds, mo=model_overrides, wd=working_dir, res=resume):
                     display.set_event_callback(make_emit())
@@ -864,7 +967,8 @@ async def ws_endpoint(websocket: WebSocket):
             elif mtype == "reset_role_models":
                 cfg = load_config()
                 backend = msg.get("backend") or state.get("backend") or cfg.get("backend", "einfra")
-                if backend not in ("einfra", "nim", "ollama"):
+                # Allow built-ins or any registered custom provider
+                if backend not in ("einfra", "nim", "ollama") and not get_custom_provider(cfg, backend):
                     await send({"type": "error", "text": f"Unknown backend '{backend}'"})
                     continue
                 reset_role_models(backend)

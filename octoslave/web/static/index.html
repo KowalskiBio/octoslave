@@ -92,6 +92,7 @@
   <div class="tab-pane active" id="tab-chat">
     <div class="chat-config-bar">
       <select id="backend-select" class="backend-select" title="Provider / Backend" data-backend="einfra">
+        <!-- options injected dynamically from /list_providers -->
         <option value="einfra">e-INFRA CZ</option>
         <option value="ollama">Local (Ollama)</option>
         <option value="nim">NVIDIA NIM</option>
@@ -225,6 +226,7 @@
             <div class="field-group">
               <label class="field-label">Provider</label>
               <select id="research-backend-select" class="backend-select" data-backend="einfra">
+                <!-- options injected dynamically from /list_providers -->
                 <option value="einfra">e-INFRA CZ</option>
                 <option value="ollama">Local (Ollama)</option>
                 <option value="nim">NVIDIA NIM</option>
@@ -416,7 +418,9 @@
       </div>
 
       <div class="settings-note">
-        Config is read-only in web mode. Edit <code>~/.octoslave/config.json</code> or use environment variables to change settings.
+        Built-in backend keys (e-INFRA CZ, NVIDIA NIM) are read-only here —
+        edit <code>~/.octoslave/config.json</code> or use environment variables to change them.
+        To use any other OpenAI-compatible API, add it as a custom provider below.
       </div>
 
       <div class="settings-field">
@@ -446,11 +450,66 @@
 
       <button class="btn-primary" id="settings-refresh-btn">Refresh Config</button>
     </div>
+
+    <!-- ── Custom Providers card ─────────────────────────────── -->
+    <div class="settings-card settings-card-wide">
+      <div class="settings-card-header">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/>
+          <polyline points="3.27 6.96 12 12.01 20.73 6.96"/>
+          <line x1="12" y1="22.08" x2="12" y2="12"/>
+        </svg>
+        <h2>Custom Providers</h2>
+      </div>
+
+      <div class="settings-note">
+        Bring your own OpenAI-compatible endpoint (OpenAI, Together AI, Groq,
+        a self-hosted vLLM, etc.). Once added it appears in the
+        <strong>Provider</strong> dropdown alongside the built-in backends.
+      </div>
+
+      <div id="providers-list" class="providers-list"></div>
+
+      <details class="provider-add-form" id="provider-add-form">
+        <summary class="provider-add-summary">+ Add a provider</summary>
+        <div class="provider-add-body">
+          <div class="settings-field">
+            <label>ID <span class="provider-hint">(short slug, e.g. <code>openai</code>)</span></label>
+            <input type="text" id="prov-id" placeholder="openai" autocomplete="off">
+          </div>
+          <div class="settings-field">
+            <label>Display name</label>
+            <input type="text" id="prov-name" placeholder="OpenAI" autocomplete="off">
+          </div>
+          <div class="settings-field">
+            <label>Base URL <span class="provider-hint">(must end with <code>/v1</code>)</span></label>
+            <input type="text" id="prov-base-url" placeholder="https://api.openai.com/v1" autocomplete="off">
+          </div>
+          <div class="settings-field">
+            <label>API key <span class="provider-hint">(leave blank for unauthenticated endpoints)</span></label>
+            <input type="password" id="prov-api-key" placeholder="sk-..." autocomplete="off">
+          </div>
+          <div class="settings-field">
+            <label>Default model</label>
+            <input type="text" id="prov-default-model" placeholder="gpt-4o" autocomplete="off">
+          </div>
+          <div class="settings-field">
+            <label>Known models <span class="provider-hint">(comma-separated, optional — used if /v1/models is unavailable)</span></label>
+            <input type="text" id="prov-models" placeholder="gpt-4o, gpt-4o-mini" autocomplete="off">
+          </div>
+          <div class="provider-form-actions">
+            <button class="btn-secondary btn-sm" id="prov-test-btn" type="button">Test connection</button>
+            <button class="btn-primary btn-sm" id="prov-save-btn" type="button">Save provider</button>
+            <span id="prov-form-status" class="provider-form-status"></span>
+          </div>
+        </div>
+      </details>
+    </div>
   </div>
 
 </main>
 
-<script type="module" src="/static/js/app.js?v=20260509b"></script>
+<script type="module" src="/static/js/app.js?v=20260507a"></script>
 
 </body>
 </html>

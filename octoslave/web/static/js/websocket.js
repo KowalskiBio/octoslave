@@ -134,6 +134,54 @@ function setConnected(ok) {
 }
 
 /**
+ * Cached provider catalog (filled by populateBackendSelects).
+ * Used to resolve backend-id → display name when no full catalog is present.
+ */
+const providerLookup = new Map();
+// Seed with built-ins so labels work before list_providers returns.
+[
+  { id: 'einfra', name: 'e-INFRA CZ' },
+  { id: 'ollama', name: 'Local (Ollama)' },
+  { id: 'nim',    name: 'NVIDIA NIM' },
+].forEach(p => providerLookup.set(p.id, p));
+
+export function getProviderName(backendId) {
+  const p = providerLookup.get(backendId);
+  return (p && p.name) || backendId;
+}
+
+/**
+ * Populate both backend-select dropdowns from a {providers, active} payload.
+ */
+export function populateBackendSelects(providers, active) {
+  if (!Array.isArray(providers)) return;
+  // Update the lookup
+  providerLookup.clear();
+  providers.forEach(p => providerLookup.set(p.id, p));
+
+  const fillSelect = (sel) => {
+    if (!sel) return;
+    const prev = sel.value;
+    sel.innerHTML = '';
+    providers.forEach(p => {
+      const opt = document.createElement('option');
+      opt.value = p.id;
+      opt.textContent = p.name + (p.kind === 'custom' ? ' ✦' : '');
+      if (!p.configured) opt.title = `${p.name} is not configured yet`;
+      sel.appendChild(opt);
+    });
+    const target = active || prev;
+    if (target && providers.some(p => p.id === target)) {
+      sel.value = target;
+      sel.dataset.backend = target;
+    }
+  };
+  fillSelect(document.getElementById('backend-select'));
+  fillSelect(document.getElementById('research-backend-select'));
+  applyBackend(active || providerLookup.keys().next().value || 'einfra');
+}
+
+/**
  * Update the backend select dropdown and sidebar pill to reflect the active backend.
  */
 function applyBackend(backend) {
@@ -149,9 +197,12 @@ function applyBackend(backend) {
   }
   const pill = document.getElementById('backend-pill');
   if (pill) {
-    const labels = { einfra: 'einfra', ollama: 'local', nim: 'nim' };
-    pill.textContent = labels[backend] || backend;
+    // Built-in pills get short labels; custom providers show the id verbatim
+    // so users can tell their providers apart at a glance.
+    const builtinLabels = { einfra: 'einfra', ollama: 'local', nim: 'nim' };
+    pill.textContent = builtinLabels[backend] || backend;
     pill.dataset.backend = backend;
+    pill.title = getProviderName(backend);
   }
 }
 
@@ -247,12 +298,12 @@ export function onConfigUpdated(msg) {
 
   const infoFn = window.appendChatInfo;
   if (infoFn) {
-    if (msg.backend === 'nim') {
-      infoFn(`🟦 Switched to [bold]NVIDIA NIM[/bold] with ${msg.model}`);
-    } else if (msg.backend === 'ollama') {
-      infoFn(`🟢 Switched to [bold]Local (Ollama)[/bold] mode with ${msg.model}`);
-    } else {
-      infoFn(`🟣 Switched to [bold]e-INFRA CZ[/bold] mode with ${msg.model}`);
-    }
+    const name = msg.name || getProviderName(msg.backend);
+    let icon = '🟣';
+    if (msg.backend === 'nim') icon = '🟦';
+    else if (msg.backend === 'ollama') icon = '🟢';
+    else if (msg.backend && msg.backend !== 'einfra') icon = '🟡';
+    const modelTail = msg.model ? ` with ${msg.model}` : '';
+    infoFn(`${icon} Switched to [bold]${name}[/bold]${modelTail}`);
   }
 }

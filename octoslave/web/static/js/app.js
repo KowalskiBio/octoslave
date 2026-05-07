@@ -5,8 +5,9 @@
 console.log('[app.js] Module loaded');
 
 import {
-  WS_URL, connectWebSocket, sendMsg, applyConfig, populateModelSelects, onConfigUpdated
-} from './websocket.js?v=20260429';
+  WS_URL, connectWebSocket, sendMsg, applyConfig, populateModelSelects, onConfigUpdated,
+  populateBackendSelects, getProviderName
+} from './websocket.js?v=20260507';
 import { handleSlashCommand } from './slash-commands.js?v=20260429';
 import {
   toggleHistory, browseDir, refreshHistory, refreshFileTree, viewFile,
@@ -44,6 +45,8 @@ function handleServerMessage(msg) {
     return;
   }
   if (msg.type === 'role_models') { onRoleModels(msg); return; }
+  if (msg.type === 'providers') { onProviders(msg); return; }
+  if (msg.type === 'provider_test') { onProviderTest(msg); return; }
 
   switch (msg.type) {
     case 'config':        applyConfig(msg.data); break;
@@ -904,8 +907,7 @@ function initApp() {
     const researchSel = document.getElementById('research-backend-select');
     if (chatSel) { chatSel.value = backend; chatSel.dataset.backend = backend; }
     if (researchSel) { researchSel.value = backend; researchSel.dataset.backend = backend; }
-    const backendNames = { einfra: 'e-INFRA CZ', ollama: 'Local (Ollama)', nim: 'NVIDIA NIM' };
-    appendChatInfo(`🔄 Switching to [bold]${backendNames[backend] || backend}[/bold] backend…`);
+    appendChatInfo(`🔄 Switching to [bold]${getProviderName(backend)}[/bold] backend…`);
     sendMsg({ type: 'switch_backend', backend });
     setTimeout(() => sendMsg({ type: 'list_models' }), 600);
   }
@@ -935,7 +937,11 @@ function initApp() {
   // Settings refresh button
   document.getElementById('settings-refresh-btn')?.addEventListener('click', () => {
     sendMsg({ type: 'get_config' });
+    sendMsg({ type: 'list_providers' });
   });
+
+  // Custom-provider management
+  initProviderForm();
 
   // Research start button
   document.getElementById('research-start-btn')?.addEventListener('click', () => {
@@ -994,8 +1000,9 @@ function initApp() {
   // Initialize WebSocket connection
   connectWebSocket(
     () => {
-      // On open - request config and models; reset any stuck running state
+      // On open - request config, providers, and models; reset stuck state
       sendMsg({ type: 'get_config' });
+      sendMsg({ type: 'list_providers' });
       sendMsg({ type: 'list_models' });
       if (window.appState.running) {
         window.appState.running = false;
@@ -1104,6 +1111,140 @@ function onRoleModels(msg) {
   committeeState.effective = msg.effective || {};
   committeeState.custom    = msg.custom || {};
   if (committeeState.expanded) renderCommittee();
+}
+
+// ──────────────────────────────────────────────────────────────
+// Custom providers (Settings tab)
+// ──────────────────────────────────────────────────────────────
+
+function onProviders(msg) {
+  populateBackendSelects(msg.providers || [], msg.active);
+  renderProvidersList(msg.providers || [], msg.active);
+}
+
+function renderProvidersList(providers, active) {
+  const host = document.getElementById('providers-list');
+  if (!host) return;
+  host.innerHTML = providers.map(p => {
+    const tag = p.kind === 'custom' ? 'custom' : 'built-in';
+    const isActive = p.id === active;
+    const activeTag = isActive ? '<span class="provider-tag tag-active">active</span>' : '';
+    const url = p.base_url ? `<span class="provider-url">${esc(p.base_url)}</span>` : '<span class="provider-url"></span>';
+    const actions = p.kind === 'custom'
+      ? `<div class="provider-actions">
+           <button class="btn-link" data-act="use" data-id="${esc(p.id)}">use</button>
+           <button class="btn-link btn-link-danger" data-act="remove" data-id="${esc(p.id)}">remove</button>
+         </div>`
+      : `<div class="provider-actions">
+           <button class="btn-link" data-act="use" data-id="${esc(p.id)}">use</button>
+         </div>`;
+    return `
+      <div class="provider-row${p.kind === 'builtin' ? ' provider-builtin' : ''}${isActive ? ' provider-active' : ''}">
+        <span class="provider-name">${esc(p.name)}</span>
+        <span class="provider-id">${esc(p.id)}</span>
+        ${url}
+        <span class="provider-tag">${tag}</span>
+        ${activeTag}
+        ${actions}
+      </div>`;
+  }).join('');
+
+  // Wire row buttons
+  host.querySelectorAll('button[data-act]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const id = btn.dataset.id;
+      const act = btn.dataset.act;
+      if (act === 'use') {
+        sendMsg({ type: 'switch_backend', backend: id });
+        setTimeout(() => sendMsg({ type: 'list_models' }), 600);
+      } else if (act === 'remove') {
+        if (!confirm(`Remove provider "${id}"?`)) return;
+        sendMsg({ type: 'remove_provider', id });
+      }
+    });
+  });
+}
+
+function _provFormValues() {
+  return {
+    id:            document.getElementById('prov-id')?.value || '',
+    name:          document.getElementById('prov-name')?.value || '',
+    base_url:      document.getElementById('prov-base-url')?.value || '',
+    api_key:       document.getElementById('prov-api-key')?.value || '',
+    default_model: document.getElementById('prov-default-model')?.value || '',
+    models:        document.getElementById('prov-models')?.value || '',
+  };
+}
+
+function _setProvFormStatus(text, kind) {
+  const el = document.getElementById('prov-form-status');
+  if (!el) return;
+  el.textContent = text || '';
+  el.classList.remove('status-ok', 'status-fail');
+  if (kind === 'ok') el.classList.add('status-ok');
+  if (kind === 'fail') el.classList.add('status-fail');
+}
+
+function _resetProvForm() {
+  ['prov-id', 'prov-name', 'prov-base-url', 'prov-api-key',
+   'prov-default-model', 'prov-models'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.value = '';
+  });
+  _setProvFormStatus('');
+}
+
+function onProviderTest(msg) {
+  if (msg.ok) {
+    const n = msg.count || (msg.models || []).length;
+    _setProvFormStatus(`✓ Connected — ${n} model${n === 1 ? '' : 's'} returned`, 'ok');
+  } else {
+    _setProvFormStatus(`✗ ${msg.error || 'connection failed'}`, 'fail');
+  }
+}
+
+function initProviderForm() {
+  const idInp = document.getElementById('prov-id');
+  if (idInp) {
+    idInp.addEventListener('input', () => {
+      // Lowercase + slugify in real time
+      const v = idInp.value.toLowerCase().replace(/[^a-z0-9_-]+/g, '-');
+      if (v !== idInp.value) idInp.value = v;
+      // Default the display name to the id if name is still empty
+      const nameInp = document.getElementById('prov-name');
+      if (nameInp && !nameInp.dataset.touched) {
+        nameInp.value = idInp.value;
+      }
+    });
+  }
+  const nameInp = document.getElementById('prov-name');
+  nameInp?.addEventListener('input', () => { nameInp.dataset.touched = '1'; });
+
+  document.getElementById('prov-test-btn')?.addEventListener('click', () => {
+    const v = _provFormValues();
+    if (!v.base_url) {
+      _setProvFormStatus('Base URL is required to test.', 'fail');
+      return;
+    }
+    _setProvFormStatus('Testing connection…');
+    sendMsg({ type: 'test_provider', provider: v });
+  });
+
+  document.getElementById('prov-save-btn')?.addEventListener('click', () => {
+    const v = _provFormValues();
+    if (!v.id) { _setProvFormStatus('ID is required.', 'fail'); return; }
+    if (!v.base_url) { _setProvFormStatus('Base URL is required.', 'fail'); return; }
+    if (!v.default_model) { _setProvFormStatus('Default model is required.', 'fail'); return; }
+    _setProvFormStatus('Saving…');
+    sendMsg({ type: 'add_provider', provider: v });
+    // The server reply (providers + info) will reset the form via onProviders
+    // when the new id appears in the list — also clear here optimistically.
+    setTimeout(() => {
+      _resetProvForm();
+      const form = document.getElementById('provider-add-form');
+      if (form) form.open = false;
+    }, 300);
+  });
 }
 
 function initResearchCommittee() {
