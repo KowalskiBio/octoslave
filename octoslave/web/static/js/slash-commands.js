@@ -19,17 +19,110 @@ export function handleSlashCommand(text) {
     case '/help':
     case '/?':
       appendChatInfo('📚 Available commands:\n' +
-        '  /help              Show this help\n' +
-        '  /clear             Clear chat and reset conversation\n' +
-        '  /model [name]      List or switch model\n' +
-        '  /dir [path]        Show or change working directory\n' +
-        '  /profile [name]    Show or set prompt profile (base/coder/analyst)\n' +
-        '  /permission [mode] Show or set permission mode (autonomous/controlled/supervised)\n' +
-        '  /compact           Summarize conversation history to save tokens\n' +
-        '  /local [model]     Switch to Ollama (local mode)\n' +
-        '  /einfra            Switch to e-INFRA CZ backend\n' +
-        '  /pull <model>      Pull a model from Ollama\n' +
-        '  /exit, /quit       Close browser tab');
+        '  /help                    Show this help\n' +
+        '  /clear                   Clear chat and reset conversation\n' +
+        '  /model [name]            List or switch model\n' +
+        '  /dir [path]              Show or change working directory\n' +
+        '  /profile [name]          Show or set prompt profile (base/coder/analyst)\n' +
+        '  /permission [mode]       Show or set permission mode\n' +
+        '  /compact                 Summarize conversation history to save tokens\n' +
+        '  /share                   Create a shareable read-only link to this chat\n' +
+        '  /parallel <N> <task>     Run N agents on the same task; judge picks best\n' +
+        '  /local [model]           Switch to Ollama (local mode)\n' +
+        '  /einfra                  Switch to e-INFRA CZ backend\n' +
+        '  /nim [model]             Switch to NVIDIA NIM backend\n' +
+        '  /pull <model>            Pull a model from Ollama\n' +
+        '  /exit, /quit             Close browser tab\n' +
+        '\n[dim]Tip: type [bold]@[/bold] in the composer to attach a file from the working directory.[/dim]');
+      return true;
+
+    case '/share':
+      {
+        const messages = window.appState?.messages || [];
+        if (messages.length < 2) {
+          appendChatInfo('ℹ️ No conversation to share yet.');
+          return true;
+        }
+        appendChatInfo('🔗 Creating shareable link…');
+        const model = document.getElementById('chat-model-select')?.value || '';
+        fetch('/api/share', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            messages,
+            model,
+            title: messages.find(m => m.role === 'user')?.content?.slice(0, 80) || '',
+          }),
+        })
+          .then(r => r.json())
+          .then(data => {
+            if (data.error) {
+              appendChatError('Could not create share: ' + data.error);
+              return;
+            }
+            const url = window.location.origin + data.url;
+            navigator.clipboard?.writeText(url).catch(() => {});
+            appendChatInfo(
+              `✅ Shared: [bold]${url}[/bold]\n[dim]Copied to clipboard. ` +
+              `Anyone with this link can read the conversation.[/dim]`
+            );
+          })
+          .catch(err => appendChatError('Share failed: ' + err));
+      }
+      return true;
+
+    case '/parallel':
+      {
+        const tokens = arg.split(/\s+/).filter(Boolean);
+        let n = 3;
+        let strategy = 'best';
+        let models = null;
+        let profiles = null;
+        let judge = null;
+        const taskTokens = [];
+        for (let i = 0; i < tokens.length; i++) {
+          const t = tokens[i];
+          const low = t.toLowerCase();
+          if (low.startsWith('models=')) {
+            models = t.slice(7).split(',').map(s => s.trim()).filter(Boolean);
+          } else if (low.startsWith('profiles=')) {
+            profiles = t.slice(9).split(',').map(s => s.trim()).filter(Boolean);
+          } else if (low.startsWith('judge=')) {
+            judge = t.slice(6).trim() || null;
+          } else if (/^\d+$/.test(t) && taskTokens.length === 0) {
+            n = Math.max(1, Math.min(8, parseInt(t)));
+          } else if (['best', 'vote', 'merge'].includes(low) && taskTokens.length === 0) {
+            strategy = low;
+          } else {
+            taskTokens.push(t);
+          }
+        }
+        const task = taskTokens.join(' ').trim();
+        if (!task) {
+          appendChatError(
+            'Usage: /parallel [N] [best|vote|merge] [models=A,B,C] ' +
+            '[profiles=coder,analyst,base] [judge=MODEL] <task>'
+          );
+          return true;
+        }
+        const summary = models
+          ? `models=[${models.join(', ')}]`
+          : `model=${document.getElementById('chat-model-select')?.value || '(default)'}`;
+        appendChatInfo(`🐙×${n} Spawning ${n} agents · strategy=[bold]${strategy}[/bold] · ${summary}`);
+        sendMsg({
+          type: 'chat_parallel',
+          message: task,
+          n,
+          strategy,
+          models,
+          profiles,
+          judge_model: judge,
+          model: document.getElementById('chat-model-select')?.value || '',
+          working_dir: document.getElementById('chat-dir-input')?.value || '.',
+          permission_mode: document.getElementById('chat-permission-select')?.value || 'autonomous',
+        });
+        if (window.setChatRunningExternal) window.setChatRunningExternal(true);
+      }
       return true;
       
     case '/clear':
@@ -66,22 +159,27 @@ export function handleSlashCommand(text) {
       return true;
       
     case '/profile':
-      if (!arg) {
-        const currentProfile = document.getElementById('chat-profile-select')?.value;
-        const profileNames = { base: 'Base', coder: 'Coder', analyst: 'Analyst' };
-        appendChatInfo(`📝 Current prompt profile: [bold]${profileNames[currentProfile] || currentProfile}[/bold]\n` +
-          'Available: base, coder, analyst\n' +
-          'Usage: /profile <name>  e.g., /profile coder');
-      } else {
-        const profileArg = arg.toLowerCase();
-        if (['base', 'coder', 'analyst'].includes(profileArg)) {
-          const profileSelect = document.getElementById('chat-profile-select');
-          if (profileSelect) profileSelect.value = profileArg;
-          const profileNames = { base: 'Base', coder: 'Coder', analyst: 'Analyst' };
-          appendChatInfo(`✅ Prompt profile set to [bold]${profileNames[profileArg]}[/bold].\n` +
-            '[dim]Note: Profile will be used for the next task (new conversation).[/dim]');
+      {
+        const profileSelect = document.getElementById('chat-profile-select');
+        const availableProfiles = profileSelect
+          ? Array.from(profileSelect.options).map(o => o.value)
+          : ['base', 'coder', 'analyst', 'biomedic', 'local'];
+        const profileDisplay = p => p.charAt(0).toUpperCase() + p.slice(1);
+
+        if (!arg) {
+          const currentProfile = profileSelect?.value || 'base';
+          appendChatInfo(`📝 Current prompt profile: [bold]${profileDisplay(currentProfile)}[/bold]\n` +
+            `Available: ${availableProfiles.map(profileDisplay).join(', ')}\n` +
+            'Usage: /profile <name>  e.g., /profile coder');
         } else {
-          appendChatError(`❌ Invalid profile '${arg}'. Use: base, coder, or analyst.`);
+          const profileArg = arg.toLowerCase();
+          if (availableProfiles.includes(profileArg)) {
+            if (profileSelect) profileSelect.value = profileArg;
+            appendChatInfo(`✅ Prompt profile set to [bold]${profileDisplay(profileArg)}[/bold].\n` +
+              '[dim]Note: Profile will be used for the next task (new conversation).[/dim]');
+          } else {
+            appendChatError(`❌ Invalid profile '${arg}'. Use: ${availableProfiles.map(profileDisplay).join(', ')}.`);
+          }
         }
       }
       return true;

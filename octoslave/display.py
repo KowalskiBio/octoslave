@@ -33,6 +33,25 @@ def clear_event_callback() -> None:
     _tl.emit = None
 
 
+def get_event_callback():
+    """Return the current thread's emit callback (used to propagate into worker threads)."""
+    return getattr(_tl, "emit", None)
+
+
+def set_silent_cli(silent: bool) -> None:
+    """Suppress this thread's CLI/Rich output (events still flow through emit).
+
+    Used by parallel-mode workers so their per-candidate output doesn't
+    interleave with other workers — instead, the parent thread prints
+    compact prefixed milestone lines.
+    """
+    _tl.silent_cli = silent
+
+
+def _silent() -> bool:
+    return bool(getattr(_tl, "silent_cli", False))
+
+
 def resolve_permission(allow: bool) -> None:
     """Called from the web handler to unblock a pending permission request."""
     global _perm_result, _perm_event
@@ -54,15 +73,15 @@ def _emit(event: dict) -> None:
 
 _THEME = Theme(
     {
-        "tool.name": "bold cyan",
-        "tool.arg": "dim white",
-        "tool.ok": "dim green",
-        "tool.err": "bold red",
-        "info": "dim",
+        "tool.name": "bold #fab283",
+        "tool.arg": "dim #7a7d86",
+        "tool.ok": "dim #7fd88f",
+        "tool.err": "bold #e06c75",
+        "info": "dim #7a7d86",
         "heading": "bold bright_white",
-        "model": "bright_magenta",
-        "prompt": "bold yellow",
-        "mascot": "#1A6B5C",
+        "model": "bold #9d7cd8",
+        "prompt": "bold #f5a742",
+        "mascot": "#fab283",
     }
 )
 
@@ -86,147 +105,76 @@ def is_verbose() -> bool:
 
 
 # ---------------------------------------------------------------------------
-# Pixel-art octopus mascot  (20 chars wide)
+# Session header — minimal, opencode-inspired
 #
-# Encoding key (one ASCII char → rendered glyph + Rich style):
-#   B  body           H  highlight (top of head)
-#   W  eye white      *  pupil (◉)
-#   M  mouth (▄)      T  tentacle
-#   L  curl ╰         R  curl ╯
-#   G  gold chain ◆   g  chain connector ─
-#   P  pendant ◈      (space)  empty
+# Aesthetic: open layout, no surrounding panel, a single accent line under
+# the wordmark, all status info on one row separated by middle dots.
 # ---------------------------------------------------------------------------
 
-_CHAR_MAP: dict[str, tuple[str, str | None]] = {
-    "B": ("█", "bold #1A6B5C"),     # body — deep teal
-    "H": ("█", "bold #2ab89a"),     # top-of-head highlight — lighter teal
-    "W": ("█", "bold #ffffff"),     # eye whites
-    "*": ("◉", "bold #0D3D30"),     # pupil — dark teal bullseye
-    "M": ("▄", "bold #ff99cc"),     # mouth — pink lower-half block
-    "T": ("█", "#0d3d30"),          # tentacles — darker teal
-    "L": ("╰", "#0d3d30"),          # tentacle curl left
-    "R": ("╯", "#0d3d30"),          # tentacle curl right
-    "G": ("◆", "bold #D4A017"),     # gold chain link
-    "g": ("─", "#C8980A"),          # gold chain connector
-    "P": ("◈", "bold #F5D060"),     # gold pendant
-    " ": (" ", None),
-}
-
-# fmt: off
-_RAW_MASCOT = [
-    "     HHHHHHHHHH     ",   # top of head dome (lighter teal)
-    "   BBBBBBBBBBBBBB   ",
-    "  BBBBBBBBBBBBBBBB  ",
-    " BBBBBBBBBBBBBBBBBB ",
-    " BBWWWWWBBBWWWWWBBB ",   # eye whites top  (5 wide, flush to body)
-    " BBWW*WWBBBWW*WWBBB ",   # single centered pupil per eye
-    " BBWWWWWBBBWWWWWBBB ",   # eye whites bottom
-    " BBBBBBBBBBBBBBBBBB ",   # body
-    "   BBBB MMMMM BBBB  ",   # cute pink mouth
-    " GgGgGgGgGgGgGgGgGg ",   # gold chain draped across mantle
-    "    BBBBB P BBBBB   ",   # body below chain + gold pendant ◈
-    "  TT   TT   TT   TT ",   # tentacle stems ×4
-    "  TT   TT   TT   TT ",   #   (two rows for length)
-    " LTTR LTTR LTTR LTTR",   # tentacle curls ╰TT╯
+# 2-row block-letter "octoslave" wordmark. Each letter is 3 cells wide, with
+# 1-space gutters between letters — total 35 cells. Designed to look right in
+# both a 12pt monospace terminal and a tighter VS Code panel.
+#
+#  o   c   t   o   s   l   a   v   e
+_WORDMARK = [
+    "█▀█ █▀▀ ▀█▀ █▀█ █▀▀ █   █▀█ █ █ █▀▀",
+    "█▄█ █▄▄  █  █▄█ ▄▄█ █▄▄ █▀█ ▀▄▀ █▄▄",
 ]
-# fmt: on
-
-assert all(len(r) == 20 for r in _RAW_MASCOT), "mascot row width mismatch"
-_GRID = [[_CHAR_MAP[c] for c in row] for row in _RAW_MASCOT]
 
 
-def _render_mascot() -> Text:
-    text = Text()
-    for row in _GRID:
-        for ch, style in row:
-            if style:
-                text.append(ch, style=style)
-            else:
-                text.append(ch)
-        text.append("\n")
-    return text
+def _backend_palette(backend: str) -> tuple[str, str, str]:
+    """Return (primary_hex, label, accent_glyph_color) for a backend."""
+    if backend == "ollama":
+        return "#7fd88f", "local · ollama", "#7fd88f"
+    if backend == "nim":
+        return "#5c9cf5", "nvidia nim", "#5c9cf5"
+    return "#fab283", "e-infra cz", "#fab283"
 
-
-# ---------------------------------------------------------------------------
-# Session header
-# ---------------------------------------------------------------------------
 
 def print_welcome(model: str, working_dir: str, backend: str = "einfra"):
-    mascot = _render_mascot()
+    """Minimal opencode-style welcome: wordmark, status row, hint."""
+    primary, label, _ = _backend_palette(backend)
 
-    tag = Text()
-    tag.append(" OCTOSLAVE ", style="bold bright_white on #1A6B5C")
+    wd = working_dir if len(working_dir) <= 60 else "…" + working_dir[-58:]
+
+    console.print()
+    for row in _WORDMARK:
+        console.print(f"  [bold {primary}]{row}[/bold {primary}]")
+    console.print(f"  [dim {primary}]{'─' * 35}[/dim {primary}]")
+    console.print()
+
+    status = Text("  ")
+    status.append("●", style=f"bold {primary}")
+    status.append(f"  {label}", style="bold #d0d1d6")
+    status.append("  ·  ", style="dim #4a4d56")
+    status.append(model, style="bold #9d7cd8")
+    status.append("  ·  ", style="dim #4a4d56")
+    status.append(wd, style="dim #7a7d86")
+    console.print(status)
+
+    hint = "  [dim #7a7d86]type[/dim #7a7d86] [bold #d0d1d6]/help[/bold #d0d1d6] " \
+           "[dim #7a7d86]for commands · [/dim #7a7d86][dim #7a7d86]@[/dim #7a7d86]" \
+           "[dim #7a7d86] for files · [/dim #7a7d86][dim #7a7d86]Ctrl+T[/dim #7a7d86]" \
+           "[dim #7a7d86] toggles permission[/dim #7a7d86]"
     if backend == "ollama":
-        tag.append(" LOCAL ", style="bold bright_white on #004a20")
-    elif backend == "nim":
-        tag.append(" NIM ", style="bold bright_white on #004a5c")
-
-    wd = working_dir if len(working_dir) <= 40 else "…" + working_dir[-38:]
-
-    info = Text()
-    if backend == "ollama":
-        info.append("backend ", style="dim")
-        info.append("ollama (local)", style="bold bright_green")
-        info.append("   model ", style="dim")
-        info.append(model, style="bold bright_green")
-    elif backend == "nim":
-        info.append("backend ", style="dim")
-        info.append("NVIDIA NIM", style="bold bright_cyan")
-        info.append("   model ", style="dim")
-        info.append(model, style="bold bright_cyan")
-    else:
-        info.append("model ", style="dim")
-        info.append(model, style="bold bright_magenta")
-    info.append("   dir ", style="dim")
-    info.append(wd, style="dim white")
-
-    hint = Text("  /help for commands", style="dim")
-    if backend == "ollama":
-        hint = Text("  /help · /pull <model> · /einfra to switch back", style="dim")
-    elif backend == "nim":
-        hint = Text("  /help · /model · /einfra to switch back", style="dim")
-
-    body = Text()
-    body.append_text(mascot)
-    body.append("\n")
-    body.append_text(tag)
-    body.append("\n")
-    body.append_text(info)
-    body.append("\n")
-    body.append_text(hint)
-    body.append("\n")
-
-    if backend == "ollama":
-        border = "bright_green"
-    elif backend == "nim":
-        border = "bright_cyan"
-    else:
-        border = "#2ab89a"
-    console.print(
-        Panel.fit(body, border_style=border, padding=(0, 2)),
-        justify="center",
-    )
+        hint = "  [dim #7a7d86]type[/dim #7a7d86] [bold #d0d1d6]/help[/bold #d0d1d6] " \
+               "[dim #7a7d86]· [/dim #7a7d86][bold #d0d1d6]/pull <model>[/bold #d0d1d6] " \
+               "[dim #7a7d86]· [/dim #7a7d86][bold #d0d1d6]/einfra[/bold #d0d1d6] " \
+               "[dim #7a7d86]to switch back[/dim #7a7d86]"
+    console.print(hint)
     console.print()
 
 
 def print_header(model: str, working_dir: str, backend: str = "einfra"):
-    """Compact header for non-interactive (one-shot) runs."""
-    if backend == "ollama":
-        backend_str = "[bold bright_green]ollama (local)[/bold bright_green]"
-        border = "bright_green"
-    elif backend == "nim":
-        backend_str = "[bold bright_cyan]NVIDIA NIM[/bold bright_cyan]"
-        border = "bright_cyan"
-    else:
-        backend_str = "[model]e-INFRA CZ[/model]"
-        border = "#2ab89a"
+    """One-shot run header: same wordmark logic, even more compact."""
+    primary, label, _ = _backend_palette(backend)
+    wd = working_dir if len(working_dir) <= 60 else "…" + working_dir[-58:]
+    console.print()
     console.print(
-        Panel.fit(
-            f"[heading]OctoSlave[/heading]  {backend_str}  [model]{model}[/model]\n"
-            f"[info]dir: {working_dir}[/info]",
-            border_style=border,
-            padding=(0, 2),
-        )
+        f"  [bold {primary}]octoslave[/bold {primary}]  "
+        f"[dim #4a4d56]·[/dim #4a4d56]  [bold #d0d1d6]{label}[/bold #d0d1d6]  "
+        f"[dim #4a4d56]·[/dim #4a4d56]  [bold #9d7cd8]{model}[/bold #9d7cd8]  "
+        f"[dim #4a4d56]·[/dim #4a4d56]  [dim #7a7d86]{wd}[/dim #7a7d86]"
     )
     console.print()
 
@@ -236,7 +184,15 @@ def print_header(model: str, working_dir: str, backend: str = "einfra"):
 # ---------------------------------------------------------------------------
 
 def print_task(task: str):
-    console.print(Panel(task, title="[prompt]◆ Task[/prompt]", border_style="yellow", padding=(0, 1)))
+    """Render the user's task as a quoted block — no bordered panel."""
+    if _silent():
+        return
+    from rich.markup import escape as _escape
+    console.print()
+    # Use a left-side accent rule + the task text; opencode-style quote.
+    lines = task.splitlines() or [task]
+    for ln in lines:
+        console.print(f"  [bold #fab283]▌[/bold #fab283] [bold #d0d1d6]{_escape(ln)}[/bold #d0d1d6]")
     console.print()
 
 
@@ -270,8 +226,9 @@ def _streaming_started() -> bool:
 def stream_start():
     _stream_state.started = False
     _emit({"type": "stream_start"})
-    # CLI-only spinner — skip when a web event callback is active
-    if getattr(_tl, "emit", None) is not None:
+    # CLI-only spinner — skip when a web event callback is active OR this
+    # thread is silenced (parallel-mode worker).
+    if _silent() or getattr(_tl, "emit", None) is not None:
         _stream_state.stop_event = None
         _stream_state.spinner_thread = None
         return
@@ -284,6 +241,8 @@ def stream_start():
 
 def stream_chunk(text: str):
     _emit({"type": "token", "text": text})
+    if _silent():
+        return
     if not _streaming_started():
         # First token — kill the spinner and emit the response prefix
         stop: _threading.Event = getattr(_stream_state, "stop_event", None)
@@ -300,6 +259,9 @@ def stream_chunk(text: str):
 
 def stream_end(had_content: bool):
     _emit({"type": "stream_end"})
+    if _silent():
+        _stream_state.started = False
+        return
     # Stop the spinner if no content ever arrived (e.g. tool-call-only response)
     stop: _threading.Event = getattr(_stream_state, "stop_event", None)
     if stop is not None:
@@ -333,6 +295,8 @@ _TOOL_ICONS = {
 
 def print_tool_call(name: str, args: dict):
     _emit({"type": "tool_call", "name": name, "summary": _tool_summary(name, args)})
+    if _silent():
+        return
     icon = _TOOL_ICONS.get(name, "⚙")
     summary = _tool_summary(name, args)
     console.print(f"  [tool.name]{icon} {name}[/tool.name] [tool.arg]{summary}[/tool.arg]")
@@ -376,6 +340,8 @@ def print_tool_result(name: str, result: str, success: bool):
     from rich.markup import escape as _escape
     _emit({"type": "tool_result", "name": name, "ok": success,
            "preview": (result.strip()[:400] if result.strip() else "")})
+    if _silent():
+        return
     if not result.strip():
         return
     if not success:
@@ -420,23 +386,34 @@ def _tool_summary(name: str, args: dict) -> str:
 # ---------------------------------------------------------------------------
 
 def print_separator():
+    if _silent():
+        return
     console.print(Rule(style="dim"))
 
 
 def print_info(msg: str):
     _emit({"type": "info", "text": msg})
+    if _silent():
+        return
     console.print(f"[info]{msg}[/info]")
 
 
 def print_error(msg: str):
     _emit({"type": "error", "text": msg})
+    if _silent():
+        return
     err_console.print(f"[tool.err]Error:[/tool.err] {msg}")
 
 
 def print_done(iterations: int):
     _emit({"type": "done", "iterations": iterations})
+    if _silent():
+        return
     console.print()
-    console.print(f"[info]─── done ({iterations} iteration{'s' if iterations != 1 else ''}) ───[/info]")
+    console.print(
+        f"  [bold #7fd88f]✓[/bold #7fd88f] [dim #7a7d86]done · "
+        f"{iterations} iteration{'s' if iterations != 1 else ''}[/dim #7a7d86]"
+    )
     console.print()
 
 
@@ -478,17 +455,15 @@ def print_role_models_config(backend: str, effective: dict, custom: dict):
 
 
 def print_plan(plan_text: str):
-    """Display the upfront execution plan."""
+    """Display the upfront execution plan as a quoted block (no panel border)."""
     from rich.markup import escape as _escape
     _emit({"type": "plan", "text": plan_text})
-    console.print(
-        Panel(
-            _escape(plan_text),
-            title="[bold bright_cyan]◆ Plan[/bold bright_cyan]",
-            border_style="bright_cyan",
-            padding=(0, 2),
-        )
-    )
+    if _silent():
+        return
+    console.print()
+    console.print("  [bold #9d7cd8]◆ Plan[/bold #9d7cd8]")
+    for ln in plan_text.splitlines() or [plan_text]:
+        console.print(f"  [dim #9d7cd8]│[/dim #9d7cd8] [#d0d1d6]{_escape(ln)}[/#d0d1d6]")
     console.print()
 
 
@@ -497,13 +472,13 @@ def print_verify(result: str):
     result = result.strip()
     upper = result.upper()
     if upper.startswith("DONE"):
-        style = "bold bright_green"
+        style = "bold #7fd88f"
         label = "✓ Verification"
     elif upper.startswith("PARTIAL"):
-        style = "bold yellow"
+        style = "bold #f5a742"
         label = "⚠ Verification"
     else:
-        style = "bold red"
+        style = "bold #e06c75"
         label = "✗ Verification"
     console.print()
     console.print(f"  [{style}]{label}:[/{style}] [dim]{result}[/dim]")
@@ -520,6 +495,9 @@ def print_help():
         "  [cyan]/verbose[/cyan]                Toggle verbose mode (show full diffs & output live)\n"
         "  [cyan]/clear[/cyan]                  Clear screen and conversation history\n"
         "  [cyan]/compact[/cyan]                Summarise history to save context\n"
+        "  [cyan]/undo[/cyan]                   Rewind the last user/assistant exchange (history only)\n"
+        "  [cyan]/share[/cyan]                  Save the conversation as a read-only share snapshot\n"
+        "  [cyan]/parallel N task[/cyan]        Run N agents on the same task; pick best/vote/merge\n"
         "  [cyan]/long-research TOPIC[/cyan]    Launch multi-agent research pipeline\n"
         "  [cyan]/research-roles[/cyan]         View/set per-role models for research pipeline\n"
         "  [cyan]/vault-improve [PATH][/cyan]   Autonomously improve all notes in vault\n"
@@ -561,7 +539,9 @@ def print_help():
         "  [dim]Pipeline: Planner → [Editor → Verifier → Fix] per batch → Reporter[/dim]\n\n"
         "[dim]Output per round: plots → 03_code/results/, HTML report → 07_report.html[/dim]\n"
         "[dim]Final master report: research/final_report.html  (open in browser)[/dim]\n\n"
-        "[dim]Ctrl+C  pause current agent (progress saved)[/dim]",
+        "[dim]Ctrl+C  pause current agent (progress saved)\n"
+        "Ctrl+T  toggle permission mode (autonomous ↔ controlled)\n"
+        "Type @ in the prompt to autocomplete a file from the working directory[/dim]",
         title="[prompt]Help[/prompt]",
         border_style="dim",
         padding=(0, 2),

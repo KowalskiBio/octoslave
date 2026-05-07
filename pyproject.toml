@@ -4,9 +4,35 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "octoslave"
-version = "0.1.0"
-description = "Autonomous AI research & coding assistant powered by e-INFRA CZ LLM API"
+version = "0.2.0"
+description = "Autonomous AI research & coding assistant — terminal + web UI, multi-agent parallel mode, e-INFRA CZ / NVIDIA NIM / Ollama backends"
+readme = "README.md"
+license = { file = "LICENSE" }
 requires-python = ">=3.10"
+authors = [
+    { name = "David Kopecky", email = "karatedava@seznam.cz" },
+]
+keywords = [
+    "llm", "agent", "ai", "research", "coding-assistant",
+    "autonomous", "ollama", "nvidia-nim", "e-infra",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Environment :: Web Environment",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Software Development",
+    "Topic :: Terminals",
+]
 dependencies = [
     "openai>=1.0.0",
     "rich>=13.0.0",
@@ -23,6 +49,11 @@ dependencies = [
     "uvicorn[standard]>=0.27.0",
     "python-multipart>=0.0.9",
 ]
+
+[project.urls]
+Homepage = "https://octoslave.karamazov.website"
+Repository = "https://github.com/karatedava/octoslave"
+Issues = "https://github.com/karatedava/octoslave/issues"
 
 [project.optional-dependencies]
 web = [
@@ -59,7 +90,13 @@ where = ["."]
 include = ["octoslave*"]
 
 [tool.setuptools.package-data]
-octoslave = ["prompt_profiles/*.md"]
+octoslave = [
+    "prompt_profiles/*.md",
+    "web/static/*.html",
+    "web/static/*.png",
+    "web/static/css/*.css",
+    "web/static/js/*.js",
+]
 
 [tool.uv.workspace]
 members = [

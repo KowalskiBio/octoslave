@@ -10,6 +10,7 @@ from prompt_toolkit.history import FileHistory
 from prompt_toolkit.styles import Style
 from prompt_toolkit.formatted_text import HTML
 from prompt_toolkit.key_binding import KeyBindings
+from prompt_toolkit.completion import Completer, Completion
 
 from . import display
 from .agent import make_client, run_agent, continue_agent, load_session_memory, save_session_memory, MEMORY_FILE
@@ -32,12 +33,14 @@ from .config import (
 
 _PT_STYLE = Style.from_dict(
     {
-        "prompt":         "bold #cc44ff",
-        "prompt-local":   "bold #44ffaa",   # green tint in local mode
-        "model-tag":      "#888888",
-        "input":          "#ffffff",
-        "bottom-toolbar": "bg:#1a001a #666666",
-        "bottom-toolbar-local": "bg:#001a0a #666666",
+        "prompt":         "bold #fab283",
+        "prompt-local":   "bold #7fd88f",   # green tint in local mode
+        "prompt-nim":     "bold #5c9cf5",   # blue tint in nim mode
+        "model-tag":      "#5c9cf5",
+        "input":          "#d0d1d6",
+        "bottom-toolbar": "bg:#16171d #7a7d86",
+        "bottom-toolbar-local": "bg:#16171d #7fd88f",
+        "bottom-toolbar-nim":   "bg:#16171d #5c9cf5",
     }
 )
 
@@ -48,10 +51,21 @@ _HISTORY_FILE = Path.home() / ".octoslave" / "history"
 # Main CLI group
 # ---------------------------------------------------------------------------
 
+try:
+    from importlib.metadata import version as _pkg_version, PackageNotFoundError
+    try:
+        __version__ = _pkg_version("octoslave")
+    except PackageNotFoundError:
+        __version__ = "0.0.0+local"
+except Exception:
+    __version__ = "0.0.0+local"
+
+
 @click.group(
     invoke_without_command=True,
     context_settings={"help_option_names": ["-h", "--help"]},
 )
+@click.version_option(__version__, "-V", "--version", prog_name="octoslave")
 @click.option("-m", "--model", default=None, help="Model to use")
 @click.option("-d", "--dir", "working_dir", default=None, help="Working directory")
 @click.option("--api-key", default=None, envvar="OCTOSLAVE_API_KEY")
@@ -111,7 +125,20 @@ def cli(ctx, model, working_dir, api_key, base_url, local, prompt_profile, permi
 @click.option("--no-plan", "disable_plan", is_flag=True, default=False, help="Skip the upfront planning step")
 @click.option("--verify", is_flag=True, default=False, help="Run a verification pass after the task to grade completion")
 @click.option("--no-memory", "disable_memory", is_flag=True, default=False, help="Do not load or save cross-session memory")
-def run(task, model, working_dir, api_key, base_url, local, prompt_profile, interactive, permission_mode, verbose, new_project, disable_plan, verify, disable_memory):
+@click.option("--parallel", "parallel_n", type=int, default=1,
+              help="Run N agents on the same task in parallel and pick/merge a winner (default: 1)")
+@click.option("--strategy", default="best",
+              type=click.Choice(["best", "vote", "merge"]),
+              help="How to combine parallel agents: best (judge picks), vote (peers grade), merge (synthesise)")
+@click.option("--parallel-models", "parallel_models", default=None,
+              help="Comma-separated models, one per parallel candidate (e.g. 'qwen3-coder-30b,deepseek-v3.2,kimi-k2.6'). "
+                   "Shorter than --parallel? remaining slots reuse the default --model.")
+@click.option("--parallel-profiles", "parallel_profiles", default=None,
+              help="Comma-separated prompt profiles, one per parallel candidate (e.g. 'coder,analyst,biomedic'). "
+                   "Shorter than --parallel? rotates through the list.")
+@click.option("--judge-model", "judge_model", default=None,
+              help="Model used for the judge / vote-tally / merge step (defaults to --model).")
+def run(task, model, working_dir, api_key, base_url, local, prompt_profile, interactive, permission_mode, verbose, new_project, disable_plan, verify, disable_memory, parallel_n, strategy, parallel_models, parallel_profiles, judge_model):
     """Run a single TASK and exit (or continue interactively with -i).
 
     \b
@@ -160,18 +187,75 @@ def run(task, model, working_dir, api_key, base_url, local, prompt_profile, inte
 
     # Show permission mode in header
     if cfg["permission_mode"] == "autonomous":
-        mode_tag = "[bold green]autonomous[/bold green]"
+        mode_tag = "[bold #7fd88f]autonomous[/bold #7fd88f]"
     elif cfg["permission_mode"] == "controlled":
-        mode_tag = "[bold yellow]controlled[/bold yellow]"
+        mode_tag = "[bold #f5a742]controlled[/bold #f5a742]"
     else:
-        mode_tag = "[bold cyan]supervised[/bold cyan]"
-    display.console.print(f"[dim]permission mode: {mode_tag}[/dim]")
+        mode_tag = "[bold #5c9cf5]supervised[/bold #5c9cf5]"
+    display.console.print(f"[dim #7a7d86]permission mode: {mode_tag}[/dim #7a7d86]")
     display.console.print()
 
     display.print_task(task)
 
     client = make_client(cfg["api_key"], cfg["base_url"])
     verify_out: list[str] = []
+
+    if parallel_n > 1:
+        from .parallel import run_parallel_agents
+        if interactive:
+            display.print_info(
+                "Note: --parallel runs single-shot only; --interactive will start "
+                "a fresh session after the parallel run completes."
+            )
+
+        # Parse the per-candidate overrides — comma-separated, trimmed.
+        models_list = [m.strip() for m in parallel_models.split(",")] if parallel_models else None
+        profiles_list = [p.strip() for p in parallel_profiles.split(",")] if parallel_profiles else None
+        if models_list:
+            display.print_info(
+                "  models per candidate: " + ", ".join(
+                    f"#{i}={m}" for i, m in enumerate(models_list)
+                )
+            )
+        if profiles_list:
+            display.print_info(
+                "  profiles per candidate: " + ", ".join(
+                    f"#{i}={p}" for i, p in enumerate(profiles_list)
+                )
+            )
+
+        result = run_parallel_agents(
+            task=task,
+            model=cfg["model"],
+            working_dir=cfg["working_dir"],
+            client=client,
+            n=parallel_n,
+            strategy=strategy,
+            permission_mode=cfg["permission_mode"],
+            enable_plan=enable_plan,
+            enable_memory=enable_memory,
+            models=models_list,
+            profiles=profiles_list,
+            judge_model=judge_model,
+        )
+        # Build a minimal "messages" list so optional --interactive REPL has
+        # context: system prompt is regenerated, but the user/assistant pair
+        # records what just happened.
+        winner = next(
+            (c for c in result["candidates"] if c.index == result["winner"]),
+            None,
+        )
+        messages = []
+        if winner and winner.messages:
+            messages = winner.messages
+        # Memory: persist as one outcome rather than one per candidate.
+        if enable_memory:
+            note = f"parallel({parallel_n}, {strategy}) — {result.get('reason', '')[:160]}"
+            save_session_memory(task, status="completed", note=note)
+        if interactive:
+            _repl_loop(client, cfg, messages)
+        return
+
     messages = run_agent(
         task, cfg["model"], cfg["working_dir"], client,
         prompt_profile, cfg["permission_mode"],
@@ -468,12 +552,12 @@ def _interactive(ctx_obj: dict):
     
     # Show permission mode
     if cfg["permission_mode"] == "autonomous":
-        mode_tag = "[bold green]autonomous[/bold green]"
+        mode_tag = "[bold #7fd88f]autonomous[/bold #7fd88f]"
     elif cfg["permission_mode"] == "controlled":
-        mode_tag = "[bold yellow]controlled[/bold yellow]"
+        mode_tag = "[bold #f5a742]controlled[/bold #f5a742]"
     else:
-        mode_tag = "[bold cyan]supervised[/bold cyan]"
-    display.console.print(f"[dim]permission mode: {mode_tag}[/dim]")
+        mode_tag = "[bold #5c9cf5]supervised[/bold #5c9cf5]"
+    display.console.print(f"[dim #7a7d86]permission mode: {mode_tag}[/dim #7a7d86]")
     display.console.print()
     
     client = make_client(cfg["api_key"], cfg["base_url"])
@@ -485,12 +569,6 @@ def _interactive(ctx_obj: dict):
 def _repl_loop(client, cfg: dict, messages: list[dict]):
     """The main REPL: read input, handle slash commands, run agent."""
     _HISTORY_FILE.parent.mkdir(parents=True, exist_ok=True)
-    session = PromptSession(
-        history=FileHistory(str(_HISTORY_FILE)),
-        style=_PT_STYLE,
-        key_bindings=_make_keybindings(),
-    )
-
     state = {
         "model":        cfg["model"],
         "working_dir":  cfg["working_dir"],
@@ -510,6 +588,14 @@ def _repl_loop(client, cfg: dict, messages: list[dict]):
     }
     if state["verbose"]:
         display.set_verbose(True)
+
+    session = PromptSession(
+        history=FileHistory(str(_HISTORY_FILE)),
+        style=_PT_STYLE,
+        key_bindings=_make_keybindings(state),
+        completer=_AtFileCompleter(state),
+        complete_while_typing=True,
+    )
 
     while True:
         try:
@@ -676,11 +762,11 @@ def _handle_slash(cmd: str, state: dict, cfg: dict, messages: list, client) -> s
         return "ok"
 
     if name == "/profile":
-        from .agent import load_system_prompt
+        from .agent import load_system_prompt, list_prompt_profiles
+        available = list_prompt_profiles() or ["base", "coder", "analyst", "biomedic", "local"]
         if not arg:
             current = state.get("prompt_profile", "base")
-            available = ["base", "coder", "analyst"]
-            display.console.print(f"[dim]Current profile:[/dim] [bold]{current}[/bold]")
+            display.console.print(f"[dim]Current profile:[/dim] [bold #fab283]{current}[/bold #fab283]")
             display.console.print(f"[dim]Available profiles:[/dim] {', '.join(available)}")
             display.console.print("[dim]Usage: /profile <name>  e.g. /profile coder[/dim]")
         else:
@@ -689,7 +775,7 @@ def _handle_slash(cmd: str, state: dict, cfg: dict, messages: list, client) -> s
                 test_prompt = load_system_prompt(arg, state["working_dir"])
                 state["prompt_profile"] = arg
                 display.console.print(
-                    f"[dim]Prompt profile set to[/dim] [bold magenta]{arg}[/bold magenta]"
+                    f"[dim]Prompt profile set to[/dim] [bold #9d7cd8]{arg}[/bold #9d7cd8]"
                 )
                 display.console.print(
                     "[dim]Note: Profile will be used for the next task (new conversation).[/dim]"
@@ -790,6 +876,109 @@ def _handle_slash(cmd: str, state: dict, cfg: dict, messages: list, client) -> s
         else:
             status = "[bold green]ON[/bold green]" if state.get("enable_verify", False) else "[bold red]OFF[/bold red]"
             display.console.print(f"[dim]Verify:[/dim] {status}  [dim]Use /verify on|off to toggle[/dim]")
+        return "ok"
+
+    if name == "/undo":
+        if not messages:
+            display.print_info("Nothing to undo.")
+            return "ok"
+        # Walk backwards and drop everything up to and including the most recent
+        # user turn. This rewinds one user→assistant exchange.
+        dropped = 0
+        last_user_idx = None
+        for i in range(len(messages) - 1, -1, -1):
+            if messages[i].get("role") == "user":
+                last_user_idx = i
+                break
+        if last_user_idx is None:
+            display.print_info("No user turn found in history to undo.")
+            return "ok"
+        dropped = len(messages) - last_user_idx
+        del messages[last_user_idx:]
+        display.print_info(
+            f"⤺ Undid the last turn ({dropped} message(s) dropped from history).\n"
+            "   File-system changes from that turn are NOT reverted — use [bold]git[/bold] "
+            "or your editor to restore files if needed."
+        )
+        return "ok"
+
+    if name == "/share":
+        if not messages or len(messages) < 2:
+            display.print_info("No conversation to share.")
+            return "ok"
+        try:
+            from .agent import make_client as _mk  # noqa: F401
+            shared_dir = Path.home() / ".octoslave" / "shared"
+            shared_dir.mkdir(parents=True, exist_ok=True)
+            import uuid as _uuid, json as _json
+            from datetime import datetime as _dt
+            sid = _uuid.uuid4().hex[:12]
+            title = next((m["content"][:80] for m in messages
+                          if m.get("role") == "user" and m.get("content")),
+                         "OctoSlave conversation")
+            (shared_dir / f"{sid}.json").write_text(_json.dumps({
+                "id": sid, "title": title, "model": state.get("model", ""),
+                "created_at": _dt.now().isoformat(timespec="seconds"),
+                "messages": messages,
+            }, indent=2))
+            display.console.print(
+                f"[dim]Snapshot saved to[/dim] [bold]{shared_dir / (sid + '.json')}[/bold]\n"
+                f"[dim]Run [bold]ots web[/bold] and visit[/dim]  "
+                f"[bold]http://127.0.0.1:7860/shared/{sid}[/bold]  [dim]to view it.[/dim]"
+            )
+        except Exception as exc:
+            display.print_error(f"Could not share: {exc}")
+        return "ok"
+
+    if name == "/parallel":
+        try:
+            import shlex
+            try:
+                tokens = shlex.split(arg)
+            except ValueError:
+                tokens = arg.split()
+            n = 3
+            strategy = "best"
+            models_list: list[str] | None = None
+            profiles_list: list[str] | None = None
+            judge: str | None = None
+            task_tokens: list[str] = []
+            for tok in tokens:
+                low = tok.lower()
+                if low.startswith("models="):
+                    models_list = [m.strip() for m in tok.split("=", 1)[1].split(",") if m.strip()]
+                elif low.startswith("profiles="):
+                    profiles_list = [p.strip() for p in tok.split("=", 1)[1].split(",") if p.strip()]
+                elif low.startswith("judge="):
+                    judge = tok.split("=", 1)[1].strip() or None
+                elif tok.isdigit() and not task_tokens:
+                    n = max(1, min(8, int(tok)))
+                elif low in ("best", "vote", "merge") and not task_tokens:
+                    strategy = low
+                else:
+                    task_tokens.append(tok)
+            task = " ".join(task_tokens).strip()
+            if not task:
+                display.print_error(
+                    "Usage: /parallel [N] [best|vote|merge] "
+                    "[models=A,B,C] [profiles=coder,analyst,base] [judge=MODEL] <task>"
+                )
+                return "ok"
+            from .parallel import run_parallel_agents
+            run_parallel_agents(
+                task=task,
+                model=state["model"],
+                working_dir=state["working_dir"],
+                client=client,
+                n=n,
+                strategy=strategy,
+                permission_mode=state.get("permission_mode", "autonomous"),
+                models=models_list,
+                profiles=profiles_list,
+                judge_model=judge,
+            )
+        except Exception as exc:
+            display.print_error(f"Parallel run failed: {exc}")
         return "ok"
 
     if name == "/compact":
@@ -1207,23 +1396,26 @@ def _make_prompt(state: dict):
     model_short = state["model"][:20]
     backend = state.get("backend", "einfra")
     if backend == "ollama":
-        return HTML(f'<prompt-local>◆</prompt-local> <model-tag>[local:{model_short}]</model-tag> ')
+        return HTML(f'<prompt-local>●</prompt-local> <model-tag>[local:{model_short}]</model-tag> ')
     if backend == "nim":
-        return HTML(f'<prompt-local>◆</prompt-local> <model-tag>[nim:{model_short}]</model-tag> ')
-    return HTML(f'<prompt>◆</prompt> <model-tag>[{model_short}]</model-tag> ')
+        return HTML(f'<prompt-nim>●</prompt-nim> <model-tag>[nim:{model_short}]</model-tag> ')
+    return HTML(f'<prompt>●</prompt> <model-tag>[{model_short}]</model-tag> ')
 
 
 def _make_toolbar(state: dict):
     wd = state["working_dir"]
-    if len(wd) > 45:
-        wd = "…" + wd[-43:]
+    if len(wd) > 50:
+        wd = "…" + wd[-48:]
     backend = state.get("backend", "einfra")
     if backend == "ollama":
-        backend_tag = " [local]"
+        toolbar_cls = "bottom-toolbar-local"
+        backend_tag = " 🟢local"
     elif backend == "nim":
-        backend_tag = " [nim]"
+        toolbar_cls = "bottom-toolbar-nim"
+        backend_tag = " 🔵nim"
     else:
-        backend_tag = ""
+        toolbar_cls = "bottom-toolbar"
+        backend_tag = " 🟣einfra"
     profile = state.get("prompt_profile", "base")
     perm_mode = state.get("permission_mode", "autonomous")
     if perm_mode == "autonomous":
@@ -1236,20 +1428,109 @@ def _make_toolbar(state: dict):
     verify_short = "verify:on" if state.get("enable_verify", False) else "verify:off"
     mem_short = "mem:on" if state.get("enable_memory", True) else "mem:off"
     return HTML(
-        f'<bottom-toolbar>  dir: {wd}{backend_tag}  profile:{profile}  perm:{perm_short}'
+        f'<{toolbar_cls}>  📁 {wd}{backend_tag}  ●{profile}  🛡{perm_short}'
         f'  {plan_short}  {verify_short}  {mem_short}'
-        f'   /help · /model · /plan · /verify · /memory · /clear · /exit</bottom-toolbar>'
+        f'   /help · /model · /plan · /verify · /memory · /clear · /exit</{toolbar_cls}>'
     )
 
 
-def _make_keybindings() -> KeyBindings:
+def _make_keybindings(state: dict | None = None) -> KeyBindings:
     kb = KeyBindings()
 
     @kb.add("c-l")
     def _clear_screen(event):
         event.app.renderer.clear()
 
+    if state is not None:
+        @kb.add("c-t")
+        def _toggle_perm(event):
+            """Ctrl+T flips between autonomous ('build') and controlled ('plan')."""
+            cur = state.get("permission_mode", "autonomous")
+            new = "controlled" if cur == "autonomous" else "autonomous"
+            state["permission_mode"] = new
+            display.console.print(
+                f"\n[dim]permission mode →[/dim] [bold]{new}[/bold]"
+            )
+
     return kb
+
+
+# ---------------------------------------------------------------------------
+# @-file completer for the interactive TUI
+# ---------------------------------------------------------------------------
+
+class _AtFileCompleter(Completer):
+    """Suggest paths from the working directory after an `@` token.
+
+    Triggers only when the cursor sits right after `@<query>` — leaves the
+    rest of the prompt alone so it doesn't fight with slash-commands.
+    """
+
+    _SKIP_DIRS = {".git", ".venv", "venv", "node_modules", "__pycache__",
+                  ".parallel", ".uploads", ".pytest_cache", "dist", "build"}
+    _MAX = 40
+
+    def __init__(self, state: dict):
+        self.state = state
+        self._cache: dict[str, list[str]] = {}
+
+    def _index(self, root: Path) -> list[str]:
+        key = str(root)
+        if key in self._cache:
+            return self._cache[key]
+        out: list[str] = []
+        try:
+            for p in root.rglob("*"):
+                if not p.is_file():
+                    continue
+                rel_parts = p.parts[len(root.parts):]
+                if any(part in self._SKIP_DIRS for part in rel_parts):
+                    continue
+                if any(part.startswith(".") and len(part) > 1 for part in rel_parts):
+                    continue
+                out.append(str(p.relative_to(root)))
+                if len(out) >= 2000:
+                    break
+        except Exception:
+            pass
+        out.sort(key=lambda s: (s.count("/"), len(s), s))
+        self._cache[key] = out
+        return out
+
+    def get_completions(self, document, complete_event):
+        text_before = document.text_before_cursor
+        at_pos = text_before.rfind("@")
+        if at_pos < 0:
+            return
+        # The @ must follow whitespace or be the very first char; otherwise this
+        # is something like an email address.
+        if at_pos > 0 and not text_before[at_pos - 1].isspace():
+            return
+        if any(c.isspace() for c in text_before[at_pos + 1:]):
+            return
+        query = text_before[at_pos + 1:].lower()
+
+        wd = self.state.get("working_dir") or os.getcwd()
+        try:
+            root = Path(wd).expanduser().resolve()
+        except Exception:
+            return
+        if not root.is_dir():
+            return
+
+        files = self._index(root)
+        seen = 0
+        for f in files:
+            if query and query not in f.lower():
+                continue
+            yield Completion(
+                text=f,
+                start_position=-(len(text_before) - at_pos - 1),
+                display=f,
+            )
+            seen += 1
+            if seen >= self._MAX:
+                break
 
 
 # ---------------------------------------------------------------------------
@@ -1652,10 +1933,10 @@ def web(host, port, no_browser):
     url = f"http://{host}:{port}"
     display.console.print()
     display.console.print(
-        f"  [bold #2ab89a]🐙 OctoSlave Web UI[/bold #2ab89a]  "
-        f"[dim]starting at[/dim]  [bold cyan]{url}[/bold cyan]"
+        f"  [bold #fab283]🐙 OctoSlave Web UI[/bold #fab283]  "
+        f"[dim #7a7d86]starting at[/dim #7a7d86]  [bold #5c9cf5]{url}[/bold #5c9cf5]"
     )
-    display.console.print("  [dim]Press Ctrl+C to stop.[/dim]\n")
+    display.console.print("  [dim #7a7d86]Press Ctrl+C to stop.[/dim #7a7d86]\n")
 
     if not no_browser:
         import threading, webbrowser

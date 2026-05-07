@@ -2497,13 +2497,30 @@ def _build_inventory(research_dir: str, working_dir: str) -> Path:
     # Collect candidate files (recursive, with ignore-dir filter)
     candidates: list[Path] = []
     research_abs = Path(research_dir).resolve()
+
+    def _is_ignored_part(part: str) -> bool:
+        # Hidden dirs (.git, .venv, …)
+        if part.startswith("."):
+            return True
+        # Exact-match ignore set
+        if part in INVENTORY_IGNORE_DIRS:
+            return True
+        # Pipeline output dirs and their archives ("research", "research_archived",
+        # "research_old", …) — never inventory prior pipeline output.
+        if part.startswith("research"):
+            return True
+        # Round dirs and their archives ("round_001", "round_old_002", …)
+        if part.startswith("round_"):
+            return True
+        return False
+
     for p in wd.rglob("*"):
         try:
             rel_parts = p.relative_to(wd).parts
         except ValueError:
             continue
         # Skip files inside ignore dirs or hidden dirs
-        if any(part in INVENTORY_IGNORE_DIRS or part.startswith(".") for part in rel_parts[:-1]):
+        if any(_is_ignored_part(part) for part in rel_parts[:-1]):
             continue
         # Skip files inside the research_dir itself (avoid recursive self-inclusion)
         try:

@@ -24,7 +24,8 @@ It ships several modes:
 
 - **Interactive agent** — a chat-style assistant that can work on entire projects or assist with a single task
 - **One-shot mode** (`ots run "..."`) — run a task, then exit (or stay interactive with `-i`)
-- **Long-research pipeline** (`/long-research`) — 7 specialist agents conduct rigorous, multi-round research with real data, reproducible code, and a self-contained HTML report
+- **Parallel agents** (`ots run "..." --parallel N`) — run N agents on the same task and have a Judge pick the best, peers vote, or a Merger synthesise the results
+- **Long-research pipeline** (`/long-research`) — 8 specialist agents conduct rigorous, multi-round research with real data, reproducible code, and a self-contained HTML report
 - **Vault improve** (`ots vault-improve`) — autonomous note-by-note improvement of an Obsidian / markdown vault
 - **Batch mode** (`ots batch tasks.txt`) — run a list of tasks sequentially with resume support
 
@@ -39,6 +40,7 @@ It ships several modes:
 - [Web UI](#web-ui)
 - [Interactive TUI](#interactive-tui)
 - [Slash commands](#slash-commands)
+- [Parallel agents](#parallel-agents)
 - [CLI commands](#cli-commands)
 - [Long-research pipeline](#long-research-pipeline)
 - [Vault improve](#vault-improve)
@@ -60,6 +62,7 @@ It ships several modes:
 
 <table>
 <tr><td>🔁 <strong>Autonomous loop</strong></td><td>Runs many tool-call iterations end-to-end (per-role caps from 8 to 80) — no hand-holding required</td></tr>
+<tr><td>🐙 <strong>Parallel agents</strong></td><td>Run N agents on the same task in isolated workdirs; a Judge / vote / Merger picks the winner. <code>--parallel 3 --strategy best</code></td></tr>
 <tr><td>🧠 <strong>Upfront planning</strong></td><td>Before touching any files, the agent writes a numbered execution plan — making intent explicit and reducing aimless iteration</td></tr>
 <tr><td>✅ <strong>Post-task verification</strong></td><td>Optional grade pass after each task: DONE / PARTIAL / FAILED with a one-sentence reason (<code>--verify</code>)</td></tr>
 <tr><td>💾 <strong>Cross-session memory</strong></td><td>Outcomes of prior sessions are persisted to <code>~/.octoslave/session_memory.md</code> and injected as context on the next run</td></tr>
@@ -85,70 +88,63 @@ It ships several modes:
 
 ## Installation
 
-**Requirements:** Python 3.10+, an [e-INFRA CZ LLM](https://llm.ai.e-infra.cz) or [NVIDIA NIM](https://build.nvidia.com) API key *(or Ollama for local mode)*
+**Requirements:** Python 3.10+ and an [e-INFRA CZ LLM](https://llm.ai.e-infra.cz) or [NVIDIA NIM](https://build.nvidia.com) API key — *or* Ollama for fully local mode.
 
-### Step 1 — Install Python (skip if you already have Python 3.10+)
+### One-shot installer (macOS / Linux)
 
-<details>
-<summary><strong>Windows</strong></summary>
-
-1. Go to [https://www.python.org/downloads/](https://www.python.org/downloads/) and click **Download Python 3.x.x**.
-2. Run the installer. **Important:** tick **"Add Python to PATH"** before clicking Install.
-3. Open **Command Prompt** and verify: `python --version`
-
-</details>
-
-<details>
-<summary><strong>macOS</strong></summary>
+The included `scripts/install.sh` picks a Python ≥ 3.10, sets up `pipx` if it's missing, and installs OctoSlave into an isolated environment in one go:
 
 ```bash
-brew install python      # or download the .pkg from python.org
-python3 --version
+git clone https://github.com/karatedava/octoslave.git
+bash octoslave/scripts/install.sh
 ```
 
-</details>
+> The script's git/PyPI-aware version (so you can run it without cloning first) isn't yet hosted on a public URL. For now, fetch the script via the clone above; a `curl | bash` form will land once the package is published.
 
-<details>
-<summary><strong>Linux (Ubuntu / Debian)</strong></summary>
+### pipx (any platform with Python 3.10+)
+
+`pipx` keeps OctoSlave in its own virtualenv so it doesn't pollute your system Python:
 
 ```bash
-sudo apt update
-sudo apt install python3 python3-pip
-python3 --version
+pipx install "git+https://github.com/karatedava/octoslave.git#egg=octoslave[all]"
 ```
 
-</details>
-
-### Step 2 — Get the code
+### pip
 
 ```bash
 git clone https://github.com/karatedava/octoslave.git
 cd octoslave
-```
-
-### Step 3 — Install OctoSlave
-
-```bash
-# CLI + web UI (recommended)
-pip install -e ".[web]"
-
-# CLI + bio/chem tools
-pip install -e ".[bio]"
-
-# Everything
+python -m venv .venv && source .venv/bin/activate
 pip install -e ".[all]"
 ```
 
-> **Recommended:** use [uv](https://github.com/astral-sh/uv) for faster, reproducible installs:
-> ```bash
-> pip install uv
-> uv pip install -e ".[all]"
-> ```
-
-### Step 4 — Set your API key
+`uv` works too:
 
 ```bash
-ots config                                     # interactive setup wizard (einfra / nim / ollama)
+uv pip install -e ".[all]"
+```
+
+<details>
+<summary><strong>Need help installing Python or pipx first?</strong></summary>
+
+```bash
+# macOS
+brew install python pipx
+
+# Linux (Debian / Ubuntu)
+sudo apt update && sudo apt install python3 python3-pip pipx
+pipx ensurepath
+
+# Windows: download from https://www.python.org/downloads/ (tick "Add Python to PATH"),
+# then in PowerShell:  python -m pip install --user pipx; python -m pipx ensurepath
+```
+
+</details>
+
+### Configure your API key
+
+```bash
+ots config                                     # interactive wizard (einfra / nim / ollama)
 ots config --api-key sk-YOUR_KEY               # e-INFRA CZ key directly
 ots config --nim-api-key nvapi-YOUR_KEY        # NVIDIA NIM key
 ots config --model deepseek-v3.2               # default model
@@ -173,6 +169,9 @@ ots --nim                                      # interactive TUI, NVIDIA NIM
 ots web                                        # browser UI at http://127.0.0.1:7860
 ots run "build a Flask REST API for a todo app"
 ots run "summarise this paper" -i              # one-shot, then stay interactive
+
+# 3 agents on the same task — Judge picks the winner
+ots run "refactor the auth module" --parallel 3 --strategy best
 
 # Research — 3 autonomous rounds
 ots
@@ -277,10 +276,12 @@ ots web --no-browser                           # don't auto-open
 
 | Tab | What it does |
 |-----|-------------|
-| **Chat** | Full conversational agent — streaming responses, tool-call inspector, conversation history, file attachments |
+| **Chat** | Full conversational agent — streaming responses, tool-call inspector, conversation history, file attachments. `@` in the composer autocompletes a file from the working directory. |
 | **Research** | Launch `/long-research` with live round progress, agent status, and streaming console |
 | **Files** | Browse research outputs — view HTML reports inline, preview plots and markdown |
 | **Settings** | Inspect / refresh current configuration (API key, model, backend) |
+
+**Slash commands in the web UI:** all of the TUI's slash commands are also accepted in the chat composer, including `/parallel 3 task` (renders side-by-side candidate cards with the winner highlighted) and `/share` (creates a public read-only URL for the conversation).
 
 All research outputs (HTML reports, plots, markdown) are accessible in the Files tab without leaving the browser.
 
@@ -338,6 +339,9 @@ All research outputs (HTML reports, plots, markdown) are accessible in the Files
 | `/memory` | Show cross-session memory (prior tasks and outcomes) |
 | `/memory clear` | Erase the session memory file |
 | `/memory on\|off` | Enable / disable memory loading/saving (default: on) |
+| `/parallel N [strategy] task` | Run N agents on the same task; pick `best` / `vote` / `merge` |
+| `/share` | Save the current conversation as a read-only share snapshot |
+| `/undo` | Rewind the last user/assistant exchange (history only — does not revert files) |
 | `/clear` | Clear screen and reset conversation history |
 | `/compact` | Summarise history into a compact context block (saves tokens) |
 | `/verbose` | Toggle verbose mode (show full diffs and output) |
@@ -349,6 +353,40 @@ All research outputs (HTML reports, plots, markdown) are accessible in the Files
 | `/research-roles` | Inspect or override per-role models for `/long-research` |
 | `/vault-improve [path]` | Launch autonomous vault-wide note improvement |
 | `/exit` (`/quit`, `/q`) | Quit (also `Ctrl+D`) |
+
+**TUI shortcuts:** type `@` at the prompt to autocomplete a file from the working directory. `Ctrl+T` toggles permission mode (`autonomous` ↔ `controlled`). `Ctrl+L` clears the screen.
+
+---
+
+## Parallel agents
+
+Run multiple agents on the same task and let OctoSlave pick the winner.
+
+```bash
+# 3 agents, judge model picks the best implementation
+ots run "refactor auth.py for testability" --parallel 3 --strategy best
+
+# 4 agents, each peer-reviews the others; majority wins
+ots run "write a sorting benchmark" --parallel 4 --strategy vote
+
+# 3 agents, results are merged into a single synthesis (PARALLEL_MERGE.md)
+ots run "compare React vs Solid for our use-case" --parallel 3 --strategy merge
+```
+
+Each agent runs in an isolated copy of the working directory under
+`.parallel/run_{i}/`. The winning candidate's files are promoted back into
+the working directory; losing runs stay on disk for inspection. Diversity
+between agents comes from rotating prompt profiles
+(`base` / `coder` / `analyst` / `biomedic`).
+
+| `--strategy` | Behaviour |
+|---|---|
+| `best` *(default)* | A judge model compares all candidates and picks one |
+| `vote` | Each candidate grades the others; majority winner is promoted |
+| `merge` | A merger synthesises all candidates into one combined answer (no winner promoted; merge written to `PARALLEL_MERGE.md`) |
+
+In the web UI, `/parallel 3 task description` runs the same flow and shows
+each candidate as a side-by-side card with the winner highlighted.
 
 ---
 
@@ -369,6 +407,9 @@ ots run "set up a data processing pipeline for CSV files" -i   # stay interactiv
 ots run "rename variable x to count" --no-plan                 # skip planning for trivial tasks
 ots run "migrate the database schema" --verify                 # grade completion after task
 ots run "throwaway experiment" --no-memory                     # skip cross-session memory
+ots run "refactor auth module" --parallel 3                    # 3 agents, judge picks winner
+ots run "explore design options" --parallel 4 --strategy vote  # peer-vote majority winner
+ots run "compare A vs B vs C" --parallel 3 --strategy merge    # synthesised answer in PARALLEL_MERGE.md
 
 ots run --help   # full flag reference
 ```
@@ -387,6 +428,8 @@ Common flags accepted by `ots` and `ots run`:
 | `-v`, `--verbose` | Show full diffs, complete tool output, live bash |
 | `-i` (run only) | Stay interactive after the task completes |
 | `-n`, `--new-project` (run only) | Create a fresh project directory under `~/octoslave/projects/` |
+| `--parallel N` (run only) | Run N agents on the same task in parallel (default: 1) |
+| `--strategy` (run only) | How to combine parallel agents: `best` / `vote` / `merge` |
 
 ---
 
@@ -809,23 +852,29 @@ octoslave/
 │   ├── agent.py              ← core agent loop, system prompt, context management
 │   ├── config.py             ← config load/save, model lists, role-model maps
 │   ├── display.py            ← Rich TUI + web event bridge (thread-safe emit)
-│   ├── main.py               ← Click CLI, interactive REPL, slash-command handler
-│   ├── prompt_profiles/      ← system prompts: base, coder, analyst, biomedic
+│   ├── main.py               ← Click CLI, interactive REPL, slash-command handler, @-completer
+│   ├── parallel.py           ← parallel-agent runner (best / vote / merge strategies)
+│   ├── prompt_profiles/      ← system prompts: base, coder, analyst, biomedic, local
 │   ├── research.py           ← multi-agent long-research pipeline
 │   ├── tools.py              ← filesystem, shell, web tool definitions
 │   ├── tools_bio.py          ← biology / chemistry connectors (UniProt, PubChem, …)
 │   ├── vault.py              ← vault-improve pipeline
 │   └── web/
-│       ├── app.py            ← FastAPI backend: WebSocket handler, file serving
+│       ├── app.py            ← FastAPI backend: WebSocket, /share, /api/picker, file serving
 │       └── static/
 │           ├── index.html    ← single-page UI (Chat / Research / Files / Settings)
 │           ├── css/styles.css
 │           └── js/
-│               ├── app.js
+│               ├── app.js                ← message router, parallel panel, @-picker
 │               ├── components.js
-│               ├── slash-commands.js
+│               ├── slash-commands.js     ← /parallel, /share, /undo, etc.
 │               ├── utils.js
 │               └── websocket.js
+├── scripts/
+│   ├── install.sh            ← one-line installer (curl | bash)
+│   └── release.md            ← maintainer release checklist
+├── Formula/
+│   └── octoslave.rb          ← Homebrew formula (lives in karatedava/homebrew-tap)
 ├── run_research.py           ← CLI helper: run long-research without the TUI
 └── pyproject.toml
 ```
