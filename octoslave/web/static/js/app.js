@@ -43,6 +43,7 @@ function handleServerMessage(msg) {
     onParallelEvent(msg);
     return;
   }
+  if (msg.type === 'role_models') { onRoleModels(msg); return; }
 
   switch (msg.type) {
     case 'config':        applyConfig(msg.data); break;
@@ -51,7 +52,7 @@ function handleServerMessage(msg) {
     case 'stream_start':  onStreamStart(); break;
     case 'token':         onToken(msg.text); break;
     case 'stream_end':    onStreamEnd(); break;
-    case 'tool_call':     onToolCall(msg.name, msg.summary); break;
+    case 'tool_call':     onToolCall(msg); break;
     case 'tool_result':   onToolResult(msg.name, msg.ok, msg.preview); break;
     case 'plan':          onPlan(msg.text); break;
     case 'done':          onDone(msg.iterations); break;
@@ -405,38 +406,171 @@ function onStreamEnd() {
   currentToolCallsDiv    = null;
 }
 
-function onToolCall(name, summary) {
+function onToolCall(msg) {
+  // Backwards-compat: accept the legacy (name, summary) form too
+  if (typeof msg === 'string') msg = { name: msg, summary: arguments[1] || '' };
   ensureAssistantBubble();
-  
+
+  const name = msg.name || '';
+  const summary = msg.summary || '';
+  const preview = msg.args_preview || null;
   const icon = globalThis.TOOL_ICONS?.[name] || '🔧';
+
   const toolBlock = document.createElement('details');
-  toolBlock.className = 'tool-block';
+  toolBlock.className = 'tool-block tool-block-' + name;
+
+  // File-mutating + structurally-interesting tools open expanded by default,
+  // so the user sees the actual change without clicking the disclosure.
+  const expandByDefault = (name === 'edit_file' || name === 'write_file' || name === 'bash');
+  if (expandByDefault) toolBlock.open = true;
+
+  const previewHtml = preview ? renderToolPreview(name, preview) : '';
+
   toolBlock.innerHTML = `
     <summary>
       <span class="tool-icon">${icon}</span>
-      <span class="tool-name">${name}</span>
+      <span class="tool-name">${esc(name)}</span>
       <span class="tool-summary">${esc(summary)}</span>
     </summary>
-    <div class="tool-detail pending">Loading...</div>
+    ${previewHtml}
+    <div class="tool-detail pending">running…</div>
   `;
-  
+
   currentToolCallsDiv.appendChild(toolBlock);
   scrollToBottom(document.getElementById('chat-messages'));
-  
-  // Store reference for updating
+
   window.appState.pendingToolCall = { element: toolBlock, name };
+}
+
+// ──────────────────────────────────────────────────────────────
+// Tool-call inline previews — diff for edits, code for writes, etc.
+// ──────────────────────────────────────────────────────────────
+
+const _MAX_PREVIEW_LINES = 18;
+
+function clampLines(text, n) {
+  const lines = String(text).split('\n');
+  if (lines.length <= n) return { text: lines.join('\n'), truncated: false, total: lines.length };
+  return {
+    text: lines.slice(0, n).join('\n'),
+    truncated: true,
+    total: lines.length,
+  };
+}
+
+function renderToolPreview(name, p) {
+  if (name === 'edit_file') return renderEditPreview(p);
+  if (name === 'write_file') return renderWritePreview(p);
+  if (name === 'bash') return renderBashPreview(p);
+  if (name === 'read_file' || name === 'list_dir') return renderPathPreview(p);
+  if (name === 'glob' || name === 'grep') return renderQueryPreview(name, p);
+  if (name === 'web_search') return renderWebSearchPreview(p);
+  if (name === 'web_fetch') return renderWebFetchPreview(p);
+  return '';
+}
+
+function renderEditPreview(p) {
+  // Split each side into lines and present as a unified diff: red "-" rows
+  // for removed lines, green "+" rows for inserted ones. Long blocks clamp
+  // with a "… X more lines" footer to keep the chat from exploding.
+  const oldClamp = clampLines(p.old_string || '', _MAX_PREVIEW_LINES);
+  const newClamp = clampLines(p.new_string || '', _MAX_PREVIEW_LINES);
+
+  const oldRows = oldClamp.text
+    ? oldClamp.text.split('\n').map(l => `<div class="diff-line diff-old">${esc(l)}</div>`).join('')
+    : '';
+  const newRows = newClamp.text
+    ? newClamp.text.split('\n').map(l => `<div class="diff-line diff-new">${esc(l)}</div>`).join('')
+    : '';
+
+  const moreOld = oldClamp.truncated
+    ? `<div class="diff-more">… ${oldClamp.total - _MAX_PREVIEW_LINES} more lines removed</div>` : '';
+  const moreNew = newClamp.truncated
+    ? `<div class="diff-more">… ${newClamp.total - _MAX_PREVIEW_LINES} more lines inserted</div>` : '';
+
+  const replaceAll = p.replace_all ? '<span class="diff-flag">replace_all</span>' : '';
+
+  return `
+    <div class="tool-preview tool-diff">
+      <div class="tool-preview-head">
+        <span class="tool-preview-path">${esc(p.path || '')}</span>
+        ${replaceAll}
+      </div>
+      <div class="diff-body">
+        ${oldRows ? `<div class="diff-side diff-side-old"><div class="diff-side-label">− removing</div>${oldRows}${moreOld}</div>` : ''}
+        ${newRows ? `<div class="diff-side diff-side-new"><div class="diff-side-label">+ inserting</div>${newRows}${moreNew}</div>` : ''}
+      </div>
+    </div>`;
+}
+
+function renderWritePreview(p) {
+  const c = clampLines(p.content || '', _MAX_PREVIEW_LINES);
+  const body = c.text
+    ? c.text.split('\n').map(l => `<div class="code-line">${esc(l)}</div>`).join('')
+    : '<div class="code-line code-empty">(empty file)</div>';
+  const more = c.truncated
+    ? `<div class="diff-more">… ${(p.lines || c.total) - _MAX_PREVIEW_LINES} more lines</div>` : '';
+  return `
+    <div class="tool-preview tool-write">
+      <div class="tool-preview-head">
+        <span class="tool-preview-path">${esc(p.path || '')}</span>
+        <span class="tool-preview-meta">${p.lines || c.total} line${(p.lines || c.total) === 1 ? '' : 's'}</span>
+      </div>
+      <div class="code-body">${body}${more}</div>
+    </div>`;
+}
+
+function renderBashPreview(p) {
+  return `
+    <div class="tool-preview tool-bash">
+      <div class="tool-preview-head"><span class="tool-preview-meta">$</span></div>
+      <pre class="code-body bash-body">${esc(p.command || '')}</pre>
+    </div>`;
+}
+
+function renderPathPreview(p) {
+  if (!p.path) return '';
+  return `
+    <div class="tool-preview tool-path">
+      <span class="tool-preview-path">${esc(p.path)}</span>
+    </div>`;
+}
+
+function renderQueryPreview(name, p) {
+  const where = p.path ? ` <span class="tool-preview-meta">in ${esc(p.path)}</span>` : '';
+  return `
+    <div class="tool-preview tool-path">
+      <code class="tool-preview-query">${esc(p.pattern || '')}</code>${where}
+    </div>`;
+}
+
+function renderWebSearchPreview(p) {
+  return `
+    <div class="tool-preview tool-path">
+      <span class="tool-preview-meta">🔎</span>
+      <code class="tool-preview-query">${esc(p.query || '')}</code>
+    </div>`;
+}
+
+function renderWebFetchPreview(p) {
+  return `
+    <div class="tool-preview tool-path">
+      <span class="tool-preview-meta">↗</span>
+      <code class="tool-preview-query">${esc(p.url || '')}</code>
+    </div>`;
 }
 
 function onToolResult(name, ok, preview) {
   if (!window.appState.pendingToolCall) return;
-  
   const { element } = window.appState.pendingToolCall;
   const detail = element.querySelector('.tool-detail');
   if (detail) {
     detail.className = `tool-detail ${ok ? 'ok' : 'fail'}`;
-    detail.textContent = preview || (ok ? 'Success' : 'Failed');
+    detail.textContent = preview || (ok ? '✓ done' : '✗ failed');
   }
-  
+  // Mark the whole block so the styling reflects success/failure at a glance.
+  element.classList.toggle('tool-block-fail', !ok);
+  element.classList.toggle('tool-block-ok', !!ok);
   window.appState.pendingToolCall = null;
 }
 
@@ -735,6 +869,9 @@ function initApp() {
   // Parallel-agents popover
   initParallelPopover();
 
+  // Long-research model committee
+  initResearchCommittee();
+
   document.getElementById('chat-send-btn')?.addEventListener('click', sendChat);
 
   document.getElementById('chat-attach-btn')?.addEventListener('click', () => {
@@ -758,15 +895,22 @@ function initApp() {
     refreshHistory();
   });
 
-  // Backend select change handler — send switch_backend and refresh model list
-  document.getElementById('backend-select')?.addEventListener('change', (e) => {
+  // Backend select change handler — send switch_backend and refresh model list.
+  // The chat tab and research tab each have their own selector but they
+  // control a single shared backend, so wire both to the same handler.
+  function _onBackendChange(e) {
     const backend = e.target.value;
-    e.target.dataset.backend = backend;
+    const chatSel = document.getElementById('backend-select');
+    const researchSel = document.getElementById('research-backend-select');
+    if (chatSel) { chatSel.value = backend; chatSel.dataset.backend = backend; }
+    if (researchSel) { researchSel.value = backend; researchSel.dataset.backend = backend; }
     const backendNames = { einfra: 'e-INFRA CZ', ollama: 'Local (Ollama)', nim: 'NVIDIA NIM' };
     appendChatInfo(`🔄 Switching to [bold]${backendNames[backend] || backend}[/bold] backend…`);
     sendMsg({ type: 'switch_backend', backend });
     setTimeout(() => sendMsg({ type: 'list_models' }), 600);
-  });
+  }
+  document.getElementById('backend-select')?.addEventListener('change', _onBackendChange);
+  document.getElementById('research-backend-select')?.addEventListener('change', _onBackendChange);
 
   // Model select change handler - update the badge in the sidebar
   document.getElementById('chat-model-select')?.addEventListener('change', (e) => {
@@ -866,6 +1010,129 @@ function initApp() {
   );
 
   console.log('OctoSlave Web UI initialized');
+}
+
+// ──────────────────────────────────────────────────────────────
+// Long-research model committee
+// ──────────────────────────────────────────────────────────────
+
+const RESEARCH_ROLES = [
+  { key: 'researcher',   icon: '🔬', label: 'Researcher',   blurb: 'reads inventory, scouts SOTA papers' },
+  { key: 'hypothesis',   icon: '💡', label: 'Designer',     blurb: 'commits to one concrete experiment' },
+  { key: 'skeptic',      icon: '🤨', label: 'Skeptic',      blurb: 'pre-hoc PI review of the plan' },
+  { key: 'coder',        icon: '💻', label: 'Coder',        blurb: 'implements on real data, GPU-aware' },
+  { key: 'debugger',     icon: '🐛', label: 'Debugger',     blurb: 'runs the code, validates numbers' },
+  { key: 'evaluator',    icon: '⚖️', label: 'Evaluator',    blurb: 'scores results vs SOTA' },
+  { key: 'orchestrator', icon: '🧠', label: 'Orchestrator', blurb: 'synthesises round, plans next' },
+  { key: 'reporter',     icon: '📊', label: 'Reporter',     blurb: 'produces self-contained HTML report' },
+  { key: 'merger',       icon: '🪡', label: 'Merger',       blurb: 'combines parallel candidates' },
+];
+
+const committeeState = {
+  expanded: false,
+  effective: {},     // { role: model } — current effective assignment
+  custom: {},        // { role: model } — only the user-overridden ones
+  models: [],        // model list (kept in sync with research-model-select)
+};
+
+function refreshCommitteeModels() {
+  const sel = document.getElementById('research-model-select');
+  if (!sel) return;
+  // Pull all option values except the placeholder "(use defaults)"
+  committeeState.models = Array.from(sel.options)
+    .map(o => o.value)
+    .filter(v => v && v.length);
+}
+
+function renderCommittee() {
+  const grid = document.getElementById('committee-grid');
+  if (!grid) return;
+  refreshCommitteeModels();
+  const html = RESEARCH_ROLES.map(role => {
+    const eff = committeeState.effective[role.key] || '';
+    const isCustom = !!committeeState.custom[role.key];
+    const opts = [
+      `<option value="">(default: ${esc(eff || '—')})</option>`,
+      ...committeeState.models.map(m =>
+        `<option value="${esc(m)}"${isCustom && committeeState.custom[role.key] === m ? ' selected' : ''}>${esc(m)}</option>`
+      ),
+    ].join('');
+    return `
+      <div class="committee-row${isCustom ? ' committee-custom' : ''}">
+        <div class="committee-role">
+          <span class="committee-role-icon">${role.icon}</span>
+          <div class="committee-role-text">
+            <div class="committee-role-name">${esc(role.label)}</div>
+            <div class="committee-role-blurb">${esc(role.blurb)}</div>
+          </div>
+        </div>
+        <select class="committee-model" data-role="${role.key}">${opts}</select>
+      </div>`;
+  }).join('');
+  grid.innerHTML = html;
+
+  // Wire change events
+  grid.querySelectorAll('.committee-model').forEach(sel => {
+    sel.addEventListener('change', e => {
+      const role = e.target.dataset.role;
+      const value = e.target.value;
+      if (!value) {
+        // Clearing means "use default" — but we don't have a clear-one event,
+        // so we send the effective default explicitly.
+        const def = committeeState.effective[role];
+        sendMsg({ type: 'set_role_model', role, model: def });
+        delete committeeState.custom[role];
+      } else {
+        sendMsg({ type: 'set_role_model', role, model: value });
+        committeeState.custom[role] = value;
+      }
+      // Backend will respond with role_models which re-renders.
+    });
+  });
+
+  // Status text
+  const statusEl = document.getElementById('committee-status');
+  if (statusEl) {
+    const customCount = Object.keys(committeeState.custom).length;
+    statusEl.textContent = customCount
+      ? `${customCount} of ${RESEARCH_ROLES.length} role${customCount === 1 ? '' : 's'} customised`
+      : 'using backend defaults';
+  }
+}
+
+function onRoleModels(msg) {
+  committeeState.effective = msg.effective || {};
+  committeeState.custom    = msg.custom || {};
+  if (committeeState.expanded) renderCommittee();
+}
+
+function initResearchCommittee() {
+  const toggle = document.getElementById('committee-toggle-btn');
+  const grid = document.getElementById('committee-grid');
+  const actions = document.getElementById('committee-actions');
+  const reset = document.getElementById('committee-reset-btn');
+  if (!toggle || !grid) return;
+
+  toggle.addEventListener('click', () => {
+    committeeState.expanded = !committeeState.expanded;
+    grid.style.display    = committeeState.expanded ? 'grid'  : 'none';
+    actions.style.display = committeeState.expanded ? 'flex' : 'none';
+    toggle.textContent = committeeState.expanded ? 'Hide per-role config' : 'Configure per-role';
+    if (committeeState.expanded) {
+      sendMsg({ type: 'get_role_models' });   // backend will respond → renderCommittee()
+      // Optimistic render in case the response is delayed
+      renderCommittee();
+    }
+  });
+
+  reset?.addEventListener('click', () => {
+    sendMsg({ type: 'reset_role_models' });
+  });
+
+  // Re-render when the model list changes (e.g. after a backend switch).
+  document.getElementById('research-model-select')?.addEventListener('change', () => {
+    if (committeeState.expanded) renderCommittee();
+  });
 }
 
 // ──────────────────────────────────────────────────────────────

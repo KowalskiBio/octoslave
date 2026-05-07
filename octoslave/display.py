@@ -105,20 +105,20 @@ def is_verbose() -> bool:
 
 
 # ---------------------------------------------------------------------------
-# Session header — minimal, opencode-inspired
+# Session header
 #
 # Aesthetic: open layout, no surrounding panel, a single accent line under
 # the wordmark, all status info on one row separated by middle dots.
 # ---------------------------------------------------------------------------
 
-# 2-row block-letter "octoslave" wordmark. Each letter is 3 cells wide, with
-# 1-space gutters between letters — total 35 cells. Designed to look right in
-# both a 12pt monospace terminal and a tighter VS Code panel.
-#
-#  o   c   t   o   s   l   a   v   e
+# 5-row block-letter "OCTOSLAVE" wordmark. 3-wide letters, 1-space gaps.
+# Total width 53 — readable in any monospace terminal.
 _WORDMARK = [
-    "█▀█ █▀▀ ▀█▀ █▀█ █▀▀ █   █▀█ █ █ █▀▀",
-    "█▄█ █▄▄  █  █▄█ ▄▄█ █▄▄ █▀█ ▀▄▀ █▄▄",
+    " ███   ███  █████  ███   ███  █      ███  █   █ █████",
+    "█   █ █   █   █   █   █ █     █     █   █ █   █ █    ",
+    "█   █ █       █   █   █  ███  █     █████ █   █ █████",
+    "█   █ █   █   █   █   █     █ █     █   █  █ █  █    ",
+    " ███   ███    █    ███   ███  █████ █   █   █   █████",
 ]
 
 
@@ -132,15 +132,17 @@ def _backend_palette(backend: str) -> tuple[str, str, str]:
 
 
 def print_welcome(model: str, working_dir: str, backend: str = "einfra"):
-    """Minimal opencode-style welcome: wordmark, status row, hint."""
+    """Render the session header: wordmark, status row, and a hint line."""
     primary, label, _ = _backend_palette(backend)
 
     wd = working_dir if len(working_dir) <= 60 else "…" + working_dir[-58:]
 
+    rule_width = max(len(row) for row in _WORDMARK)
+
     console.print()
     for row in _WORDMARK:
         console.print(f"  [bold {primary}]{row}[/bold {primary}]")
-    console.print(f"  [dim {primary}]{'─' * 35}[/dim {primary}]")
+    console.print(f"  [dim {primary}]{'─' * rule_width}[/dim {primary}]")
     console.print()
 
     status = Text("  ")
@@ -189,7 +191,7 @@ def print_task(task: str):
         return
     from rich.markup import escape as _escape
     console.print()
-    # Use a left-side accent rule + the task text; opencode-style quote.
+    # Left-side accent rule + the task text — a clean quote block.
     lines = task.splitlines() or [task]
     for ln in lines:
         console.print(f"  [bold #fab283]▌[/bold #fab283] [bold #d0d1d6]{_escape(ln)}[/bold #d0d1d6]")
@@ -203,7 +205,9 @@ def print_task(task: str):
 _stream_state = _threading.local()
 
 _SPINNER_FRAMES = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
-_SPINNER_CLEAR  = "\r" + " " * 32 + "\r"
+# Carriage return + ANSI "erase entire line" — wipes the spinner regardless
+# of how long the message grew (the elapsed-seconds counter expands forever).
+_SPINNER_CLEAR  = "\r\x1b[2K"
 
 
 def _spinning(stop_event: _threading.Event) -> None:
@@ -251,7 +255,9 @@ def stream_chunk(text: str):
             t: _threading.Thread = getattr(_stream_state, "spinner_thread", None)
             if t is not None:
                 t.join(timeout=0.3)   # wait for the clear to flush
-        console.print("[bold green]●[/bold green] ", end="")
+        # Brand-coloured diamond as the stream prefix — matches the wordmark
+        # accent and makes assistant text easy to scan against tool output.
+        console.print("  [bold #fab283]◆[/bold #fab283] ", end="")
         _stream_state.started = True
     sys.stdout.write(text)
     sys.stdout.flush()
@@ -294,46 +300,117 @@ _TOOL_ICONS = {
 
 
 def print_tool_call(name: str, args: dict):
-    _emit({"type": "tool_call", "name": name, "summary": _tool_summary(name, args)})
+    """Emit a structured tool-call event and (in non-silent mode) print it.
+
+    The web UI uses ``args_preview`` to render inline diffs and code previews
+    for file-mutating tools. Args are clipped to keep the wire payload bounded
+    — the raw values still hit disk via the actual tool call.
+    """
+    payload: dict = {
+        "type": "tool_call",
+        "name": name,
+        "summary": _tool_summary(name, args),
+    }
+
+    # Per-tool rich preview for the web UI. Bash, write_file, edit_file all
+    # benefit from showing the user the actual change rather than a one-line
+    # summary buried inside a <details> block.
+    _MAX_FIELD = 4000
+    if name == "edit_file":
+        payload["args_preview"] = {
+            "path": args.get("path", "") or "",
+            "old_string": (args.get("old_string", "") or "")[:_MAX_FIELD],
+            "new_string": (args.get("new_string", "") or "")[:_MAX_FIELD],
+            "replace_all": bool(args.get("replace_all", False)),
+        }
+    elif name == "write_file":
+        content = args.get("content", "") or ""
+        payload["args_preview"] = {
+            "path": args.get("path", "") or "",
+            "content": content[:_MAX_FIELD],
+            "lines": content.count("\n") + (1 if content else 0),
+            "truncated": len(content) > _MAX_FIELD,
+        }
+    elif name == "bash":
+        payload["args_preview"] = {
+            "command": (args.get("command", "") or "")[:1000],
+        }
+    elif name == "read_file":
+        payload["args_preview"] = {"path": args.get("path", "") or ""}
+    elif name == "list_dir":
+        payload["args_preview"] = {"path": args.get("path", "") or "."}
+    elif name == "glob":
+        payload["args_preview"] = {
+            "pattern": args.get("pattern", "") or "",
+            "path": args.get("path", "") or "",
+        }
+    elif name == "grep":
+        payload["args_preview"] = {
+            "pattern": args.get("pattern", "") or "",
+            "path": args.get("path", "") or "",
+        }
+    elif name == "web_search":
+        payload["args_preview"] = {"query": args.get("query", "") or ""}
+    elif name == "web_fetch":
+        payload["args_preview"] = {"url": args.get("url", "") or ""}
+
+    _emit(payload)
     if _silent():
         return
     icon = _TOOL_ICONS.get(name, "⚙")
     summary = _tool_summary(name, args)
     console.print(f"  [tool.name]{icon} {name}[/tool.name] [tool.arg]{summary}[/tool.arg]")
 
-    if not _verbose:
-        return
-
     from rich.markup import escape as _escape
-    # Verbose: show full content of the call
+
+    # Compact previews shown by default for the most informative tools.
+    # In verbose mode we expand to the full content; otherwise we cap at a
+    # few lines and append a "… N more" hint so the chat stays scannable.
+    DEFAULT_LINES = 4
+
     if name == "edit_file":
-        old = args.get("old_string", "")
-        new = args.get("new_string", "")
-        console.print("    [bold red]─── removing ─────────────────────────────[/bold red]")
-        for ln in old.splitlines():
-            console.print(f"    [red]- {_escape(ln)}[/red]")
-        console.print("    [bold green]─── inserting ────────────────────────────[/bold green]")
-        for ln in new.splitlines():
-            console.print(f"    [green]+ {_escape(ln)}[/green]")
-        console.print("    [dim]──────────────────────────────────────────[/dim]")
+        old = args.get("old_string", "") or ""
+        new = args.get("new_string", "") or ""
+        old_lines = old.splitlines()
+        new_lines = new.splitlines()
+        if _verbose:
+            cap_old = old_lines
+            cap_new = new_lines
+        else:
+            cap_old = old_lines[:DEFAULT_LINES]
+            cap_new = new_lines[:DEFAULT_LINES]
+        for ln in cap_old:
+            console.print(f"    [#e06c75]- {_escape(ln[:120])}[/#e06c75]")
+        if not _verbose and len(old_lines) > DEFAULT_LINES:
+            console.print(f"    [dim]… {len(old_lines) - DEFAULT_LINES} more removed[/dim]")
+        for ln in cap_new:
+            console.print(f"    [#7fd88f]+ {_escape(ln[:120])}[/#7fd88f]")
+        if not _verbose and len(new_lines) > DEFAULT_LINES:
+            console.print(f"    [dim]… {len(new_lines) - DEFAULT_LINES} more inserted[/dim]")
 
     elif name == "write_file":
-        content = args.get("content", "")
+        content = args.get("content", "") or ""
         lines = content.splitlines()
-        console.print(f"    [dim]─── content ({len(lines)} lines) ─────────────────[/dim]")
-        for ln in lines:
-            console.print(f"    [dim white]{_escape(ln)}[/dim white]")
-        console.print("    [dim]──────────────────────────────────────────[/dim]")
+        if _verbose:
+            cap = lines
+        else:
+            cap = lines[:DEFAULT_LINES]
+        for ln in cap:
+            console.print(f"    [dim #d0d1d6]│ {_escape(ln[:120])}[/dim #d0d1d6]")
+        if not _verbose and len(lines) > DEFAULT_LINES:
+            console.print(f"    [dim]… {len(lines) - DEFAULT_LINES} more lines[/dim]")
 
     elif name == "bash":
-        cmd = args.get("command", "")
-        console.print(f"    [bold yellow]$ {cmd}[/bold yellow]")
+        cmd = args.get("command", "") or ""
+        # Always show the command — agents shouldn't run hidden bash.
+        cap = cmd if _verbose or len(cmd) <= 200 else cmd[:200] + "…"
+        console.print(f"    [bold #7fd88f]$[/bold #7fd88f] [#d0d1d6]{_escape(cap)}[/#d0d1d6]")
 
-    elif name == "web_fetch":
-        console.print(f"    [dim]↳ {args.get('url', '')}[/dim]")
+    elif name == "web_fetch" and _verbose:
+        console.print(f"    [dim]↳ {_escape(args.get('url', ''))}[/dim]")
 
-    elif name == "web_search":
-        console.print(f"    [dim]↳ \"{args.get('query', '')}\"[/dim]")
+    elif name == "web_search" and _verbose:
+        console.print(f"    [dim]↳ \"{_escape(args.get('query', ''))}\"[/dim]")
 
 
 def print_tool_result(name: str, result: str, success: bool):
@@ -668,27 +745,25 @@ def request_permission(tool_name: str, args: dict, working_dir: str, permission_
     else:
         desc = f"execute: {tool_name}"
     
-    # Determine mode title and border color
+    # Mode label + accent colour.
     if permission_mode == "supervised":
-        title = "[bold cyan]Supervised Mode[/bold cyan]"
-        border_style = "cyan"
+        mode_label = "supervised"
+        accent = "#5c9cf5"
     else:
-        title = "[bold cyan]Controlled Mode[/bold cyan]"
-        border_style = "yellow"
-    
+        mode_label = "controlled"
+        accent = "#f5a742"
+
+    # Compact, panel-free quote block — same visual language as the task line.
     console.print()
     console.print(
-        Panel(
-            f"[bold yellow]⚠ Permission Required[/bold yellow]\n\n"
-            f"[dim]{icon} {tool_name}[/dim]\n\n"
-            f"OctoSlave wants to: [bold]{desc}[/bold]\n\n"
-            f"Working directory: [dim]{working_dir}[/dim]",
-            title=title,
-            border_style=border_style,
-            padding=(1, 2),
-        )
+        f"  [bold {accent}]▌[/bold {accent}] "
+        f"[bold]Permission required[/bold] "
+        f"[dim]· {mode_label}[/dim]"
     )
-    console.print()
+    console.print(f"  [bold {accent}]▌[/bold {accent}] {icon} [bold]{desc}[/bold]")
+    console.print(
+        f"  [bold {accent}]▌[/bold {accent}] [dim]in {working_dir}[/dim]"
+    )
 
     # Web mode: emit a permission_request event and wait for the browser response
     if getattr(_tl, "emit", None) is not None:
