@@ -56,12 +56,14 @@ cp "${SCRIPT_DIR}/octoslave.desktop" \
 # Symlink for AppImage root
 cp "${SCRIPT_DIR}/octoslave.desktop" "${BUILD_DIR}/octoslave.desktop"
 
-# Icon
+# Icon — appimagetool requires the icon at the AppDir root named after Icon= in the .desktop file
 if [[ -f "${ROOT_DIR}/octoslave/web/static/logo.png" ]]; then
     cp "${ROOT_DIR}/octoslave/web/static/logo.png" \
+       "${BUILD_DIR}/octoslave.png"                          # root — required by appimagetool
+    cp "${ROOT_DIR}/octoslave/web/static/logo.png" \
        "${BUILD_DIR}/usr/share/icons/hicolor/256x256/apps/octoslave.png"
-    ln -s "usr/share/icons/hicolor/256x256/apps/octoslave.png" \
-          "${BUILD_DIR}/.DirIcon" 2>/dev/null || true
+    cp "${ROOT_DIR}/octoslave/web/static/logo.png" \
+       "${BUILD_DIR}/.DirIcon"                               # fallback volume icon
 fi
 
 # AppRun launcher — AppImage entry point
