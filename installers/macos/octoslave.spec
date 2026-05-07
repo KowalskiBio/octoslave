@@ -22,8 +22,6 @@ block_cipher = None
 datas = [
     (str(OCTOSLAVE_PKG / "prompt_profiles"), "octoslave/prompt_profiles"),
     (str(OCTOSLAVE_PKG / "web" / "static"),  "octoslave/web/static"),
-    # macOS GUI launcher modules
-    (str(ROOT / "installers" / "macos" / "gui_launcher.py"), "installers/macos"),
 ]
 
 # ---------------------------------------------------------------------------
@@ -35,8 +33,8 @@ hidden = [
     "octoslave.logger", "octoslave.parallel", "octoslave.research",
     "octoslave.tools", "octoslave.tools_bio", "octoslave.vault",
     "octoslave.web.app", "octoslave.wizard",
-    # installers
-    "installers.macos.gui_launcher",
+    # macOS launcher
+    "octoslave.mac_launcher",
     # FastAPI / Starlette
     "fastapi", "fastapi.routing", "fastapi.middleware",
     "starlette", "starlette.routing", "starlette.responses",

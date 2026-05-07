@@ -19,9 +19,9 @@ All three share the same workflow:
 ### All platforms
 ```bash
 pip install pyinstaller
-git clone https://github.com/davkopecky/EINFRA_AGENTS.git
-cd EINFRA_AGENTS
-pip install -e .
+git clone https://github.com/karatedava/octoslave.git
+cd octoslave
+pip install -e ".[all]"
 ```
 
 ### macOS
@@ -39,7 +39,7 @@ Download `appimagetool` (x86_64) and place it in `$PATH`:
 wget -O /usr/local/bin/appimagetool \
   https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage
 chmod +x /usr/local/bin/appimagetool
-sudo apt-get install -y libfuse2   # required for AppImage runtime
+sudo apt-get install -y libfuse2 || sudo apt-get install -y libfuse2t64  # Ubuntu 24.04+ renamed the package
 ```
 
 ---
@@ -73,9 +73,9 @@ installers/
 ├── README.md                  ← this file
 ├── macos/
 │   ├── launcher.py            # macOS .app entry point (wizard detection + GUI/CLI routing)
-│   ├── gui_launcher.py        # Post-setup tkinter launcher (Web UI / Terminal / Config)
+│   ├── gui_launcher.py        # (legacy alias — logic lives in octoslave/mac_launcher.py)
 │   ├── octoslave.spec         # PyInstaller spec for OctoSlave.app (windowed bundle)
-│   └── build_dmg.sh           # Full DMG build pipeline (codesign + create-dmg)
+│   └── build_dmg.sh           # Full DMG build pipeline (PNG→ICNS conversion + create-dmg)
 ├── windows/
 │   ├── ots_cli.spec           # PyInstaller spec for console CLI binary (ots.exe)
 │   ├── ots_wizard.spec        # PyInstaller spec for windowed first-run wizard

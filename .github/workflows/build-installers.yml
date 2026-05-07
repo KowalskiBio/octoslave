@@ -14,7 +14,7 @@ on:
         default: ''
 
 jobs:
-  # ── macOS ────────────────────────────────────────────────────────────────
+  # ── macOS (.dmg) ─────────────────────────────────────────────────────────
   build-macos:
     runs-on: macos-latest
     steps:
@@ -26,7 +26,7 @@ jobs:
         with:
           python-version: '3.12'
 
-      - name: Install dependencies
+      - name: Install Python dependencies
         run: |
           python -m pip install --upgrade pip
           pip install -e .
@@ -35,17 +35,9 @@ jobs:
       - name: Install create-dmg
         run: brew install create-dmg
 
-      - name: Build .app bundle
-        run: |
-          python -m PyInstaller \
-            --clean --noconfirm \
-            installers/macos/octoslave.spec
-
-      - name: Codesign (ad-hoc)
-        run: |
-          codesign --force --deep --sign - dist/OctoSlave.app || true
-
-      - name: Build DMG
+      - name: Build .app and DMG
+        # build_dmg.sh runs PyInstaller, codesign, and create-dmg in one pass.
+        # --skip-pyinstaller is NOT passed here so PyInstaller runs inside the script.
         run: bash installers/macos/build_dmg.sh
 
       - name: Upload DMG artifact
@@ -54,7 +46,7 @@ jobs:
           name: OctoSlave-macOS
           path: dist/OctoSlave-macOS.dmg
 
-  # ── Windows ──────────────────────────────────────────────────────────────
+  # ── Windows (.exe installer) ─────────────────────────────────────────────
   build-windows:
     runs-on: windows-latest
     steps:
@@ -66,19 +58,27 @@ jobs:
         with:
           python-version: '3.12'
 
-      - name: Install dependencies
+      - name: Install Python dependencies
         run: |
           python -m pip install --upgrade pip
           pip install -e .
           pip install pyinstaller
 
       - name: Install Inno Setup
-        run: |
-          choco install innosetup --no-progress
+        run: choco install innosetup --no-progress -y
 
-      - name: Build Windows installer
+      - name: Build ots.exe (CLI binary)
+        run: python -m PyInstaller --clean --noconfirm installers\windows\ots_cli.spec
+
+      - name: Build OctoSlave-Setup.exe (first-run wizard)
+        run: python -m PyInstaller --clean --noconfirm installers\windows\ots_wizard.spec
+
+      - name: Build installer with Inno Setup
         shell: cmd
-        run: installers\windows\build_installer.bat
+        run: |
+          set "ISCC=C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
+          if not exist "%ISCC%" set "ISCC=C:\Program Files\Inno Setup 6\ISCC.exe"
+          "%ISCC%" installers\windows\installer.iss
 
       - name: Upload installer artifact
         uses: actions/upload-artifact@v4
@@ -86,7 +86,7 @@ jobs:
           name: OctoSlave-Windows
           path: dist/OctoSlave-Windows-Installer.exe
 
-  # ── Linux ────────────────────────────────────────────────────────────────
+  # ── Linux (.AppImage) ────────────────────────────────────────────────────
   build-linux:
     runs-on: ubuntu-latest
     steps:
@@ -98,10 +98,12 @@ jobs:
         with:
           python-version: '3.12'
 
-      - name: Install system deps
+      - name: Install system dependencies
         run: |
-          sudo apt-get update
-          sudo apt-get install -y libfuse2 tk-dev
+          sudo apt-get update -qq
+          sudo apt-get install -y tk-dev python3-tk
+          # libfuse2 was renamed to libfuse2t64 in Ubuntu 24.04
+          sudo apt-get install -y libfuse2 || sudo apt-get install -y libfuse2t64
 
       - name: Install Python dependencies
         run: |
@@ -109,7 +111,7 @@ jobs:
           pip install -e .
           pip install pyinstaller
 
-      - name: Get appimagetool
+      - name: Download appimagetool
         run: |
           wget -q -O /tmp/appimagetool \
             "https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage"
@@ -125,7 +127,7 @@ jobs:
           name: OctoSlave-Linux
           path: dist/OctoSlave-x86_64.AppImage
 
-  # ── Release ──────────────────────────────────────────────────────────────
+  # ── GitHub Release (tag pushes only) ─────────────────────────────────────
   release:
     needs: [build-macos, build-windows, build-linux]
     runs-on: ubuntu-latest
@@ -139,7 +141,7 @@ jobs:
           path: artifacts
 
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@v1
+        uses: softprops/action-gh-release@v2
         with:
           files: |
             artifacts/OctoSlave-macOS/*.dmg
@@ -147,5 +149,6 @@ jobs:
             artifacts/OctoSlave-Linux/*.AppImage
           draft: true
           prerelease: false
+          generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
