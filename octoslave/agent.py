@@ -554,6 +554,13 @@ def run_agent(
     ]
 
     # Upfront planning pass
+    if enable_plan:
+        messages, plan_text = _planning_step(task, system_prompt, client, model, messages)
+        if plan_text and plan_out is not None:
+            plan_out.append(plan_text)
+            logger.log_plan(plan_text)
+
+    # Main agent loop
     messages = _agent_loop(messages, model, working_dir, client, permission_mode)
 
     # Post-loop verification pass
