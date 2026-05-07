@@ -1,0 +1,10 @@
+[Desktop Entry]
+Name=OctoSlave
+Comment=Autonomous AI research & coding assistant
+Exec=ots %U
+Icon=octoslave
+Terminal=true
+Type=Application
+Categories=Development;Science;Utility;
+Keywords=AI;assistant;coding;research;chatbot;
+StartupNotify=true

@@ -105,6 +105,10 @@ def cli(ctx, model, working_dir, api_key, base_url, local, prompt_profile, permi
         display.set_verbose(True)
 
     if ctx.invoked_subcommand is None:
+        # First-run wizard — only in PyInstaller bundles, not pip installs
+        from .wizard import needs_wizard, run_wizard
+        if needs_wizard():
+            run_wizard()
         _interactive(ctx.obj)
 
 
