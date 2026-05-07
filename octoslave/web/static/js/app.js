@@ -33,6 +33,17 @@ window.deleteChat = (id) => { window.deleteChatImpl && window.deleteChatImpl(id)
 // ──────────────────────────────────────────────────────────────
 function handleServerMessage(msg) {
   console.log('[app] Received message:', msg.type, msg);
+
+  // Parallel-mode routing: events tagged with a candidate_index belong to a
+  // running multi-agent run and should update the live panel rather than the
+  // single-conversation chat bubble.
+  if (msg.type === 'parallel_start')   { onParallelStart(msg);   return; }
+  if (msg.type === 'parallel_progress'){ onParallelProgress(msg);return; }
+  if (msg.candidate_index !== undefined && parallelLive.active) {
+    onParallelEvent(msg);
+    return;
+  }
+
   switch (msg.type) {
     case 'config':        applyConfig(msg.data); break;
     case 'config_updated': onConfigUpdated(msg); break;
@@ -59,8 +70,200 @@ function handleServerMessage(msg) {
     case 'agent_done':        onAgentDone(msg); break;
     case 'research_complete':    onResearchComplete(msg); break;
     case 'permission_request':  onPermissionRequest(msg); break;
+    case 'parallel_result':     onParallelResult(msg); break;
     default: break;
   }
+}
+
+// ──────────────────────────────────────────────────────────────
+// Parallel run — live progress panel
+// ──────────────────────────────────────────────────────────────
+
+const parallelLive = {
+  active: false,
+  panel: null,        // root <div> in the chat stream
+  cards: {},          // { [index]: { card, log, status, action, model, iters } }
+  candidates: [],     // metadata pushed in parallel_start
+};
+
+function onParallelStart(msg) {
+  // Tear down any leftover panel from a previous run
+  if (parallelLive.panel && parallelLive.panel.parentElement) {
+    parallelLive.panel.remove();
+  }
+  parallelLive.active = true;
+  parallelLive.cards = {};
+  parallelLive.candidates = msg.candidates || [];
+
+  const container = document.getElementById('chat-messages');
+  const root = document.createElement('div');
+  root.className = 'msg msg-assistant parallel-live-msg';
+
+  const cardsHtml = (msg.candidates || []).map(c => {
+    const color = c.color || '#fab283';
+    return `
+      <div class="plive-card plive-running" data-idx="${c.index}" style="--c: ${color}">
+        <div class="plive-head">
+          <span class="plive-idx">#${c.index}</span>
+          <span class="plive-model">${esc(c.model || '')}</span>
+          <span class="plive-status">running…</span>
+        </div>
+        <div class="plive-meta">
+          <span class="plive-profile">${esc(c.profile || '')}</span>
+          <span class="plive-iter">0 iter</span>
+        </div>
+        <div class="plive-action plive-action-empty">waiting for first action…</div>
+        <div class="plive-log"></div>
+      </div>`;
+  }).join('');
+
+  root.innerHTML = `
+    <div class="msg-bubble plive-bubble">
+      <div class="plive-head-row">
+        🐙×${(msg.candidates || []).length}
+        <span class="plive-strategy">strategy=<strong>${esc(msg.strategy)}</strong></span>
+        <span class="plive-overall">running…</span>
+      </div>
+      <div class="plive-grid">${cardsHtml}</div>
+    </div>`;
+  container.appendChild(root);
+
+  parallelLive.panel = root;
+  Array.from(root.querySelectorAll('.plive-card')).forEach(card => {
+    const idx = parseInt(card.dataset.idx);
+    parallelLive.cards[idx] = {
+      card,
+      log: card.querySelector('.plive-log'),
+      status: card.querySelector('.plive-status'),
+      action: card.querySelector('.plive-action'),
+      iter: card.querySelector('.plive-iter'),
+    };
+  });
+  scrollToBottom(container);
+}
+
+function onParallelProgress(msg) {
+  if (!parallelLive.active) return;
+  const slot = parallelLive.cards[msg.index];
+  if (!slot) return;
+
+  if (typeof msg.iter === 'number') {
+    slot.iter.textContent = msg.iter + ' iter';
+  }
+  if (msg.action) {
+    slot.action.textContent = msg.action;
+    slot.action.classList.remove('plive-action-empty');
+  }
+  if (msg.status === 'done') {
+    slot.card.classList.remove('plive-running');
+    slot.card.classList.add('plive-done');
+    slot.status.textContent = 'done';
+  } else if (msg.status === 'error') {
+    slot.card.classList.remove('plive-running');
+    slot.card.classList.add('plive-failed');
+    slot.status.textContent = 'failed';
+  } else {
+    slot.status.textContent = 'running…';
+  }
+}
+
+function onParallelEvent(msg) {
+  // Append a single line to the candidate's log feed.
+  const slot = parallelLive.cards[msg.candidate_index];
+  if (!slot) return;
+  const line = document.createElement('div');
+  line.className = 'plive-line';
+
+  const t = msg.type;
+  if (t === 'tool_call') {
+    line.innerHTML = `<span class="plive-line-tool">${esc(msg.name || '')}</span> ` +
+                     `<span class="plive-line-args">${esc(msg.summary || '')}</span>`;
+  } else if (t === 'tool_result') {
+    if (!msg.preview) return;  // silent results add no signal
+    const cls = msg.ok ? 'ok' : 'fail';
+    line.classList.add('plive-line-result', cls);
+    line.textContent = (msg.ok ? '✓ ' : '✗ ') + (msg.preview || '').replace(/\n+/g, ' ').slice(0, 140);
+  } else if (t === 'info') {
+    if (!msg.text) return;
+    line.classList.add('plive-line-info');
+    line.textContent = 'ℹ ' + msg.text.slice(0, 200);
+  } else if (t === 'error') {
+    line.classList.add('plive-line-error');
+    line.textContent = '✗ ' + (msg.text || '').slice(0, 200);
+  } else {
+    return;  // skip token / plan / stream noise
+  }
+
+  slot.log.appendChild(line);
+  // Cap log growth so DOM doesn't balloon during long runs.
+  while (slot.log.childElementCount > 60) slot.log.firstChild.remove();
+  slot.log.scrollTop = slot.log.scrollHeight;
+}
+
+// ──────────────────────────────────────────────────────────────
+// Parallel run result panel (final summary, after live run finishes)
+// ──────────────────────────────────────────────────────────────
+
+function onParallelResult(msg) {
+  setChatRunning(false);
+  // Mark the live panel as complete (don't tear it down — it's the run's log).
+  if (parallelLive.panel) {
+    const overall = parallelLive.panel.querySelector('.plive-overall');
+    if (overall) {
+      const winner = msg.winner;
+      overall.textContent = winner !== null && winner !== undefined
+        ? `winner: #${winner}` : 'complete';
+      overall.classList.add('plive-overall-done');
+    }
+    // Highlight the winning card
+    if (msg.winner !== null && msg.winner !== undefined) {
+      const winSlot = parallelLive.cards[msg.winner];
+      if (winSlot) winSlot.card.classList.add('plive-winner');
+    }
+  }
+  parallelLive.active = false;
+
+  const container = document.getElementById('chat-messages');
+  const wrap = document.createElement('div');
+  wrap.className = 'msg msg-assistant';
+
+  const cards = (msg.candidates || []).map(c => {
+    const isWinner = c.index === msg.winner;
+    const head = `Candidate ${c.index} · ${esc(c.profile)} · ${esc(c.model || '')}`;
+    const status = c.succeeded ? (isWinner ? '🏆 winner' : '✓') : '✗ failed';
+    const body = c.succeeded ? esc(c.summary || '') : esc(c.error || 'failed');
+    return `
+      <div class="parallel-card${isWinner ? ' parallel-winner' : ''}${c.succeeded ? '' : ' parallel-fail'}">
+        <div class="parallel-card-head">
+          <span class="parallel-card-title">${head}</span>
+          <span class="parallel-card-status">${status}</span>
+        </div>
+        <pre class="parallel-card-body">${body}</pre>
+        <div class="parallel-card-foot"><code>${esc(c.workdir || '')}</code></div>
+      </div>`;
+  }).join('');
+
+  let mergeBlock = '';
+  if (msg.strategy === 'merge' && msg.merged_text) {
+    mergeBlock = `
+      <div class="parallel-merge">
+        <div class="parallel-merge-head">📝 Synthesised result</div>
+        <div class="parallel-merge-body">${renderMarkdown(msg.merged_text)}</div>
+      </div>`;
+  }
+
+  wrap.innerHTML = `
+    <div class="msg-bubble parallel-bubble">
+      <div class="parallel-head">
+        🐙×${(msg.candidates || []).length} parallel run · strategy=<strong>${esc(msg.strategy)}</strong>
+        ${msg.winner !== null && msg.winner !== undefined ? `· winner=<strong>#${msg.winner}</strong>` : ''}
+      </div>
+      <div class="parallel-reason">${esc(msg.reason || '')}</div>
+      <div class="parallel-grid">${cards}</div>
+      ${mergeBlock}
+    </div>`;
+  container.appendChild(wrap);
+  scrollToBottom(container);
 }
 
 // ──────────────────────────────────────────────────────────────
@@ -104,6 +307,29 @@ function sendChat() {
   const dir   = document.getElementById('chat-dir-input').value.trim();
   const profile = document.getElementById('chat-profile-select').value;
   const permMode = document.getElementById('chat-permission-select').value;
+
+  // Parallel mode short-circuit: when the popover toggle is on, route to the
+  // multi-agent handler with per-candidate model/profile selections.
+  if (window.parallelConfig?.enabled) {
+    const cfg = window.parallelConfig;
+    const summary = cfg.models?.length
+      ? `models=[${cfg.models.join(', ')}]`
+      : `model=${model || '(default)'}`;
+    appendChatInfo(`🐙×${cfg.n} Spawning ${cfg.n} agents · strategy=${cfg.strategy} · ${summary}`);
+    sendMsg({
+      type: 'chat_parallel',
+      message: fullText,
+      n: cfg.n,
+      strategy: cfg.strategy,
+      models: cfg.models?.length ? cfg.models : undefined,
+      profiles: cfg.profiles?.length ? cfg.profiles : undefined,
+      judge_model: cfg.judge || undefined,
+      model,
+      working_dir: dir,
+      permission_mode: permMode,
+    });
+    return;
+  }
 
   const type = window.appState.chatIsFirst ? 'chat' : 'chat_continue';
   window.appState.chatIsFirst = false;
@@ -409,31 +635,64 @@ window.resolvePermission = function(btn, allow) {
 // ──────────────────────────────────────────────────────────────
 
 function fetchPromptProfiles() {
+  console.log('[app] Fetching prompt profiles...');
   fetch('/api/profiles')
-    .then(r => r.ok ? r.json() : Promise.reject())
-    .then(data => populatePromptProfiles(data.profiles || []))
-    .catch(() => populatePromptProfiles([]));
+    .then(r => {
+      if (!r.ok) {
+        console.error('[app] Failed to fetch profiles:', r.status, r.statusText);
+        return Promise.reject(new Error(`HTTP ${r.status}`));
+      }
+      return r.json();
+    })
+    .then(data => {
+      console.log('[app] Profiles received:', data);
+      populatePromptProfiles(data.profiles || []);
+    })
+    .catch(err => {
+      console.error('[app] Profile fetch error:', err);
+      populatePromptProfiles([]);
+    });
 }
 
 function populatePromptProfiles(profiles) {
   const sel = document.getElementById('chat-profile-select');
-  if (!sel) return;
-  const prev = sel.value;
-  sel.innerHTML = '';
-  if (!profiles.length) {
-    sel.innerHTML = '<option value="base">base</option>';
+  if (!sel) {
+    console.error('[app] chat-profile-select element not found!');
     return;
   }
-  profiles.forEach(p => {
-    const o = document.createElement('option');
-    o.value = p;
-    o.textContent = p.charAt(0).toUpperCase() + p.slice(1);
-    sel.appendChild(o);
-  });
+  const prev = sel.value;
+  sel.innerHTML = '';
+
+  if (!profiles || !profiles.length) {
+    // No profiles from server, use fallback list
+    const fallback = ['base', 'coder', 'analyst', 'biomedic', 'local'];
+    fallback.forEach(p => {
+      const o = document.createElement('option');
+      o.value = p;
+      o.textContent = p.charAt(0).toUpperCase() + p.slice(1);
+      sel.appendChild(o);
+    });
+    console.log('[app] Using fallback profiles:', fallback);
+  } else {
+    profiles.sort();
+    profiles.forEach(p => {
+      const o = document.createElement('option');
+      o.value = p;
+      o.textContent = p.charAt(0).toUpperCase() + p.slice(1);
+      sel.appendChild(o);
+    });
+    console.log('[app] Populated profiles from server:', profiles);
+  }
+
   // Restore previous selection if still valid, otherwise fall back to config or first item
   const pref = prev || window.appState?.config?.prompt_profile || '';
-  if (pref && profiles.includes(pref)) {
+  const allValues = Array.from(sel.options).map(o => o.value);
+  if (pref && allValues.includes(pref)) {
     sel.value = pref;
+    console.log('[app] Restored profile selection:', pref);
+  } else if (allValues.length > 0) {
+    sel.value = allValues[0];
+    console.log('[app] Defaulted to first profile:', allValues[0]);
   }
 }
 
@@ -454,14 +713,27 @@ function initApp() {
   const textarea = document.getElementById('chat-textarea');
   if (textarea) {
     textarea.addEventListener('keydown', (e) => {
+      if (filePickerVisible() && handlePickerKey(e)) return;
       if (e.key === 'Enter' && !e.shiftKey) {
         e.preventDefault();
         sendChat();
       }
     });
-    
-    textarea.addEventListener('input', () => autoResizeTextarea(textarea));
+
+    textarea.addEventListener('input', () => {
+      autoResizeTextarea(textarea);
+      maybeShowFilePicker(textarea);
+    });
+
+    // Close picker when caret leaves the @-token
+    textarea.addEventListener('blur', () => setTimeout(hideFilePicker, 150));
   }
+
+  // Expose for slash-commands.js
+  window.setChatRunningExternal = setChatRunning;
+
+  // Parallel-agents popover
+  initParallelPopover();
 
   document.getElementById('chat-send-btn')?.addEventListener('click', sendChat);
 
@@ -594,6 +866,364 @@ function initApp() {
   );
 
   console.log('OctoSlave Web UI initialized');
+}
+
+// ──────────────────────────────────────────────────────────────
+// Parallel-agents popover
+// ──────────────────────────────────────────────────────────────
+
+window.parallelConfig = {
+  enabled: false,
+  n: 3,
+  strategy: 'best',
+  judge: '',
+  models: [],
+  profiles: [],
+};
+
+const PARALLEL_PROFILES = ['(inherit)', 'base', 'coder', 'analyst', 'biomedic', 'local'];
+
+function modelOptionsHtml(includeBlank = true) {
+  const sel = document.getElementById('chat-model-select');
+  const opts = sel ? Array.from(sel.options).map(o => o.value).filter(Boolean) : [];
+  let html = '';
+  if (includeBlank) html += '<option value="">(inherit)</option>';
+  opts.forEach(m => {
+    html += `<option value="${esc(m)}">${esc(m)}</option>`;
+  });
+  return html;
+}
+
+function refreshParallelRows() {
+  const host = document.getElementById('parallel-rows');
+  if (!host) return;
+  const n = window.parallelConfig.n;
+  const cur = window.parallelConfig.models || [];
+  const curP = window.parallelConfig.profiles || [];
+  let html = '';
+  for (let i = 0; i < n; i++) {
+    const profOpts = PARALLEL_PROFILES.map(p =>
+      `<option value="${p === '(inherit)' ? '' : p}"${(curP[i] || '') === (p === '(inherit)' ? '' : p) ? ' selected' : ''}>${p}</option>`
+    ).join('');
+    const modelOpts = modelOptionsHtml(true).replace(
+      `value="${esc(cur[i] || '')}"`,
+      `value="${esc(cur[i] || '')}" selected`
+    );
+    html += `
+      <div class="parallel-cand-row">
+        <span class="parallel-cand-idx">#${i}</span>
+        <select class="parallel-cand-model" data-idx="${i}">${modelOpts}</select>
+        <select class="parallel-cand-profile" data-idx="${i}">${profOpts}</select>
+      </div>`;
+  }
+  host.innerHTML = html;
+  // Re-attach listeners
+  host.querySelectorAll('.parallel-cand-model').forEach(sel => {
+    sel.addEventListener('change', e => {
+      const i = parseInt(e.target.dataset.idx);
+      window.parallelConfig.models[i] = e.target.value || '';
+      // Trim trailing empties so backend gets a tidy array
+      while (window.parallelConfig.models.length && !window.parallelConfig.models.at(-1)) {
+        window.parallelConfig.models.pop();
+      }
+    });
+  });
+  host.querySelectorAll('.parallel-cand-profile').forEach(sel => {
+    sel.addEventListener('change', e => {
+      const i = parseInt(e.target.dataset.idx);
+      window.parallelConfig.profiles[i] = e.target.value || '';
+      while (window.parallelConfig.profiles.length && !window.parallelConfig.profiles.at(-1)) {
+        window.parallelConfig.profiles.pop();
+      }
+    });
+  });
+}
+
+function refreshParallelBadge() {
+  const badge = document.getElementById('parallel-count-badge');
+  const btn = document.getElementById('chat-parallel-btn');
+  if (!badge || !btn) return;
+  if (window.parallelConfig.enabled) {
+    badge.textContent = String(window.parallelConfig.n);
+    badge.style.display = 'inline-flex';
+    btn.classList.add('active');
+  } else {
+    badge.style.display = 'none';
+    btn.classList.remove('active');
+  }
+}
+
+function refreshParallelJudge() {
+  const sel = document.getElementById('parallel-judge');
+  if (!sel) return;
+  sel.innerHTML = modelOptionsHtml(true);
+  if (window.parallelConfig.judge) sel.value = window.parallelConfig.judge;
+}
+
+function positionParallelPopover() {
+  const btn = document.getElementById('chat-parallel-btn');
+  const popover = document.getElementById('parallel-popover');
+  if (!btn || !popover) return;
+
+  const rect = btn.getBoundingClientRect();
+  const margin = 16;
+  const vw = window.innerWidth;
+  const vh = window.innerHeight;
+
+  // Decide width — already styled, but read it back to clamp left coord
+  const width = Math.min(popover.offsetWidth || 480, vw - margin * 2);
+  popover.style.width = width + 'px';
+
+  // Available space above and below the button. Prefer above (composer
+  // sits at bottom), fall back to below if there's no room.
+  const spaceAbove = rect.top - margin;
+  const spaceBelow = vh - rect.bottom - margin;
+  const naturalHeight = popover.scrollHeight || 480;
+
+  let placeAbove = spaceAbove >= 280 || spaceAbove >= spaceBelow;
+  let maxH;
+  if (placeAbove) {
+    maxH = Math.min(naturalHeight, spaceAbove);
+    popover.style.top = Math.max(margin, rect.top - 8 - maxH) + 'px';
+    popover.style.bottom = '';
+    popover.style.maxHeight = maxH + 'px';
+  } else {
+    maxH = Math.min(naturalHeight, spaceBelow);
+    popover.style.top = (rect.bottom + 8) + 'px';
+    popover.style.bottom = '';
+    popover.style.maxHeight = maxH + 'px';
+  }
+
+  // Horizontal: align left edge with the button, clamp to viewport
+  let left = rect.left;
+  if (left + width > vw - margin) left = vw - margin - width;
+  if (left < margin) left = margin;
+  popover.style.left = left + 'px';
+  popover.style.right = '';
+}
+
+function showParallelPopover() {
+  const popover = document.getElementById('parallel-popover');
+  if (!popover) return;
+  // Backdrop — created on demand so closing one click outside is easy
+  let bd = document.getElementById('parallel-popover-backdrop');
+  if (!bd) {
+    bd = document.createElement('div');
+    bd.id = 'parallel-popover-backdrop';
+    bd.className = 'parallel-popover-backdrop';
+    bd.addEventListener('click', hideParallelPopover);
+    document.body.appendChild(bd);
+  }
+  bd.style.display = 'block';
+  popover.style.display = 'flex';
+  refreshParallelJudge();
+  refreshParallelRows();
+  // Two rAFs: first lets the layout settle so scrollHeight is right.
+  requestAnimationFrame(() => requestAnimationFrame(positionParallelPopover));
+}
+
+function hideParallelPopover() {
+  const popover = document.getElementById('parallel-popover');
+  const bd = document.getElementById('parallel-popover-backdrop');
+  if (popover) popover.style.display = 'none';
+  if (bd) bd.remove();
+}
+
+function isPopoverVisible() {
+  const popover = document.getElementById('parallel-popover');
+  return !!popover && popover.style.display !== 'none';
+}
+
+function initParallelPopover() {
+  const btn = document.getElementById('chat-parallel-btn');
+  const popover = document.getElementById('parallel-popover');
+  const close = document.getElementById('parallel-popover-close');
+  const enable = document.getElementById('parallel-enable');
+  const nInp = document.getElementById('parallel-n');
+  const strat = document.getElementById('parallel-strategy');
+  const judge = document.getElementById('parallel-judge');
+  if (!btn || !popover) return;
+
+  btn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    if (isPopoverVisible()) hideParallelPopover();
+    else showParallelPopover();
+  });
+  close?.addEventListener('click', hideParallelPopover);
+
+  enable?.addEventListener('change', () => {
+    window.parallelConfig.enabled = enable.checked;
+    refreshParallelBadge();
+  });
+
+  nInp?.addEventListener('change', () => {
+    let v = parseInt(nInp.value);
+    if (isNaN(v) || v < 2) v = 2;
+    if (v > 8) v = 8;
+    nInp.value = v;
+    window.parallelConfig.n = v;
+    window.parallelConfig.models = window.parallelConfig.models.slice(0, v);
+    window.parallelConfig.profiles = window.parallelConfig.profiles.slice(0, v);
+    refreshParallelRows();
+    refreshParallelBadge();
+    if (isPopoverVisible()) requestAnimationFrame(positionParallelPopover);
+  });
+
+  strat?.addEventListener('change', () => {
+    window.parallelConfig.strategy = strat.value;
+  });
+
+  judge?.addEventListener('change', () => {
+    window.parallelConfig.judge = judge.value;
+  });
+
+  // Reposition on viewport changes
+  window.addEventListener('resize', () => {
+    if (isPopoverVisible()) positionParallelPopover();
+  });
+  window.addEventListener('scroll', () => {
+    if (isPopoverVisible()) positionParallelPopover();
+  }, true);
+
+  // Close on Escape
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && isPopoverVisible()) hideParallelPopover();
+  });
+
+  // Refresh content when the model dropdown changes (keeps per-candidate
+  // dropdowns in sync with whatever the user can actually pick).
+  document.getElementById('chat-model-select')?.addEventListener('change', () => {
+    if (isPopoverVisible()) {
+      refreshParallelRows();
+      refreshParallelJudge();
+    }
+  });
+}
+
+// ──────────────────────────────────────────────────────────────
+// @-file picker
+// ──────────────────────────────────────────────────────────────
+
+let pickerEl = null;
+let pickerItems = [];
+let pickerSelected = 0;
+let pickerToken = null;       // {start, end} of the @… token in textarea
+
+function ensurePickerEl() {
+  if (pickerEl) return pickerEl;
+  pickerEl = document.createElement('div');
+  pickerEl.className = 'file-picker';
+  pickerEl.style.display = 'none';
+  document.body.appendChild(pickerEl);
+  return pickerEl;
+}
+
+function filePickerVisible() {
+  return pickerEl && pickerEl.style.display !== 'none';
+}
+
+function hideFilePicker() {
+  if (pickerEl) pickerEl.style.display = 'none';
+  pickerToken = null;
+  pickerItems = [];
+}
+
+function handlePickerKey(e) {
+  if (!filePickerVisible()) return false;
+  if (e.key === 'ArrowDown') {
+    e.preventDefault();
+    pickerSelected = Math.min(pickerItems.length - 1, pickerSelected + 1);
+    renderPicker();
+    return true;
+  }
+  if (e.key === 'ArrowUp') {
+    e.preventDefault();
+    pickerSelected = Math.max(0, pickerSelected - 1);
+    renderPicker();
+    return true;
+  }
+  if (e.key === 'Enter' || e.key === 'Tab') {
+    if (pickerItems.length) {
+      e.preventDefault();
+      acceptPicker(pickerItems[pickerSelected]);
+      return true;
+    }
+  }
+  if (e.key === 'Escape') {
+    e.preventDefault();
+    hideFilePicker();
+    return true;
+  }
+  return false;
+}
+
+function renderPicker() {
+  if (!pickerEl) return;
+  if (!pickerItems.length) {
+    pickerEl.innerHTML = '<div class="file-picker-empty">no matches</div>';
+    return;
+  }
+  pickerEl.innerHTML = pickerItems.map((p, i) => {
+    const cls = i === pickerSelected ? 'file-picker-item active' : 'file-picker-item';
+    return `<div class="${cls}" data-idx="${i}">${esc(p)}</div>`;
+  }).join('');
+  Array.from(pickerEl.querySelectorAll('.file-picker-item')).forEach(node => {
+    node.addEventListener('mousedown', (ev) => {
+      ev.preventDefault();
+      acceptPicker(pickerItems[parseInt(node.dataset.idx)]);
+    });
+  });
+}
+
+function acceptPicker(path) {
+  const ta = document.getElementById('chat-textarea');
+  if (!ta || !pickerToken) {
+    hideFilePicker();
+    return;
+  }
+  const value = ta.value;
+  const before = value.slice(0, pickerToken.start);
+  const after = value.slice(pickerToken.end);
+  const insert = '@' + path + ' ';
+  ta.value = before + insert + after;
+  const caret = before.length + insert.length;
+  ta.setSelectionRange(caret, caret);
+  hideFilePicker();
+  ta.focus();
+}
+
+function maybeShowFilePicker(ta) {
+  const value = ta.value;
+  const caret = ta.selectionStart || 0;
+  // Walk back from caret to last @ or whitespace
+  let i = caret - 1;
+  while (i >= 0 && !/\s/.test(value[i]) && value[i] !== '@') i--;
+  if (i < 0 || value[i] !== '@') {
+    hideFilePicker();
+    return;
+  }
+  // Make sure @ is preceded by whitespace or start-of-input (so emails don't trigger)
+  if (i > 0 && !/\s/.test(value[i - 1])) {
+    hideFilePicker();
+    return;
+  }
+  pickerToken = { start: i, end: caret };
+  const query = value.slice(i + 1, caret);
+  const wd = document.getElementById('chat-dir-input')?.value || '.';
+  fetch(`/api/picker?working_dir=${encodeURIComponent(wd)}&q=${encodeURIComponent(query)}`)
+    .then(r => r.json())
+    .then(data => {
+      pickerItems = data.items || [];
+      pickerSelected = 0;
+      const pe = ensurePickerEl();
+      const rect = ta.getBoundingClientRect();
+      pe.style.left = rect.left + 'px';
+      pe.style.bottom = (window.innerHeight - rect.top + 4) + 'px';
+      pe.style.minWidth = Math.min(420, rect.width) + 'px';
+      pe.style.display = 'block';
+      renderPicker();
+    })
+    .catch(() => hideFilePicker());
 }
 
 // Wait for DOM to be ready before initializing

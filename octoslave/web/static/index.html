@@ -3,17 +3,17 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>OctoSlave</title>
+  <title>OctoSlave — Autonomous AI Agent</title>
   <link rel="icon" type="image/png" href="/static/logo.png?v=3">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="/static/css/styles.css">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/css/styles.css?v=20260508c">
 </head>
 <body>
 
 <!-- ══════════════════════════════════════════════════════════
-     HISTORY SIDEBAR (slides in from left, overlays nav sidebar)
+     HISTORY SIDEBAR
 ══════════════════════════════════════════════════════════ -->
 <div class="history-overlay" id="history-overlay" onclick="toggleHistory()"></div>
 <aside class="history-sidebar" id="history-sidebar">
@@ -29,7 +29,7 @@
 </aside>
 
 <!-- ══════════════════════════════════════════════════════════
-     LEFT NAVIGATION SIDEBAR
+     LEFT SIDEBAR (compact icon-nav)
 ══════════════════════════════════════════════════════════ -->
 <aside class="sidebar">
 
@@ -39,26 +39,26 @@
   </div>
 
   <nav class="sidebar-nav">
-    <button class="nav-btn active" data-tab="chat">
-      <svg class="nav-icon" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <button class="nav-btn active" data-tab="chat" title="Chat">
+      <svg class="nav-icon" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
         <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
       </svg>
       <span>Chat</span>
     </button>
-    <button class="nav-btn" data-tab="research">
-      <svg class="nav-icon" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <button class="nav-btn" data-tab="research" title="Research">
+      <svg class="nav-icon" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
         <path d="M9 3h6m-6 0v7L5 17a3 3 0 0 0 2.6 4.5h8.8A3 3 0 0 0 19 17l-4-7V3"/>
       </svg>
       <span>Research</span>
     </button>
-    <button class="nav-btn" data-tab="files">
-      <svg class="nav-icon" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <button class="nav-btn" data-tab="files" title="Files">
+      <svg class="nav-icon" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
         <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
       </svg>
       <span>Files</span>
     </button>
-    <button class="nav-btn" data-tab="settings">
-      <svg class="nav-icon" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <button class="nav-btn" data-tab="settings" title="Settings">
+      <svg class="nav-icon" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
         <circle cx="12" cy="12" r="3"/>
         <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l-.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
       </svg>
@@ -67,8 +67,8 @@
   </nav>
 
   <div class="sidebar-bottom">
-    <button class="sidebar-history-btn" id="history-btn" onclick="toggleHistory()">
-      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <button class="sidebar-history-btn" id="history-btn" onclick="toggleHistory()" title="History">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
         <circle cx="12" cy="12" r="10"/>
         <polyline points="12 6 12 12 16 14"/>
       </svg>
@@ -104,19 +104,19 @@
       <select id="chat-profile-select" title="Prompt Profile">
         <option value="">Loading profiles…</option>
       </select>
-      <select id="chat-permission-select" title="Permission Mode">
+      <select id="chat-permission-select" title="Permission Mode" style="display:none;">
         <option value="autonomous">Autonomous</option>
         <option value="controlled">Controlled</option>
         <option value="supervised">Supervised</option>
       </select>
-      <div class="config-divider"></div>
+      <div class="config-divider" style="display:none;"></div>
       <div class="dir-field">
-        <svg class="dir-field-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <svg class="dir-field-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
         </svg>
         <input type="text" id="chat-dir-input" placeholder="Working directory" title="Working directory">
         <button class="btn-browse" onclick="browseDir('chat-dir-input')" title="Browse for folder">
-          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
             <polyline points="6 9 12 15 18 9"/>
           </svg>
         </button>
@@ -138,18 +138,69 @@
       <div id="chat-attachments"></div>
       <div id="chat-input-row">
         <button class="btn-icon" id="chat-attach-btn" title="Attach files">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/>
           </svg>
+        </button>
+        <button class="btn-icon" id="chat-parallel-btn" title="Configure parallel agents">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="6" cy="6" r="2.2"/>
+            <circle cx="18" cy="6" r="2.2"/>
+            <circle cx="6" cy="18" r="2.2"/>
+            <circle cx="18" cy="18" r="2.2"/>
+            <line x1="8" y1="6" x2="16" y2="6"/>
+            <line x1="6" y1="8" x2="6" y2="16"/>
+            <line x1="18" y1="8" x2="18" y2="16"/>
+            <line x1="8" y1="18" x2="16" y2="18"/>
+          </svg>
+          <span class="parallel-count-badge" id="parallel-count-badge" style="display:none">2</span>
         </button>
         <input type="file" id="chat-file-input" multiple style="display:none">
         <textarea id="chat-textarea" rows="1" placeholder="Ask OctoSlave anything…   Shift+Enter for newline"></textarea>
         <button class="btn-send" id="chat-send-btn" title="Send message">
-          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
             <line x1="22" y1="2" x2="11" y2="13"/>
             <polygon points="22 2 15 22 11 13 2 9 22 2" fill="currentColor" stroke="none"/>
           </svg>
         </button>
+      </div>
+    </div>
+
+    <!-- Parallel-agents config popover -->
+    <div class="parallel-popover" id="parallel-popover" style="display:none">
+      <div class="parallel-popover-head">
+        <span>Parallel agents</span>
+        <button class="parallel-popover-close" id="parallel-popover-close" title="Close">×</button>
+      </div>
+      <div class="parallel-popover-body">
+        <label class="parallel-row">
+          <span class="parallel-label">Enable</span>
+          <input type="checkbox" id="parallel-enable">
+        </label>
+        <label class="parallel-row">
+          <span class="parallel-label">Number of agents</span>
+          <input type="number" id="parallel-n" min="2" max="8" value="3">
+        </label>
+        <label class="parallel-row">
+          <span class="parallel-label">Strategy</span>
+          <select id="parallel-strategy">
+            <option value="best">best — judge picks the winner</option>
+            <option value="vote">vote — peers grade each other</option>
+            <option value="merge">merge — synthesise all candidates</option>
+          </select>
+        </label>
+        <label class="parallel-row">
+          <span class="parallel-label">Judge model <span class="parallel-hint">(optional)</span></span>
+          <select id="parallel-judge">
+            <option value="">use default</option>
+          </select>
+        </label>
+
+        <div class="parallel-rows-head">
+          <span>Per-candidate config</span>
+          <span class="parallel-hint">leave blank to inherit</span>
+        </div>
+        <div class="parallel-rows" id="parallel-rows"></div>
       </div>
     </div>
   </div>
@@ -172,7 +223,7 @@
               <input type="number" id="research-rounds" value="3" min="1" max="20">
             </div>
             <div class="field-group">
-              <label class="field-label">Model override</label>
+              <label class="field-label">Model</label>
               <select id="research-model-select">
                 <option value="">(use default)</option>
               </select>
@@ -187,7 +238,7 @@
         <div class="research-form-section">
           <label class="form-label">Working Directory</label>
           <div class="dir-field">
-            <svg class="dir-field-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <svg class="dir-field-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
               <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
             </svg>
             <input type="text" id="research-dir-input" placeholder="./research">
@@ -226,6 +277,12 @@
               <span class="p-model"></span>
               <span class="p-elapsed"></span>
             </div>
+            <div class="pipeline-box pending" data-role="skeptic">
+              <span class="p-icon">🤨</span>
+              <span class="p-label">Skeptic</span>
+              <span class="p-model"></span>
+              <span class="p-elapsed"></span>
+            </div>
             <div class="pipeline-box pending" data-role="coder">
               <span class="p-icon">💻</span>
               <span class="p-label">Coder</span>
@@ -261,14 +318,14 @@
         <div id="research-console"></div>
 
         <div class="completion-card" id="completion-card">
-          <div class="comp-title" id="comp-title">Research Complete</div>
-          <div class="comp-btns">
-            <a id="comp-report-btn" href="#" target="_blank" class="btn-primary" style="text-decoration:none;padding:9px 16px;border-radius:var(--radius-sm);font-size:13px;font-weight:500;display:inline-flex;align-items:center;gap:6px">
+          <span class="comp-title" id="comp-title">Research Complete</span>
+          <span class="comp-btns">
+            <a id="comp-report-btn" href="#" target="_blank" class="btn-primary" style="text-decoration:none;font-size:12px;font-weight:500;display:inline-flex;align-items:center;gap:6px">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
               Open Report
             </a>
             <button class="btn-secondary btn-sm" id="comp-files-btn">Browse Files</button>
-          </div>
+          </span>
         </div>
       </div>
     </div>
@@ -278,12 +335,12 @@
   <div class="tab-pane" id="tab-files">
     <div class="files-toolbar">
       <div class="dir-field" style="flex:1;max-width:420px">
-        <svg class="dir-field-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <svg class="dir-field-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
         </svg>
         <input type="text" id="files-dir-input" placeholder="Working directory">
         <button class="btn-browse" onclick="browseDir('files-dir-input')" title="Browse for folder">
-          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
             <polyline points="6 9 12 15 18 9"/>
           </svg>
         </button>
@@ -356,7 +413,7 @@
 
 </main>
 
-<script type="module" src="/static/js/app.js?v=20260429"></script>
+<script type="module" src="/static/js/app.js?v=20260508c"></script>
 
 </body>
 </html>

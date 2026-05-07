@@ -27,6 +27,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from .. import display
 from ..display import resolve_permission
 from ..agent import continue_agent, make_client, run_agent, list_prompt_profiles
+from ..parallel import run_parallel_agents
 from ..config import (
     load_config,
     get_role_models, save_role_model, reset_role_models,
@@ -38,6 +39,7 @@ from ..research import PIPELINE, run_long_research
 
 STATIC_DIR = Path(__file__).parent / "static"
 CHATS_DIR  = Path.home() / ".octoslave" / "chats"
+SHARED_DIR = Path.home() / ".octoslave" / "shared"
 
 app = FastAPI(title="OctoSlave Web UI", docs_url=None, redoc_url=None)
 
@@ -137,6 +139,108 @@ async def delete_chat(chat_id: str):
     if f.exists():
         f.unlink()
     return {"deleted": chat_id}
+
+
+@app.post("/api/share")
+async def share_chat(payload: dict):
+    """Persist a conversation as a read-only shared snapshot. Returns {id, url}."""
+    SHARED_DIR.mkdir(parents=True, exist_ok=True)
+    messages = payload.get("messages") or []
+    title = (payload.get("title") or "OctoSlave conversation").strip()[:120]
+    model = payload.get("model", "")
+    if not messages:
+        return {"error": "no messages"}
+    sid = uuid.uuid4().hex[:12]
+    (SHARED_DIR / f"{sid}.json").write_text(json.dumps({
+        "id": sid,
+        "title": title,
+        "model": model,
+        "created_at": datetime.now().isoformat(timespec="seconds"),
+        "messages": messages,
+    }, indent=2))
+    return {"id": sid, "url": f"/shared/{sid}"}
+
+
+@app.get("/shared/{share_id}", response_class=HTMLResponse)
+async def view_shared(share_id: str):
+    """Render a shared conversation as a read-only HTML page."""
+    if not share_id.isalnum() or len(share_id) > 24:
+        return HTMLResponse("<p>Invalid share id.</p>", status_code=400)
+    f = SHARED_DIR / f"{share_id}.json"
+    if not f.exists():
+        return HTMLResponse("<p>Shared conversation not found.</p>", status_code=404)
+    try:
+        data = json.loads(f.read_text())
+    except Exception:
+        return HTMLResponse("<p>Failed to load.</p>", status_code=500)
+
+    def _esc(s: str) -> str:
+        return (s.replace("&", "&amp;").replace("<", "&lt;")
+                 .replace(">", "&gt;").replace('"', "&quot;"))
+
+    parts = []
+    for m in data.get("messages", []):
+        role = m.get("role", "")
+        content = (m.get("content") or "").strip()
+        if not content or role == "system":
+            continue
+        klass = "u" if role == "user" else "a"
+        parts.append(f'<div class="msg {klass}"><pre>{_esc(content)}</pre></div>')
+
+    html = f"""<!doctype html>
+<html><head><meta charset="utf-8"><title>{_esc(data.get('title', 'Shared'))} — OctoSlave</title>
+<style>
+body{{font-family:Inter,system-ui,sans-serif;background:#111216;color:#d0d1d6;
+     margin:0;padding:32px 16px;line-height:1.55}}
+.wrap{{max-width:780px;margin:0 auto}}
+h1{{font-size:18px;margin:0 0 4px;color:#fab283}}
+.meta{{color:#7a7d86;font-size:12px;margin-bottom:24px}}
+.msg{{margin:14px 0;padding:14px 16px;border-radius:12px;border:1px solid #2a2b35}}
+.msg.u{{background:#1a1c25;border-color:#363846}}
+.msg.a{{background:#16171d}}
+.msg.u::before{{content:"You";display:block;font-size:11px;color:#5c9cf5;
+                font-weight:600;margin-bottom:6px;letter-spacing:.04em}}
+.msg.a::before{{content:"OctoSlave";display:block;font-size:11px;color:#fab283;
+                font-weight:600;margin-bottom:6px;letter-spacing:.04em}}
+pre{{margin:0;white-space:pre-wrap;word-break:break-word;font-family:inherit}}
+.foot{{color:#4a4d56;font-size:11px;margin-top:32px;text-align:center}}
+</style></head><body>
+<div class="wrap">
+<h1>{_esc(data.get('title', 'Shared conversation'))}</h1>
+<div class="meta">model: {_esc(data.get('model', '—'))} · {_esc(data.get('created_at', ''))}</div>
+{''.join(parts) or '<p>(empty)</p>'}
+<div class="foot">Shared via OctoSlave · read-only snapshot</div>
+</div></body></html>"""
+    return HTMLResponse(html)
+
+
+@app.get("/api/picker")
+async def file_picker(working_dir: str = ".", q: str = ""):
+    """Return up to 60 files matching ``q`` under ``working_dir`` for @ autocomplete."""
+    root = Path(working_dir).expanduser().resolve()
+    if not root.is_dir():
+        return {"items": []}
+    SKIP_DIRS = {".git", ".venv", "venv", "node_modules", "__pycache__",
+                 ".parallel", ".uploads", ".pytest_cache", "dist", "build"}
+    needle = q.lower().strip()
+    out = []
+    try:
+        for p in root.rglob("*"):
+            if not p.is_file():
+                continue
+            if any(part in SKIP_DIRS or part.startswith(".") and len(part) > 1
+                   for part in p.parts[len(root.parts):]):
+                continue
+            rel = str(p.relative_to(root))
+            if needle and needle not in rel.lower():
+                continue
+            out.append(rel)
+            if len(out) >= 60:
+                break
+    except Exception:
+        pass
+    out.sort(key=lambda s: (s.count("/"), len(s), s))
+    return {"items": out[:60]}
 
 # ---------------------------------------------------------------------------
 
@@ -535,6 +639,102 @@ async def ws_endpoint(websocket: WebSocket):
                         loop.call_soon_threadsafe(event_q.put_nowait, {"type": "_sentinel"})
 
                 threading.Thread(target=chat_fn, daemon=True).start()
+                await stream_events()
+
+            elif mtype == "chat_parallel":
+                if state["running"]:
+                    await send({"type": "error", "text": "A task is already running."})
+                    continue
+                cfg = load_config()
+                model = msg.get("model") or state["model"] or cfg.get("default_model", "")
+                working_dir = msg.get("working_dir") or state["working_dir"]
+                message_text = msg.get("message", "").strip()
+                n = max(1, min(8, int(msg.get("n", 3))))
+                strategy = msg.get("strategy", "best")
+                if strategy not in ("best", "vote", "merge"):
+                    strategy = "best"
+                permission_mode = msg.get("permission_mode") or cfg.get("permission_mode", "autonomous")
+                models_list = msg.get("models") or None
+                profiles_list = msg.get("profiles") or None
+                judge_model = msg.get("judge_model") or None
+                # Accept either an array or a comma-separated string for friendliness
+                if isinstance(models_list, str):
+                    models_list = [s.strip() for s in models_list.split(",") if s.strip()]
+                if isinstance(profiles_list, str):
+                    profiles_list = [s.strip() for s in profiles_list.split(",") if s.strip()]
+                if not message_text:
+                    continue
+                state["model"] = model
+                state["working_dir"] = working_dir
+                state["running"] = True
+                _backend = state.get("backend") or cfg.get("backend", "einfra")
+                if _backend == "nim":
+                    _api_key = cfg.get("nim_api_key", "")
+                    _base_url = cfg.get("nim_url", "")
+                elif _backend == "ollama":
+                    _api_key = "ollama"
+                    _base_url = cfg.get("ollama_url", "")
+                else:
+                    _api_key = cfg.get("api_key", "")
+                    _base_url = cfg.get("base_url", "")
+                client = make_client(_api_key, _base_url)
+
+                def parallel_fn(txt=message_text, mdl=model, wd=working_dir,
+                                cnt=n, strat=strategy, pm=permission_mode,
+                                ml=models_list, pl=profiles_list, jm=judge_model):
+                    display.set_event_callback(make_emit())
+                    try:
+                        result = run_parallel_agents(
+                            task=txt,
+                            model=mdl,
+                            working_dir=wd,
+                            client=client,
+                            n=cnt,
+                            strategy=strat,
+                            permission_mode=pm,
+                            models=ml,
+                            profiles=pl,
+                            judge_model=jm,
+                        )
+                        loop.call_soon_threadsafe(
+                            event_q.put_nowait,
+                            {
+                                "type": "parallel_result",
+                                "winner": result.get("winner"),
+                                "reason": result.get("reason", ""),
+                                "strategy": strat,
+                                "candidates": [
+                                    {
+                                        "index": c.index,
+                                        "profile": c.profile,
+                                        "model": c.model,
+                                        "succeeded": c.succeeded,
+                                        "summary": c.summary[:2000],
+                                        "error": c.error,
+                                        "workdir": str(c.workdir),
+                                    }
+                                    for c in result.get("candidates", [])
+                                ],
+                                "merged_text": result.get("merged_text", ""),
+                            },
+                        )
+                        if result.get("winner") is not None:
+                            winner = next(
+                                (c for c in result["candidates"]
+                                 if c.index == result["winner"]),
+                                None,
+                            )
+                            if winner and winner.messages:
+                                state["messages"] = winner.messages
+                    except Exception as exc:
+                        loop.call_soon_threadsafe(
+                            event_q.put_nowait, {"type": "error", "text": str(exc)}
+                        )
+                    finally:
+                        display.clear_event_callback()
+                        loop.call_soon_threadsafe(event_q.put_nowait, {"type": "_sentinel"})
+
+                threading.Thread(target=parallel_fn, daemon=True).start()
                 await stream_events()
 
             elif mtype == "chat_clear":
