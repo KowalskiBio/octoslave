@@ -20,11 +20,15 @@ from .config import (
     KNOWN_MODELS, DEFAULT_MODEL, BASE_URL, OLLAMA_BASE_URL,
     NIM_BASE_URL, NIM_DEFAULT_MODEL, NIM_KNOWN_MODELS,
     PIPELINE_ROLES, EINFRA_ROLE_MODELS, NIM_ROLE_MODELS,
+    BUILTIN_BACKENDS,
     load_config, save_config,
     ollama_is_running, ollama_list_models, ollama_pull_model,
     nim_list_models, einfra_list_models, list_models,
     assign_local_models, sort_by_tool_calling,
     get_role_models, save_role_model, reset_role_models,
+    resolve_backend, list_providers,
+    get_custom_providers, get_custom_provider,
+    add_custom_provider, update_custom_provider, remove_custom_provider,
 )
 
 # ---------------------------------------------------------------------------
@@ -474,6 +478,38 @@ def models(local):
         display.console.print("[dim]Switch backend: /einfra · /local · /nim[/dim]")
         return
 
+    # Custom user-defined provider — query its /v1/models or fall back to its
+    # configured `models` list.
+    backend = cfg.get("backend", "einfra")
+    if backend not in BUILTIN_BACKENDS:
+        provider = get_custom_provider(cfg, backend)
+        if not provider:
+            display.print_error(
+                f"Configured backend '{backend}' is not registered. "
+                "Run 'ots provider list' to see available providers."
+            )
+            return
+        live = einfra_list_models(provider.get("base_url", ""), provider.get("api_key", "") or "x")
+        if live:
+            display.console.print(
+                f"[bold]Available models on {provider.get('name', backend)}[/bold] [dim](live from API)[/dim]\n"
+            )
+            ms = live
+        else:
+            ms = provider.get("models") or [provider.get("default_model")] if provider.get("default_model") else []
+            ms = [m for m in ms if m]
+            display.console.print(
+                f"[bold]Available models on {provider.get('name', backend)}[/bold] [dim](configured list)[/dim]\n"
+            )
+        default = cfg.get("default_model") or provider.get("default_model")
+        for m in ms:
+            marker = " [bold green]← default[/bold green]" if m == default else ""
+            display.console.print(f"  {m}{marker}")
+        display.console.print()
+        display.console.print("[dim]Switch with: /model <name>  or  -m <name>[/dim]")
+        display.console.print("[dim]Manage providers: ots provider list[/dim]")
+        return
+
     einfra_models = einfra_list_models(cfg.get("base_url", BASE_URL), cfg.get("api_key", ""))
     if einfra_models:
         display.console.print("[bold]Available models on e-INFRA CZ[/bold] [dim](live from API)[/dim]\n")
@@ -507,6 +543,159 @@ def _print_local_models(ollama_url: str):
     display.console.print()
     display.console.print("[dim]Switch with: /model <name>[/dim]")
     display.console.print("[dim]Pull more with: /pull <model-name>[/dim]")
+
+
+# ---------------------------------------------------------------------------
+# `provider` sub-command — manage custom OpenAI-compatible providers
+# ---------------------------------------------------------------------------
+
+@cli.group("provider", invoke_without_command=True)
+@click.pass_context
+def provider_grp(ctx):
+    """Manage custom OpenAI-compatible providers (e.g. OpenAI, Together AI,
+    Groq, self-hosted vLLM). Use 'ots provider list' to see registered
+    providers, 'ots provider add' to register a new one, or 'ots provider
+    use <id>' to switch the active backend."""
+    if ctx.invoked_subcommand is None:
+        ctx.invoke(provider_list)
+
+
+@provider_grp.command("list")
+def provider_list():
+    """List all registered providers (built-in + custom)."""
+    cfg = load_config()
+    providers = list_providers(cfg)
+    active = cfg.get("backend", "einfra")
+    display.console.print("[bold]Providers[/bold]")
+    for p in providers:
+        mark = " [green]← active[/green]" if p["id"] == active else ""
+        kind = "[dim](builtin)[/dim]" if p["kind"] == "builtin" else "[dim](custom)[/dim]"
+        cfg_status = "" if p.get("configured", True) else " [yellow](needs config)[/yellow]"
+        display.console.print(
+            f"  [bold]{p['id']:<14}[/bold]  {p['name']:<28}  {kind}{cfg_status}{mark}"
+        )
+    display.console.print()
+    display.console.print("[dim]Add:    ots provider add[/dim]")
+    display.console.print("[dim]Use:    ots provider use <id>[/dim]")
+    display.console.print("[dim]Remove: ots provider remove <id>[/dim]")
+
+
+@provider_grp.command("add")
+@click.option("--id", "pid", default=None, help="Provider id (lowercase slug)")
+@click.option("--name", default=None, help="Display name")
+@click.option("--base-url", default=None, help="OpenAI-compatible base URL (ending with /v1)")
+@click.option("--api-key", default=None, help="API key (omit for unauthenticated endpoints)")
+@click.option("--default-model", default=None, help="Default model id")
+@click.option("--models", default=None,
+              help="Comma-separated list of known model ids (optional)")
+def provider_add(pid, name, base_url, api_key, default_model, models):
+    """Register a new custom OpenAI-compatible provider. Runs interactively
+    if any required field is missing."""
+    if not pid:
+        pid = click.prompt("Provider id (lowercase slug, e.g. 'openai')").strip().lower()
+    if not name:
+        name = click.prompt("Display name", default=pid).strip() or pid
+    if not base_url:
+        base_url = click.prompt("Base URL (ends with /v1)").strip().rstrip("/")
+    if api_key is None:
+        api_key = click.prompt(
+            "API key (leave blank if none)",
+            default="", hide_input=True, show_default=False,
+        ).strip()
+    if not default_model:
+        default_model = click.prompt("Default model").strip()
+    if models is None:
+        models = click.prompt(
+            "Known models (comma-separated, optional)", default=""
+        ).strip()
+
+    try:
+        p = add_custom_provider({
+            "id": pid,
+            "name": name,
+            "base_url": base_url,
+            "api_key": api_key,
+            "default_model": default_model,
+            "models": models,
+        })
+    except ValueError as exc:
+        display.print_error(str(exc))
+        sys.exit(1)
+
+    display.console.print(
+        f"[bold green]✓ Provider '{p['id']}' added.[/bold green]"
+    )
+    display.console.print(
+        f"[dim]  Switch with: ots provider use {p['id']}[/dim]"
+    )
+
+
+@provider_grp.command("remove")
+@click.argument("provider_id")
+def provider_remove(provider_id):
+    """Remove a custom provider by id."""
+    if remove_custom_provider(provider_id):
+        display.console.print(f"[dim]Provider '{provider_id}' removed.[/dim]")
+    else:
+        display.print_error(f"No custom provider with id '{provider_id}'.")
+        sys.exit(1)
+
+
+@provider_grp.command("use")
+@click.argument("provider_id")
+@click.option("-m", "--model", default=None, help="Override default model")
+def provider_use(provider_id, model):
+    """Set <provider_id> as the active backend."""
+    cfg = load_config()
+    pid = provider_id.lower()
+    if pid in BUILTIN_BACKENDS:
+        # Built-in backends each have their own default model. When no
+        # explicit -m override is given, fall back to the backend's
+        # canonical default rather than carrying over whatever model was
+        # active before — preserves NIM/EINFRA behaviour from before
+        # the custom-provider system existed.
+        if model:
+            new_model = model
+        elif pid == "nim":
+            new_model = NIM_DEFAULT_MODEL
+        elif pid == "ollama":
+            new_model = cfg.get("default_model", DEFAULT_MODEL)  # stays — Ollama picks at switch time
+        else:  # einfra
+            new_model = DEFAULT_MODEL
+        save_config(
+            cfg.get("api_key", ""),
+            cfg.get("base_url", BASE_URL),
+            new_model,
+            backend=pid,
+            ollama_url=cfg.get("ollama_url", OLLAMA_BASE_URL),
+            nim_api_key=cfg.get("nim_api_key", ""),
+            nim_url=cfg.get("nim_url", NIM_BASE_URL),
+        )
+        display.console.print(f"[bold]✓ Active backend:[/bold] {pid} · model [bold]{new_model}[/bold]")
+        return
+
+    provider = get_custom_provider(cfg, pid)
+    if not provider:
+        display.print_error(f"Unknown provider '{pid}'. Run 'ots provider list' to see available providers.")
+        sys.exit(1)
+    if not provider.get("base_url"):
+        display.print_error(f"Provider '{pid}' has no base_url configured.")
+        sys.exit(1)
+
+    chosen = model or provider.get("default_model") or cfg.get("default_model", DEFAULT_MODEL)
+    save_config(
+        cfg.get("api_key", ""),
+        cfg.get("base_url", BASE_URL),
+        chosen,
+        backend=pid,
+        ollama_url=cfg.get("ollama_url", OLLAMA_BASE_URL),
+        nim_api_key=cfg.get("nim_api_key", ""),
+        nim_url=cfg.get("nim_url", NIM_BASE_URL),
+    )
+    display.console.print(
+        f"[bold green]✓ Active backend:[/bold green] {provider.get('name', pid)} "
+        f"[dim]({pid})[/dim] · model [bold]{chosen}[/bold]"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -732,6 +921,9 @@ def _handle_slash(cmd: str, state: dict, cfg: dict, messages: list, client) -> s
 
     if name == "/nim":
         return _handle_nim_switch(arg, state, messages)
+
+    if name == "/provider":
+        return _handle_provider_command(arg, state, messages)
 
     if name == "/pull":
         if not arg:
@@ -1149,6 +1341,147 @@ def _handle_nim_switch(arg: str, state: dict, messages: list) -> str:
     return "new_client"
 
 
+def _handle_custom_switch(provider_id: str, state: dict, messages: list,
+                          requested_model: str | None = None) -> str:
+    """Switch to a custom user-defined provider by id."""
+    cfg = load_config()
+    provider = get_custom_provider(cfg, provider_id)
+    if not provider:
+        display.print_error(
+            f"Unknown provider '{provider_id}'. "
+            f"Run [bold]/provider list[/bold] to see registered providers."
+        )
+        return "ok"
+    if not provider.get("base_url"):
+        display.print_error(
+            f"Provider '{provider.get('name', provider_id)}' has no base_url configured."
+        )
+        return "ok"
+
+    chosen = (requested_model or provider.get("default_model")
+              or cfg.get("default_model") or "")
+
+    state["backend"] = provider_id
+    state["model"] = chosen
+    state["api_key"] = provider.get("api_key", "") or "x"
+    state["base_url"] = provider["base_url"]
+
+    save_config(
+        cfg.get("api_key", ""),
+        cfg.get("base_url", BASE_URL),
+        chosen or cfg.get("default_model", DEFAULT_MODEL),
+        backend=provider_id,
+        ollama_url=cfg.get("ollama_url", OLLAMA_BASE_URL),
+        nim_api_key=cfg.get("nim_api_key", ""),
+        nim_url=cfg.get("nim_url", NIM_BASE_URL),
+    )
+
+    display.console.print(
+        f"[bold bright_yellow]● {provider.get('name', provider_id)}[/bold bright_yellow]"
+        + (f" — using [bold]{chosen}[/bold]" if chosen else "")
+    )
+    display.console.print("[dim]  Switch back: /einfra · /local · /nim[/dim]")
+    messages.clear()
+    return "new_client"
+
+
+def _handle_provider_command(arg: str, state: dict, messages: list) -> str:
+    """Manage custom providers from the interactive TUI.
+
+    /provider                       — list registered providers
+    /provider list                  — same
+    /provider use <id> [model]      — switch to a registered custom provider
+    /provider add                   — start interactive add wizard
+    /provider remove <id>           — delete a custom provider
+    """
+    tokens = arg.split() if arg else []
+    sub = tokens[0].lower() if tokens else "list"
+
+    if sub in ("list", "ls", ""):
+        cfg = load_config()
+        providers = list_providers(cfg)
+        active = cfg.get("backend", "einfra")
+        display.console.print("[bold]Providers[/bold]")
+        for p in providers:
+            mark = " [green]←[/green]" if p["id"] == active else ""
+            tag = "[dim](builtin)[/dim]" if p["kind"] == "builtin" else "[dim](custom)[/dim]"
+            display.console.print(f"  [bold]{p['id']}[/bold]  {p['name']}  {tag}{mark}")
+        display.console.print(
+            "\n[dim]Switch: /provider use <id>   ·   Add: /provider add   ·   "
+            "Remove: /provider remove <id>[/dim]"
+        )
+        return "ok"
+
+    if sub == "use":
+        if len(tokens) < 2:
+            display.print_error("Usage: /provider use <id> [model]")
+            return "ok"
+        pid = tokens[1].lower()
+        model_arg = tokens[2] if len(tokens) > 2 else None
+        if pid == "einfra":
+            return _handle_einfra_switch(state, messages)
+        if pid == "ollama" or pid == "local":
+            return _handle_local_switch(model_arg or "", state, messages)
+        if pid == "nim":
+            return _handle_nim_switch(model_arg or "", state, messages)
+        return _handle_custom_switch(pid, state, messages, model_arg)
+
+    if sub == "add":
+        display.console.print("[bold]Add custom provider[/bold]")
+        try:
+            pid = click.prompt("Provider id (lowercase, e.g. 'openai')").strip().lower()
+            name = click.prompt("Display name", default=pid).strip() or pid
+            base_url = click.prompt("Base URL (OpenAI-compatible /v1)").strip().rstrip("/")
+            api_key = click.prompt("API key (leave blank if none)",
+                                   default="", hide_input=True, show_default=False).strip()
+            default_model = click.prompt("Default model").strip()
+            models_raw = click.prompt(
+                "Known models (comma-separated, optional)", default=""
+            ).strip()
+        except click.Abort:
+            display.console.print("[dim]Cancelled.[/dim]")
+            return "ok"
+
+        try:
+            p = add_custom_provider({
+                "id": pid,
+                "name": name,
+                "base_url": base_url,
+                "api_key": api_key,
+                "default_model": default_model,
+                "models": models_raw,
+            })
+        except ValueError as exc:
+            display.print_error(str(exc))
+            return "ok"
+
+        display.console.print(
+            f"[bold green]✓ Provider '{p['id']}' added.[/bold green] "
+            f"Switch with [bold]/provider use {p['id']}[/bold]."
+        )
+        return "ok"
+
+    if sub in ("remove", "rm", "delete"):
+        if len(tokens) < 2:
+            display.print_error("Usage: /provider remove <id>")
+            return "ok"
+        pid = tokens[1].lower()
+        if remove_custom_provider(pid):
+            display.console.print(f"[dim]Provider '{pid}' removed.[/dim]")
+            # If we just removed the active provider, fall back to einfra in state.
+            if state.get("backend") == pid:
+                return _handle_einfra_switch(state, messages)
+        else:
+            display.print_error(f"No custom provider with id '{pid}'.")
+        return "ok"
+
+    display.print_error(
+        "Unknown subcommand. Try: /provider list · /provider use <id> · "
+        "/provider add · /provider remove <id>"
+    )
+    return "ok"
+
+
 def _do_pull(model_name: str, state: dict):
     """Pull a model via Ollama."""
     ollama_url = state.get("ollama_url", OLLAMA_BASE_URL)
@@ -1172,8 +1505,11 @@ def _handle_research_roles(arg: str, state: dict, cfg: dict):
     # /research-roles reset [backend]
     if tokens and tokens[0] == "reset":
         target_backend = tokens[1] if len(tokens) > 1 else backend
-        if target_backend not in ("einfra", "nim", "ollama"):
-            display.print_error(f"Unknown backend '{target_backend}'. Use einfra, nim, or ollama.")
+        if target_backend not in ("einfra", "nim", "ollama") and not get_custom_provider(load_config(), target_backend):
+            display.print_error(
+                f"Unknown backend '{target_backend}'. "
+                "Use einfra, nim, ollama, or a custom provider id."
+            )
             return
         reset_role_models(target_backend)
         cfg.update(load_config())
@@ -1713,6 +2049,32 @@ def _resolve_config(model, working_dir, api_key, base_url, local: bool = False) 
             "ollama_url":  ollama_url,
             "nim_api_key": nim_api_key,
             "nim_url":     nim_url,
+        }
+
+    # Custom user-defined provider (anything that isn't a built-in backend).
+    if backend not in BUILTIN_BACKENDS:
+        provider = get_custom_provider(saved, backend)
+        if not provider:
+            display.print_error(
+                f"Configured backend '{backend}' is not registered. "
+                "Run [bold]ots provider list[/bold] to see available providers."
+            )
+            sys.exit(1)
+        if not provider.get("base_url"):
+            display.print_error(
+                f"Custom provider '{provider.get('name', backend)}' has no base_url. "
+                "Re-add it with [bold]ots provider add[/bold]."
+            )
+            sys.exit(1)
+        return {
+            "api_key":     provider.get("api_key", "") or "x",
+            "base_url":    provider["base_url"],
+            "model":       model or saved.get("default_model") or provider.get("default_model", ""),
+            "working_dir": str(Path(working_dir).resolve()) if working_dir else _make_task_dir(),
+            "backend":     backend,
+            "ollama_url":  ollama_url,
+            "nim_api_key": saved.get("nim_api_key", ""),
+            "nim_url":     saved.get("nim_url", NIM_BASE_URL),
         }
 
     # e-INFRA CZ backend

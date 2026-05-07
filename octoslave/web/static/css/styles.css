@@ -260,9 +260,11 @@ main {
 
 #tab-settings.active {
   align-items: center;
-  justify-content: center;
+  justify-content: flex-start;
   padding: 40px;
   background: var(--bg);
+  overflow-y: auto;
+  gap: 20px;
 }
 
 /* ════════════════════════════════════════════════════════════
@@ -1706,6 +1708,14 @@ details.tool-block.tool-block-fail {
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
   padding: 28px;
+  flex-shrink: 0;
+}
+
+/* Custom Providers card needs more horizontal room — provider rows include
+   id, name, base URL and action buttons in one line. */
+.settings-card.settings-card-wide,
+.settings-card:has(#providers-list) {
+  max-width: 760px;
 }
 
 .settings-card-header {
@@ -1756,6 +1766,162 @@ details.tool-block.tool-block-fail {
 }
 
 .settings-field input { width: 100%; color: var(--text-muted); font-size: 13px; }
+
+/* ── Custom providers (Settings tab) ──────────────────────── */
+.providers-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+
+.provider-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+}
+
+.provider-row.provider-builtin {
+  opacity: 0.85;
+}
+
+.provider-row.provider-active {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 1px var(--primary) inset;
+}
+
+.provider-row .provider-name {
+  font-weight: 600;
+  color: var(--text);
+  min-width: 0;
+  flex-shrink: 0;
+  max-width: 140px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.provider-row .provider-id {
+  color: var(--text-muted);
+  font-family: var(--mono);
+  font-size: 11px;
+  flex-shrink: 0;
+}
+
+.provider-row .provider-url {
+  color: var(--text-muted);
+  font-size: 11px;
+  flex: 1 1 0;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--mono);
+}
+
+.provider-row .provider-tag {
+  font-size: 10px;
+  padding: 2px 6px;
+  border-radius: 3px;
+  background: var(--surface);
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.provider-row .provider-tag.tag-active {
+  background: var(--primary);
+  color: var(--bg);
+}
+
+.provider-row .provider-actions {
+  display: flex;
+  gap: 6px;
+  margin-left: auto;
+}
+
+.provider-row .btn-link {
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 11px;
+  color: var(--text-muted);
+  padding: 4px 6px;
+  border-radius: 3px;
+}
+
+.provider-row .btn-link:hover {
+  color: var(--text);
+  background: var(--surface);
+}
+
+.provider-row .btn-link.btn-link-danger:hover {
+  color: var(--error, #f47174);
+}
+
+.provider-add-form {
+  border: 1px dashed var(--border);
+  border-radius: var(--radius-sm);
+  padding: 0;
+  background: var(--bg-elevated);
+}
+
+.provider-add-summary {
+  cursor: pointer;
+  padding: 10px 14px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--primary);
+  list-style: none;
+  user-select: none;
+}
+
+.provider-add-summary::-webkit-details-marker { display: none; }
+
+.provider-add-form[open] .provider-add-summary {
+  border-bottom: 1px solid var(--border);
+}
+
+.provider-add-body {
+  padding: 14px;
+}
+
+.provider-hint {
+  color: var(--text-muted);
+  font-weight: 400;
+  text-transform: none;
+  letter-spacing: 0;
+  font-size: 11px;
+  margin-left: 6px;
+}
+
+.provider-hint code {
+  background: var(--surface);
+  padding: 1px 4px;
+  border-radius: 3px;
+  font-family: var(--mono);
+}
+
+.provider-form-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 6px;
+}
+
+.provider-form-status {
+  font-size: 11px;
+  color: var(--text-muted);
+  flex: 1;
+}
+
+.provider-form-status.status-ok { color: var(--success, #7fd88f); }
+.provider-form-status.status-fail { color: var(--error, #f47174); }
 
 /* ════════════════════════════════════════════════════════════
    HISTORY SIDEBAR
