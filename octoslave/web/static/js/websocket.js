@@ -137,10 +137,15 @@ function setConnected(ok) {
  * Update the backend select dropdown and sidebar pill to reflect the active backend.
  */
 function applyBackend(backend) {
-  const sel = document.getElementById('backend-select');
-  if (sel) {
-    sel.value = backend;
-    sel.dataset.backend = backend;
+  const chatSel = document.getElementById('backend-select');
+  if (chatSel) {
+    chatSel.value = backend;
+    chatSel.dataset.backend = backend;
+  }
+  const researchSel = document.getElementById('research-backend-select');
+  if (researchSel) {
+    researchSel.value = backend;
+    researchSel.dataset.backend = backend;
   }
   const pill = document.getElementById('backend-pill');
   if (pill) {

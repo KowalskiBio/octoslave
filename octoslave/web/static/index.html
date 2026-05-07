@@ -8,7 +8,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="/static/css/styles.css?v=20260508c">
+  <link rel="stylesheet" href="/static/css/styles.css?v=20260509b">
 </head>
 <body>
 
@@ -130,7 +130,11 @@
       <div class="chat-empty-state" id="chat-empty-state">
         <img src="/static/logo.png?v=3" alt="OctoSlave" class="empty-logo">
         <p class="empty-title">OctoSlave</p>
-        <p class="empty-sub">Ask anything. Run code. Research topics.<br>Type a message or <code>/help</code> to see available commands.</p>
+        <p class="empty-sub">
+          Ask anything. Run code. Research topics.<br>
+          Type <code>@</code> to attach a file, <code>/help</code> for commands,
+          or use the <code>•••</code> button to spin up a multi-agent committee.
+        </p>
       </div>
     </div>
 
@@ -212,20 +216,30 @@
       <div class="research-left">
         <div class="research-form-section">
           <label class="form-label">Research Topic</label>
-          <textarea id="research-topic" rows="4" placeholder="Describe your research question or topic…"></textarea>
+          <textarea id="research-topic" rows="5" placeholder="Describe your research question or topic…"></textarea>
         </div>
 
         <div class="research-form-section">
           <label class="form-label">Configuration</label>
           <div class="field-row">
             <div class="field-group">
+              <label class="field-label">Provider</label>
+              <select id="research-backend-select" class="backend-select" data-backend="einfra">
+                <option value="einfra">e-INFRA CZ</option>
+                <option value="ollama">Local (Ollama)</option>
+                <option value="nim">NVIDIA NIM</option>
+              </select>
+            </div>
+            <div class="field-group">
               <label class="field-label">Rounds</label>
               <input type="number" id="research-rounds" value="3" min="1" max="20">
             </div>
-            <div class="field-group">
-              <label class="field-label">Model</label>
+          </div>
+          <div class="field-row">
+            <div class="field-group" style="flex: 1;">
+              <label class="field-label">Model (all roles)</label>
               <select id="research-model-select">
-                <option value="">(use default)</option>
+                <option value="">(use defaults)</option>
               </select>
             </div>
           </div>
@@ -233,6 +247,29 @@
             <input type="checkbox" id="research-resume">
             <span>Resume previous research</span>
           </label>
+        </div>
+
+        <div class="research-form-section">
+          <div class="committee-head">
+            <label class="form-label">Model committee</label>
+            <button class="btn-secondary btn-sm" id="committee-toggle-btn" type="button">
+              Configure per-role
+            </button>
+          </div>
+          <p class="committee-hint">
+            Pick a different model for each agent in the long-research pipeline.
+            Leave any row on <em>(default)</em> to use the backend's recommended model.
+            Custom picks override the “Model (all roles)” dropdown above.
+          </p>
+          <div class="committee-grid" id="committee-grid" style="display:none">
+            <!-- rows injected at runtime by initResearchCommittee() -->
+          </div>
+          <div class="committee-actions" id="committee-actions" style="display:none">
+            <button class="btn-secondary btn-sm" id="committee-reset-btn" type="button">
+              Reset to defaults
+            </button>
+            <span class="committee-status" id="committee-status"></span>
+          </div>
         </div>
 
         <div class="research-form-section">
@@ -413,7 +450,7 @@
 
 </main>
 
-<script type="module" src="/static/js/app.js?v=20260508c"></script>
+<script type="module" src="/static/js/app.js?v=20260509b"></script>
 
 </body>
 </html>

@@ -7,6 +7,7 @@ from pathlib import Path
 from openai import OpenAI, BadRequestError
 
 from . import display
+from . import logger
 from .tools import TOOL_DEFINITIONS, execute_tool
 from .config import load_config, OLLAMA_BASE_URL
 
@@ -535,17 +536,24 @@ def run_agent(
         if memory_ctx:
             system_prompt = system_prompt + f"\n\n{memory_ctx}"
 
+    # Session logger bootstrap
+    logger.log_session_start(
+        model=model,
+        working_dir=working_dir,
+        backend=client.base_url.host if hasattr(client, "base_url") else "unknown",
+        prompt_profile=prompt_profile,
+        permission_mode=permission_mode,
+        enable_plan=enable_plan,
+        enable_verify=enable_verify,
+        enable_memory=enable_memory,
+    )
+
     messages: list[dict] = [
         {"role": "system", "content": system_prompt},
         {"role": "user", "content": task},
     ]
 
     # Upfront planning pass
-    if enable_plan:
-        messages, plan_text = _planning_step(task, system_prompt, client, model, messages)
-        if plan_text and plan_out is not None:
-            plan_out.append(plan_text)
-
     messages = _agent_loop(messages, model, working_dir, client, permission_mode)
 
     # Post-loop verification pass
@@ -553,6 +561,7 @@ def run_agent(
         display.print_info("Verifying…")
         verdict = _verify_completion(messages, task, client, model)
         if verdict:
+            logger.log_verify(verdict)
             display.print_verify(verdict)
             if verify_out is not None:
                 verify_out.append(verdict)
@@ -607,12 +616,14 @@ def _agent_loop(
             _timeout_retries = 0
         except BadRequestError as e:
             err_str = str(e)
+            logger.log_error(f"BadRequestError on turn {iteration}", exc=e)
             if "ContextWindowExceeded" in err_str or "context" in err_str.lower():
                 compacted = _compact_and_trim(messages)
                 if len(compacted) < len(messages):
                     display.print_info(
                         "Context window exceeded — compacting oldest turns and retrying."
                     )
+                    logger.log_info("Context window exceeded — compacted and retrying.")
                     messages = compacted
                     iteration -= 1  # compaction doesn't consume a turn
                     continue
@@ -646,7 +657,8 @@ def _agent_loop(
         except KeyboardInterrupt:
             display.stream_end(False)
             display.console.print("\n[dim]Interrupted.[/dim]")
-            break
+            logger.log_session_end(iteration, reason="interrupted")
+            return messages
         except Exception as e:
             err_str = str(e)
             if "429" in err_str or "rate" in err_str.lower() or "RateLimit" in type(e).__name__:
@@ -698,6 +710,14 @@ def _agent_loop(
         content = response["content"]
         tool_calls = response["tool_calls"]
         finish_reason = response["finish_reason"]
+
+        # Log every turn (model response summary)
+        logger.log_turn(
+            iteration,
+            content_preview=content[:500] if content else "",
+            finish_reason=finish_reason or "",
+            tool_count=len(tool_calls),
+        )
 
         # Some models (e.g. qwen2.5-coder:3b) output tool calls as JSON text instead
         # of using the API's structured function-calling protocol.  Extract and promote
@@ -766,6 +786,7 @@ def _agent_loop(
                 continue
 
             display.print_tool_call(name, args)
+            logger.log_tool_call(tc.get("id", ""), name, args)
             result, success = execute_tool(name, args, working_dir, permission_mode)
 
             if not success:
@@ -775,6 +796,8 @@ def _agent_loop(
             result = _cap_result(result, name)
 
             display.print_tool_result(name, result, success)
+            result_preview = result[:400] if isinstance(result, str) else str(result)[:400]
+            logger.log_tool_result(tc.get("id", ""), name, success, preview=result_preview)
 
             messages.append(
                 {
@@ -841,11 +864,15 @@ def _agent_loop(
                 "(task likely complete)."
             )
             display.print_done(iteration)
+            logger.log_session_end(iteration, reason="redundant_calls")
             break
 
         display.print_separator()
     else:
         display.print_info(f"Reached max iterations ({MAX_ITERATIONS}).")
         display.print_done(iteration)  # unblock web UI — done event must always fire
+        logger.log_session_end(iteration, reason="max_iterations")
+        return messages
 
+    logger.log_session_end(iteration, reason="completed")
     return messages
