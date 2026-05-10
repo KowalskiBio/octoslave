@@ -4,6 +4,7 @@ import json
 import sys
 import time as _time
 from rich.console import Console
+from rich.markdown import Markdown
 from rich.panel import Panel
 from rich.rule import Rule
 from rich.text import Text
@@ -248,19 +249,9 @@ def stream_chunk(text: str):
     if _silent():
         return
     if not _streaming_started():
-        # First token — kill the spinner and emit the response prefix
-        stop: _threading.Event = getattr(_stream_state, "stop_event", None)
-        if stop is not None:
-            stop.set()
-            t: _threading.Thread = getattr(_stream_state, "spinner_thread", None)
-            if t is not None:
-                t.join(timeout=0.3)   # wait for the clear to flush
-        # Brand-coloured diamond as the stream prefix — matches the wordmark
-        # accent and makes assistant text easy to scan against tool output.
-        console.print("  [bold #fab283]◆[/bold #fab283] ", end="")
         _stream_state.started = True
-    sys.stdout.write(text)
-    sys.stdout.flush()
+        _stream_state.buffer = ""
+    _stream_state.buffer = getattr(_stream_state, "buffer", "") + text
 
 
 def stream_end(had_content: bool):
@@ -268,7 +259,7 @@ def stream_end(had_content: bool):
     if _silent():
         _stream_state.started = False
         return
-    # Stop the spinner if no content ever arrived (e.g. tool-call-only response)
+    # Stop the spinner
     stop: _threading.Event = getattr(_stream_state, "stop_event", None)
     if stop is not None:
         stop.set()
@@ -276,8 +267,12 @@ def stream_end(had_content: bool):
         if t is not None:
             t.join(timeout=0.3)
     if had_content:
-        sys.stdout.write("\n")
-        sys.stdout.flush()
+        buf = getattr(_stream_state, "buffer", "")
+        if buf:
+            console.print("  [bold #fab283]◆[/bold #fab283]")
+            console.print(Markdown(buf))
+            console.print()
+        _stream_state.buffer = ""
     _stream_state.started = False
 
 
