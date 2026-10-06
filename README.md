@@ -8,7 +8,7 @@
 <p><strong>Autonomous AI research &amp; coding assistant — powered by <a href="https://llm.ai.e-infra.cz">e-INFRA CZ</a>, <a href="https://build.nvidia.com">NVIDIA NIM</a>, or your own local GPU</strong></p>
 
 [![Python](https://img.shields.io/badge/python-3.10%2B-blue?style=flat-square&logo=python&logoColor=white)](https://www.python.org)
-[![License: MIT](https://img.shields.io/badge/license-MIT-green?style=flat-square)](LICENSE)
+[![License: AGPL-3.0](https://img.shields.io/badge/license-AGPL--3.0-blue?style=flat-square)](LICENSE)
 [![Platform](https://img.shields.io/badge/e--INFRA%20CZ-LLM-7B2FBE?style=flat-square)](https://llm.ai.e-infra.cz)
 [![Ollama](https://img.shields.io/badge/Ollama-local%20models-1A6B5C?style=flat-square)](https://ollama.com)
 [![NVIDIA NIM](https://img.shields.io/badge/NVIDIA%20NIM-API-76B900?style=flat-square&logo=nvidia&logoColor=white)](https://build.nvidia.com)
@@ -897,7 +897,9 @@ octoslave/
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+Copyright (C) 2026 OctoSlave contributors.
+
+OctoSlave is licensed under the [GNU Affero General Public License v3.0 or later](LICENSE) (AGPL-3.0-or-later). If you modify it and let others use it, including over a network, you must publish your modified source under the same license and keep the original copyright and attribution notices.
 
 <div align="center">
 <br/>

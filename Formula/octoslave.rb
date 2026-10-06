@@ -15,7 +15,7 @@ class Octoslave < Formula
   homepage "https://octoslave.karamazov.website"
   url "https://files.pythonhosted.org/packages/source/o/octoslave/octoslave-0.2.0.tar.gz"
   sha256 "0000000000000000000000000000000000000000000000000000000000000000"
-  license "MIT"
+  license "AGPL-3.0-or-later"
   head "https://github.com/karatedava/octoslave.git", branch: "main"
 
   depends_on "python@3.12"
